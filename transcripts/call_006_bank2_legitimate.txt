@@ -1,0 +1,14 @@
+Employee: Good morning, this is Rachel calling from Bank2. Am I speaking with Mr Anderson?
+Customer: Yes, that's me.
+Employee: Mr Anderson, thanks for taking my call. I'm reaching out because we're conducting a satisfaction survey on our online banking services. It should take about three minutes if you have time.
+Customer: Sure, I can do three minutes.
+Employee: Wonderful. I don't need to verify your identity for a survey — we're just gathering general feedback. First question: on a scale of one to ten, how would you rate the ease of use of our online banking portal?
+Customer: I'd say about eight.
+Employee: Thank you. And what features do you use most often?
+Customer: Mostly checking balances and paying bills. Occasionally transferring money to my son.
+Employee: Good to know. Are there any features you wish we had, or things that frustrate you?
+Customer: The bill payment section could be faster. Sometimes it takes a while to load.
+Employee: Thank you, that's useful feedback. I'll pass that to our web team. One more question — would you be interested in trying our new budgeting tool if we invited you to a beta?
+Customer: Maybe. Send me the information and I'll have a look.
+Employee: Perfect. We'll email you the details through your registered email. Thank you very much for your time today, Mr Anderson.
+Customer: You're welcome. Bye.

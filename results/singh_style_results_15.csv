@@ -1,0 +1,16 @@
+filename,true,length,bow,llm_only,singh,webrag
+call_001_bank1_legitimate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_002_bank1_legitimate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_003_bank1_intermediate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_004_bank1_fraudulent.txt,Fraud,Fraud,Normal,Fraud,Fraud,Fraud
+call_005_bank1_fraudulent.txt,Fraud,Fraud,Normal,Fraud,Fraud,Fraud
+call_006_bank2_legitimate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_007_bank2_legitimate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_008_bank2_intermediate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_009_bank2_fraudulent.txt,Fraud,Fraud,Normal,Fraud,Fraud,Fraud
+call_010_bank2_fraudulent.txt,Fraud,Fraud,Normal,Fraud,Fraud,Fraud
+call_011_bank3_legitimate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_012_bank3_legitimate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_013_bank3_intermediate.txt,Normal,Fraud,Normal,Normal,Normal,Normal
+call_014_bank3_fraudulent.txt,Fraud,Fraud,Normal,Fraud,Fraud,Fraud
+call_015_bank3_fraudulent.txt,Fraud,Fraud,Normal,Fraud,Fraud,Fraud

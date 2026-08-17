@@ -1,0 +1,14 @@
+Employee: Good afternoon, is this Ms Patel?
+Customer: Yes, speaking.
+Employee: Hi Ms Patel, this is Daniel calling from Bank2. You had an inquiry through our online chat last week about our fixed deposit rates — I'm following up.
+Customer: Oh right, yes.
+Employee: I can walk you through the current rates if you'd like. For a 12-month fixed deposit, we're currently offering 4.2% per annum. For 24 months it's 4.5%, and 36 months is 4.7%. Are any of those in the range you were considering?
+Customer: The 12-month sounds interesting. Are there minimum amounts?
+Employee: Yes, the minimum for a fixed deposit is $1,000. You can open one through the app or by visiting a branch. If you decide to proceed, I can also arrange a callback from a specialist adviser.
+Customer: Let me think about it for a couple of days.
+Employee: Absolutely, no rush. Would you like me to email you a summary of the rates?
+Customer: Yes, please.
+Employee: I'll send it to your registered email address today. Anything else I can help with?
+Customer: No, that's all.
+Employee: Thank you, Ms Patel. Have a good afternoon.
+Customer: You too.

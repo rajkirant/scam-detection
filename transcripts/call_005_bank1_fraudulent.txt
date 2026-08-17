@@ -1,0 +1,14 @@
+Employee: Hi, this is Michael from Bank1's IT support desk. Am I speaking with Mr Wilson?
+Customer: Yes, this is Tom Wilson.
+Employee: Mr Wilson, we've received a report that your online banking account has been compromised. I'm calling to help you secure it before any money is lost.
+Customer: Really? How?
+Employee: The attackers have installed monitoring software on your device. To remove it, I need you to download our remote support tool. Could you go to a web address I'll give you now?
+Customer: You want me to download something?
+Employee: Yes, it's called Bank1SecureConnect. It allows our technicians to remove the malicious software remotely. The URL is www dot bank one secure connect dot com. Can you type that in?
+Customer: I'd rather not download anything based on a phone call.
+Employee: Mr Wilson, I understand, but this is very time-sensitive. The attackers are actively draining accounts as we speak. To verify my authority, I can also confirm your account details — could you tell me your online banking password so I can cross-check?
+Customer: You want my password?
+Employee: Only to verify that our records match. It's a standard identity check.
+Customer: No, I'm not giving you that. Bank1 has told me they'd never ask for that.
+Employee: Sir, this is an exception because of the security incident. If you don't cooperate now, we cannot help you.
+Customer: I'm ending this call.

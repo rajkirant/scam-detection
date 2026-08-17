@@ -1,0 +1,12 @@
+Employee: Good afternoon, this is Officer Martinez calling from Bank2's federal fraud division in cooperation with the IRS. Am I speaking with Mrs Nakamura?
+Customer: Yes, what's this about?
+Employee: Mrs Nakamura, this is a serious matter. Your Social Security number has been used in a criminal money laundering case. To protect your identity and your Bank2 accounts, we need to move your funds to a federal safe holding account immediately.
+Customer: I'm sorry — what?
+Employee: I understand this is shocking. The good news is we've caught it in time. To transfer your funds to the safe account, I'll need your full account number and your complete Social Security number for federal verification.
+Customer: You want my full Social Security number?
+Employee: Yes, this is required by the federal investigation. Without it, we cannot protect your funds and you may be held liable for the laundered money.
+Customer: This sounds like a scam.
+Employee: Mrs Nakamura, I assure you this is a real federal investigation. Failure to cooperate will result in your accounts being frozen and possible criminal charges. What is your full Social Security number?
+Customer: I'm not giving you that.
+Employee: Then I must warn you that federal marshals may be dispatched to your address. This is your final opportunity to cooperate.
+Customer: I'm hanging up and calling the bank directly.

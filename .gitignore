@@ -1,0 +1,58 @@
+# ------------------------------------------------------------- secrets
+.env
+.env.*
+!.env.example
+*.key
+credentials.json
+secrets.json
+
+# -------------------------------------------------------------- python
+venv/
+env/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# ------------------------------------------------- regenerable artifacts
+# chroma rebuilds via setup_vector_db.py / build_index.py
+chroma_db/
+cache/
+*.faiss
+*.index
+
+# ---------------------------------------------------- model checkpoints
+# bert_baseline.py --save-model writes ~440 MB per model
+models/
+checkpoints/
+*.safetensors
+*.bin
+*.pt
+*.pth
+transformers_cache/
+
+# ---------------------------------------------------------------- logs
+results/logs/
+*.log
+nohup.out
+
+# ------------------------------------------------------------------ os
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# ----------------------------------------------------------- kept in git
+# results/*.csv        per-call predictions behind every thesis table
+# datasets/*.csv       which data produced which numbers
+# scripts/*.py
+# scripts/scam_ontology.json   hand-built, not generated
+# scam_patterns.json
+# requirements.txt
+#
+# If a dataset turns out to be redistribution-restricted, add it here and
+# note its provenance in the README instead.

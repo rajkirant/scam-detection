@@ -1,0 +1,18 @@
+Employee: Good morning, this is Kavita calling from Bank3. Am I speaking with Mr Reynolds?
+Customer: Yes.
+Employee: Mr Reynolds, I'm calling to invite you to participate in a short survey about our chatbot service. It'll take about five minutes if you have time.
+Customer: Alright, I've got a few minutes.
+Employee: Excellent. First — have you used the Bank3 chatbot on the app or website in the last three months?
+Customer: A couple of times, yes.
+Employee: Great. On a scale of one to five, how would you rate its helpfulness in resolving your queries?
+Customer: About a three. It's okay but sometimes doesn't understand what I'm asking.
+Employee: That's helpful feedback. Are there specific topics where you felt the chatbot fell short?
+Customer: Mostly when I asked about international transfers. It kept giving me generic answers.
+Employee: Understood. I'll flag international transfers as an area we need to improve the chatbot on. Two more quick questions — do you use our mobile app or mostly the website?
+Customer: Mostly the app.
+Employee: And is there any feature you wish the chatbot could do, that it currently can't?
+Customer: It would be great if it could actually process transactions, not just answer questions.
+Employee: Noted. That's actually on our roadmap. Thank you so much for your time, Mr Reynolds. Your feedback goes directly to our product team.
+Customer: You're welcome.
+Employee: Have a great day.
+Customer: Bye.

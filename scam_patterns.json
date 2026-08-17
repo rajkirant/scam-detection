@@ -1,0 +1,448 @@
+{
+  "schema_version": 1,
+  "created": "2026-07-24T05:11:13.328667+00:00",
+  "last_refresh": "2026-07-24T06:00:49.019857+00:00",
+  "refresh_count": 6,
+  "patterns": [
+    {
+      "id": "tech_support_0001",
+      "category": "tech_support",
+      "behaviours": "The caller claims to be a tech support specialist and asks for remote access to the victim's computer. They pretend to scan it for viruses and claim to find a malicious program, offering to remove it for a fee. They insist on payment using methods that are difficult to reverse, such as gift cards or wire transfers.",
+      "signals": "The caller's request for remote access and payment in non-traditional methods distinguish this from a legitimate call. Legitimate tech support companies would not ask for remote access or payment via gift cards or wire transfers.",
+      "text": "Scam category: tech support\n\nTypical caller behaviours: The caller claims to be a tech support specialist and asks for remote access to the victim's computer. They pretend to scan it for viruses and claim to find a malicious program, offering to remove it for a fee. They insist on payment using methods that are difficult to reverse, such as gift cards or wire transfers.\n\nDistinguishing signals: The caller's request for remote access and payment in non-traditional methods distinguish this from a legitimate call. Legitimate tech support companies would not ask for remote access or payment via gift cards or wire transfers.",
+      "source": {
+        "url": "https://consumer.ftc.gov/articles/how-spot-avoid-and-report-tech-support-scams",
+        "domain": "consumer.ftc.gov",
+        "title": "How To Spot, Avoid, and Report Tech Support Scams | Consumer Advice",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:11:13.328667+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 6
+    },
+    {
+      "id": "prize_lottery_0001",
+      "category": "prize_lottery",
+      "behaviours": "The caller guarantees loans or credit cards for an upfront fee.\n\t*",
+      "signals": "Honest lenders don't make such guarantees.\n2. **Prize and Lottery Scam**\n\t* BEHAVIOURS: The caller says you've won a prize, but then asks for taxes, registration fees, or shipping charges to receive it.\n\t* SIGNALS: If you have to pay to get the prize, it's not a prize.\n3. **Travel Scam and Timeshare Resale Scam**\n\t* BEHAVIOURS: The caller promises free or low-cost vacations, but asks for fees and taxes first; or claims they'll sell your timeshare if you pay them first.\n\t* SIGNALS: Legitimate businesses won't pressure you into making a decision on the spot.\n4. **Fake Law Enforcement Scam**\n\t* BEHAVIOURS: The caller pretends to be law enforcement or a federal agency, threatening arrest, fines, or deportation unless you pay taxes or debts immediately.\n\t* SIGNALS: Real law enforcement and federal agencies won't call and threaten you.\n5. **Pressure to Pay Immediately Scam**\n\t* BEHAVIOURS: The caller pressures you into making a decision on the spot without giving you time to think it over or providing written information.\n\t* SIGNALS: Most honest businesses will give you time to consider their offer before committing.\n6. **Demand for Payment in Specific Ways Scam**\n\t* BEHAVIOURS: The caller demands payment through specific methods, such as wire transfer or",
+      "text": "Scam category: prize lottery\n\nTypical caller behaviours: The caller guarantees loans or credit cards for an upfront fee.\n\t*\n\nDistinguishing signals: Honest lenders don't make such guarantees.\n2. **Prize and Lottery Scam**\n\t* BEHAVIOURS: The caller says you've won a prize, but then asks for taxes, registration fees, or shipping charges to receive it.\n\t* SIGNALS: If you have to pay to get the prize, it's not a prize.\n3. **Travel Scam and Timeshare Resale Scam**\n\t* BEHAVIOURS: The caller promises free or low-cost vacations, but asks for fees and taxes first; or claims they'll sell your timeshare if you pay them first.\n\t* SIGNALS: Legitimate businesses won't pressure you into making a decision on the spot.\n4. **Fake Law Enforcement Scam**\n\t* BEHAVIOURS: The caller pretends to be law enforcement or a federal agency, threatening arrest, fines, or deportation unless you pay taxes or debts immediately.\n\t* SIGNALS: Real law enforcement and federal agencies won't call and threaten you.\n5. **Pressure to Pay Immediately Scam**\n\t* BEHAVIOURS: The caller pressures you into making a decision on the spot without giving you time to think it over or providing written information.\n\t* SIGNALS: Most honest businesses will give you time to consider their offer before committing.\n6. **Demand for Payment in Specific Ways Scam**\n\t* BEHAVIOURS: The caller demands payment through specific methods, such as wire transfer or",
+      "source": {
+        "url": "https://consumer.ftc.gov/articles/phone-scams",
+        "domain": "consumer.ftc.gov",
+        "title": "Phone Scams",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:11:13.328667+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 6
+    },
+    {
+      "id": "invoice_supplier_0001",
+      "category": "invoice_supplier",
+      "behaviours": "The scammer sends an email claiming to be from a legitimate business and includes an invoice with altered payment details. They may copy logos and ABNs to make the invoice appear legitimate. The scammer asks the victim to pay using the new, incorrect banking details.",
+      "signals": "This scam is distinguished by the fact that the victim receives an unsolicited email claiming to be from a business they have dealings with, and the payment details on the invoice are different from what was previously agreed upon. The scammer may also use logos and ABNs of legitimate businesses to make the email appear authentic.",
+      "text": "Scam category: invoice supplier\n\nTypical caller behaviours: The scammer sends an email claiming to be from a legitimate business and includes an invoice with altered payment details. They may copy logos and ABNs to make the invoice appear legitimate. The scammer asks the victim to pay using the new, incorrect banking details.\n\nDistinguishing signals: This scam is distinguished by the fact that the victim receives an unsolicited email claiming to be from a business they have dealings with, and the payment details on the invoice are different from what was previously agreed upon. The scammer may also use logos and ABNs of legitimate businesses to make the email appear authentic.",
+      "source": {
+        "url": "https://www.accc.gov.au/media-release/beware-of-fake-invoices-from-scammers-impersonating-businesses",
+        "domain": "accc.gov.au",
+        "title": "Beware of fake invoices from scammers impersonating businesses | ACCC",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:11:13.328667+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 6
+    },
+    {
+      "id": "bank_impersonation_0001",
+      "category": "bank_impersonation",
+      "behaviours": "The scammer pretends to be from a bank and requests personal information such as Social Security numbers, credit card or debit card numbers, or bank account passwords. They may ask you to verify a large purchase you didn't make, creating a sense of urgency to encourage you to provide the information. If you respond, they may get a call from someone pretending to be from the bank's fraud department.",
+      "signals": "The text message often looks like a bank security message and tries to create a sense of urgency. The caller or scammer uses a phone number that is unfamiliar to you, which you should not use to verify the authenticity of the call.",
+      "text": "Scam category: bank impersonation\n\nTypical caller behaviours: The scammer pretends to be from a bank and requests personal information such as Social Security numbers, credit card or debit card numbers, or bank account passwords. They may ask you to verify a large purchase you didn't make, creating a sense of urgency to encourage you to provide the information. If you respond, they may get a call from someone pretending to be from the bank's fraud department.\n\nDistinguishing signals: The text message often looks like a bank security message and tries to create a sense of urgency. The caller or scammer uses a phone number that is unfamiliar to you, which you should not use to verify the authenticity of the call.",
+      "source": {
+        "url": "https://www.fdic.gov/consumer-resource-center/2025-06/bank-impersonation-scams-and-fake-banks",
+        "domain": "fdic.gov",
+        "title": "Bank Impersonation Scams and Fake Banks | FDIC.gov",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "tech_support_0002",
+      "category": "tech_support",
+      "behaviours": "The caller claims that the recipient's system or account is compromised and threatens loss of data or suspension of service. They pose as a professional from a well-known company, using official logos or spoofed phone numbers to gain trust. They pressure the recipient into installing remote access software.",
+      "signals": "The call uses alarming language to create fear and urgency, and the caller pressures the recipient for immediate action. Legitimate companies would not contact customers directly asking for remote access or payment to fix an issue.",
+      "text": "Scam category: tech support\n\nTypical caller behaviours: The caller claims that the recipient's system or account is compromised and threatens loss of data or suspension of service. They pose as a professional from a well-known company, using official logos or spoofed phone numbers to gain trust. They pressure the recipient into installing remote access software.\n\nDistinguishing signals: The call uses alarming language to create fear and urgency, and the caller pressures the recipient for immediate action. Legitimate companies would not contact customers directly asking for remote access or payment to fix an issue.",
+      "source": {
+        "url": "https://elm.umaryland.edu/elm-stories/2026/Fake-Tech-Support-The-Only-Thing-Theyre-Fixing-is-Your-Bank-Account.php",
+        "domain": "elm.umaryland.edu",
+        "title": "Fake Tech Support: The Only Thing They’re Fixing Is Your Bank Account - The Elm",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 0.75,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.725
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "tech_support_0003",
+      "category": "tech_support",
+      "behaviours": "* The caller claims to be from a well-known tech company (e.g. Microsoft, Apple) and warns that the victim's computer or business network is infected with a virus or experiencing security issues.\n* They pressure the victim to give them access or install remote access software (such as AnyDesk or TeamViewer), which allows them to steal data.\n* The caller demands immediate payment for tech support services.",
+      "signals": "* Legitimate tech companies do not make random calls offering support.\n* The caller warns of an imminent system failure, data loss, or hacking attempt, which is a common tactic used by scammers.\n* They ask the victim to install software that gives them full control of the device.",
+      "text": "Scam category: tech support\n\nTypical caller behaviours: * The caller claims to be from a well-known tech company (e.g. Microsoft, Apple) and warns that the victim's computer or business network is infected with a virus or experiencing security issues.\n* They pressure the victim to give them access or install remote access software (such as AnyDesk or TeamViewer), which allows them to steal data.\n* The caller demands immediate payment for tech support services.\n\nDistinguishing signals: * Legitimate tech companies do not make random calls offering support.\n* The caller warns of an imminent system failure, data loss, or hacking attempt, which is a common tactic used by scammers.\n* They ask the victim to install software that gives them full control of the device.",
+      "source": {
+        "url": "https://www.bitdefender.com/en-us/blog/hotforsecurity/3-tech-support-scam-tactics-targeting-small-businesses-and-how-to-counter-them",
+        "domain": "bitdefender.com",
+        "title": "3 Tech Support Scam Tactics Targeting Small Businesses and How to Counter Them",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 0.5,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.6
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "tech_support_0004",
+      "category": "tech_support",
+      "behaviours": "Scammers may call directly on the phone and pretend to be representatives of a tech company. They might ask you to install applications that give them remote access to your device. Using this remote access, they can misrepresent normal system messages as signs of problems.",
+      "signals": "The caller ID is often spoofed to display a legitimate support phone number from a trusted company, and the scammers use scare tactics to trick you into unnecessary technical support services.",
+      "text": "Scam category: tech support\n\nTypical caller behaviours: Scammers may call directly on the phone and pretend to be representatives of a tech company. They might ask you to install applications that give them remote access to your device. Using this remote access, they can misrepresent normal system messages as signs of problems.\n\nDistinguishing signals: The caller ID is often spoofed to display a legitimate support phone number from a trusted company, and the scammers use scare tactics to trick you into unnecessary technical support services.",
+      "source": {
+        "url": "https://support.microsoft.com/en-us/office/protect-yourself-from-tech-support-scams",
+        "domain": "support.microsoft.com",
+        "title": "Protect yourself from tech support scams",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 0.5,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.6
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "government_impersonation_0001",
+      "category": "government_impersonation",
+      "behaviours": "The caller demands immediate payment for a tax liability and threatens the taxpayer with arrest. They may provide personal identifying information about the taxpayer or claim to know details about their tax liability. In some cases, they provide a fake badge number and a contact number for a local police department.",
+      "signals": "This is distinguished from a legitimate call by the caller's demand for immediate payment and threat of arrest, as well as the use of fake identifying information. The caller may also spoof a police department or CDTFA telephone number on the taxpayer's caller ID to create the appearance that a legitimate party is calling.",
+      "text": "Scam category: government impersonation\n\nTypical caller behaviours: The caller demands immediate payment for a tax liability and threatens the taxpayer with arrest. They may provide personal identifying information about the taxpayer or claim to know details about their tax liability. In some cases, they provide a fake badge number and a contact number for a local police department.\n\nDistinguishing signals: This is distinguished from a legitimate call by the caller's demand for immediate payment and threat of arrest, as well as the use of fake identifying information. The caller may also spoof a police department or CDTFA telephone number on the taxpayer's caller ID to create the appearance that a legitimate party is calling.",
+      "source": {
+        "url": "https://cdtfa.ca.gov/legal/tax-scams.htm",
+        "domain": "cdtfa.ca.gov",
+        "title": "Beware of Telephone Scammers Impersonating Police and Tax Collectors!",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "government_impersonation_0002",
+      "category": "government_impersonation",
+      "behaviours": "The caller claims to be affiliated with law enforcement and threatens that the victim will be arrested if they do not comply with their demands. They demand money from the victim and threaten legal trouble if it is not sent. The caller may provide sensitive information, such as the last four digits of the victim's social security number, address, or date of birth.",
+      "signals": "This scam can be distinguished by the fact that legitimate law enforcement agencies will never call demanding money. Caller ID may show a name and phone number from a legitimate police agency, but this is part of the scam. The caller's demands for personal information should also raise suspicion.",
+      "text": "Scam category: government impersonation\n\nTypical caller behaviours: The caller claims to be affiliated with law enforcement and threatens that the victim will be arrested if they do not comply with their demands. They demand money from the victim and threaten legal trouble if it is not sent. The caller may provide sensitive information, such as the last four digits of the victim's social security number, address, or date of birth.\n\nDistinguishing signals: This scam can be distinguished by the fact that legitimate law enforcement agencies will never call demanding money. Caller ID may show a name and phone number from a legitimate police agency, but this is part of the scam. The caller's demands for personal information should also raise suspicion.",
+      "source": {
+        "url": "https://www.pwcva.gov/assets/2021-06/CA%20060321.pdf",
+        "domain": "pwcva.gov",
+        "title": "Threats of Arrest Phone Scam",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "government_impersonation_0003",
+      "category": "government_impersonation",
+      "behaviours": "The caller demands immediate payment using a pre-paid debit card, money order or wire transfer, threatening criminal violations and arrest if payment is not made. They may also claim that hanging up the phone will result in an immediate arrest warrant for unpaid taxes. The caller aggressively pursues payment, claiming to be from the IRS.",
+      "signals": "The caller uses an automated robo-call machine, displays fake IRS badge numbers, and may know the last four digits of the victim's social security number. They make the caller ID appear as if the IRS is calling, and send bogus IRS emails to support their scam.",
+      "text": "Scam category: government impersonation\n\nTypical caller behaviours: The caller demands immediate payment using a pre-paid debit card, money order or wire transfer, threatening criminal violations and arrest if payment is not made. They may also claim that hanging up the phone will result in an immediate arrest warrant for unpaid taxes. The caller aggressively pursues payment, claiming to be from the IRS.\n\nDistinguishing signals: The caller uses an automated robo-call machine, displays fake IRS badge numbers, and may know the last four digits of the victim's social security number. They make the caller ID appear as if the IRS is calling, and send bogus IRS emails to support their scam.",
+      "source": {
+        "url": "https://www.dla.mil/About-DLA/News/News-Article-View/Article/655271/beware-of-criminals-impersonating-irs-treasury-employees-in-email-phone-calls",
+        "domain": "dla.mil",
+        "title": "Beware of criminals impersonating IRS, Treasury employees in email, phone calls",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "government_impersonation_0004",
+      "category": "government_impersonation",
+      "behaviours": "The caller impersonates an IRS official and claims that you owe back taxes. They threaten arrest or jail time, or revocation of your driver's license, unless you pay the taxes immediately. They may ask for payment over the phone.",
+      "signals": "This scam is distinguished by the use of caller-ID spoofing to display \"Internal Revenue Service\" or the agency's phone number on your caller ID box. The caller demands immediate payment and threatens severe consequences if you don't comply.",
+      "text": "Scam category: government impersonation\n\nTypical caller behaviours: The caller impersonates an IRS official and claims that you owe back taxes. They threaten arrest or jail time, or revocation of your driver's license, unless you pay the taxes immediately. They may ask for payment over the phone.\n\nDistinguishing signals: This scam is distinguished by the use of caller-ID spoofing to display \"Internal Revenue Service\" or the agency's phone number on your caller ID box. The caller demands immediate payment and threatens severe consequences if you don't comply.",
+      "source": {
+        "url": "https://ag.ny.gov/publications/irs-phone-scam",
+        "domain": "ag.ny.gov",
+        "title": "IRS phone scam | New York Attorney General",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "prize_lottery_0002",
+      "category": "prize_lottery",
+      "behaviours": "The caller claims you have won a lottery or contest you never entered and demands payment of fees or taxes to claim the prize. They provide stories explaining the urgent need for more money and find creative ways for you to obtain and send it, such as using 'Green Dot' cards or taking loans. They may also claim to know about your neighborhood, family, or personal situation.",
+      "signals": "This is a scam because the caller claims you won something without entering, and demands payment upfront; they use high-pressure tactics and try to gain your trust by claiming to know personal details about you.",
+      "text": "Scam category: prize lottery\n\nTypical caller behaviours: The caller claims you have won a lottery or contest you never entered and demands payment of fees or taxes to claim the prize. They provide stories explaining the urgent need for more money and find creative ways for you to obtain and send it, such as using 'Green Dot' cards or taking loans. They may also claim to know about your neighborhood, family, or personal situation.\n\nDistinguishing signals: This is a scam because the caller claims you won something without entering, and demands payment upfront; they use high-pressure tactics and try to gain your trust by claiming to know personal details about you.",
+      "source": {
+        "url": "https://jm.usembassy.gov/lottery-scams",
+        "domain": "jm.usembassy.gov",
+        "title": "Lottery Scams - U.S. Embassy in Jamaica",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "romance_relationship_0001",
+      "category": "romance_relationship",
+      "behaviours": "The caller initially builds a relationship or \"grooms\" the victim by convincing them they are starting a friendship or romantic relationship. They then turn conversations to money and persuade the victim to trade crypto assets or foreign currency. Eventually, the victim is locked out of their account and forced to pay more money in fake fees or \"taxes\".",
+      "signals": "This scam distinguishes itself from legitimate calls by taking several weeks to build a relationship before asking for financial transactions, and by using tactics such as convincing the victim to withdraw profits and invest more.",
+      "text": "Scam category: romance relationship\n\nTypical caller behaviours: The caller initially builds a relationship or \"grooms\" the victim by convincing them they are starting a friendship or romantic relationship. They then turn conversations to money and persuade the victim to trade crypto assets or foreign currency. Eventually, the victim is locked out of their account and forced to pay more money in fake fees or \"taxes\".\n\nDistinguishing signals: This scam distinguishes itself from legitimate calls by taking several weeks to build a relationship before asking for financial transactions, and by using tactics such as convincing the victim to withdraw profits and invest more.",
+      "source": {
+        "url": "https://www.cftc.gov/LearnAndProtect/AdvisoriesAndArticles/RomanceScam.html",
+        "domain": "cftc.gov",
+        "title": "Customer Advisory: Six Warning Signs of Online Financial Romance Frauds | CFTC",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 5
+    },
+    {
+      "id": "invoice_supplier_0002",
+      "category": "invoice_supplier",
+      "behaviours": "The caller initiates transactions using the business customer's bank account, offering details that give the appearance of legitimacy. They may attempt to initiate large transactions, such as $5 million in one case reported by an FDIC supervised financial institution. The caller may use the business customer's own information to make the call appear legitimate.",
+      "signals": "This scam is distinguished from a legitimate call because it involves unauthorized transactions and attempts to deceive the business customer into initiating large transfers. The caller may also use spoofing techniques to disguise their true identity or phone number, making it difficult for the business customer to verify the legitimacy of the call.",
+      "text": "Scam category: invoice supplier\n\nTypical caller behaviours: The caller initiates transactions using the business customer's bank account, offering details that give the appearance of legitimacy. They may attempt to initiate large transactions, such as $5 million in one case reported by an FDIC supervised financial institution. The caller may use the business customer's own information to make the call appear legitimate.\n\nDistinguishing signals: This scam is distinguished from a legitimate call because it involves unauthorized transactions and attempts to deceive the business customer into initiating large transfers. The caller may also use spoofing techniques to disguise their true identity or phone number, making it difficult for the business customer to verify the legitimacy of the call.",
+      "source": {
+        "url": "https://www.fdicoig.gov/call-spoofing-scams",
+        "domain": "fdicoig.gov",
+        "title": "Call Spoofing Scams | FDIC OIG OIG",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T05:30:14.660329+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 4
+    },
+    {
+      "id": "bank_impersonation_0002",
+      "category": "bank_impersonation",
+      "behaviours": "The caller pressures the consumer to take immediate action to secure their account or protect their money. They may ask for personal information such as account details or authentication of the account. In more complicated scams, they may convince the victim that the bank is working with a government agency and require them to move funds to another account or convert them to gold or cryptocurrency.",
+      "signals": "The scam is distinguished by its urgency and pressure on the consumer to act quickly without verifying the authenticity of the call. Legitimate banks typically do not contact customers out of the blue asking for immediate action, and they usually have multiple ways to verify their identity before taking any action.",
+      "text": "Scam category: bank impersonation\n\nTypical caller behaviours: The caller pressures the consumer to take immediate action to secure their account or protect their money. They may ask for personal information such as account details or authentication of the account. In more complicated scams, they may convince the victim that the bank is working with a government agency and require them to move funds to another account or convert them to gold or cryptocurrency.\n\nDistinguishing signals: The scam is distinguished by its urgency and pressure on the consumer to act quickly without verifying the authenticity of the call. Legitimate banks typically do not contact customers out of the blue asking for immediate action, and they usually have multiple ways to verify their identity before taking any action.",
+      "source": {
+        "url": "https://docs.fcc.gov/public/attachments/DOC-423262A1.pdf",
+        "domain": "docs.fcc.gov",
+        "title": "FCC Consumer Alert: Bank Impersonation Scams",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T06:00:49.019857+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 1
+    },
+    {
+      "id": "bank_impersonation_0003",
+      "category": "bank_impersonation",
+      "behaviours": "The caller sends a text message claiming to offer a free gift, often from a cell phone carrier or retailer. They may also claim that there is an issue with package delivery from the USPS, UPS, or FedEx. In some cases, they may offer a job opportunity for tasks such as mystery shopping and car wrapping.",
+      "signals": "These scams are distinguished by their unsolicited nature and lack of personalization. The messages often contain generic language and do not address the recipient by name. They also frequently claim to be from well-known companies or organizations, which can make them appear more legitimate.",
+      "text": "Scam category: bank impersonation\n\nTypical caller behaviours: The caller sends a text message claiming to offer a free gift, often from a cell phone carrier or retailer. They may also claim that there is an issue with package delivery from the USPS, UPS, or FedEx. In some cases, they may offer a job opportunity for tasks such as mystery shopping and car wrapping.\n\nDistinguishing signals: These scams are distinguished by their unsolicited nature and lack of personalization. The messages often contain generic language and do not address the recipient by name. They also frequently claim to be from well-known companies or organizations, which can make them appear more legitimate.",
+      "source": {
+        "url": "https://www.ftc.gov/news-events/news/press-releases/2023/06/new-ftc-data-analysis-shows-bank-impersonation-most-reported-text-message-scam",
+        "domain": "ftc.gov",
+        "title": "New FTC Data Analysis Shows Bank Impersonation is Most-Reported Text Message Scam | Federal Trade Commission",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T06:00:49.019857+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 1
+    },
+    {
+      "id": "bank_impersonation_0004",
+      "category": "bank_impersonation",
+      "behaviours": "The caller claims to be from your utility company and threatens to cut off your service unless you pay an outstanding balance immediately. They may ask for payment over the phone using a specific method, such as a prepaid debit card or wire transfer. They may also claim that someone has tried to access your account.",
+      "signals": "This scam is distinguished by the caller's urgent tone and demand for immediate payment, which is not typical of legitimate utility company communications. Legitimate utility companies usually send written notices before cutting off service and do not ask for payment over the phone using prepaid debit cards or wire transfers.",
+      "text": "Scam category: bank impersonation\n\nTypical caller behaviours: The caller claims to be from your utility company and threatens to cut off your service unless you pay an outstanding balance immediately. They may ask for payment over the phone using a specific method, such as a prepaid debit card or wire transfer. They may also claim that someone has tried to access your account.\n\nDistinguishing signals: This scam is distinguished by the caller's urgent tone and demand for immediate payment, which is not typical of legitimate utility company communications. Legitimate utility companies usually send written notices before cutting off service and do not ask for payment over the phone using prepaid debit cards or wire transfers.",
+      "source": {
+        "url": "https://consumer.ftc.gov/scams",
+        "domain": "consumer.ftc.gov",
+        "title": "Scams | Consumer Advice",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T06:00:49.019857+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 2
+    },
+    {
+      "id": "bank_impersonation_0005",
+      "category": "bank_impersonation",
+      "behaviours": "** The caller claims to be from your bank's fraud department and says they've spotted fraud or criminal activity on one of your accounts. They offer to help \"protect\" your money, sometimes asking you to share verification codes. They tell you to move money from your bank, investment, or retirement account.\n\n**",
+      "signals": "** The caller is asking you to take urgent action by moving your money, which is a red flag. They are also asking for sensitive information such as verification codes, which legitimate banks would never request over the phone.",
+      "text": "Scam category: bank impersonation\n\nTypical caller behaviours: ** The caller claims to be from your bank's fraud department and says they've spotted fraud or criminal activity on one of your accounts. They offer to help \"protect\" your money, sometimes asking you to share verification codes. They tell you to move money from your bank, investment, or retirement account.\n\n**\n\nDistinguishing signals: ** The caller is asking you to take urgent action by moving your money, which is a red flag. They are also asking for sensitive information such as verification codes, which legitimate banks would never request over the phone.",
+      "source": {
+        "url": "https://consumer.ftc.gov/consumer-alerts/2024/03/never-move-your-money-protect-it-thats-scam",
+        "domain": "consumer.ftc.gov",
+        "title": "Never move your money to “protect it.” That’s a scam | Consumer Advice",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T06:00:49.019857+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 1
+    },
+    {
+      "id": "bank_impersonation_0006",
+      "category": "bank_impersonation",
+      "behaviours": "The caller claims to be from the bank or investment company's fraud department and says they have spotted fraudulent activity on one of your accounts. They offer to help \"protect\" your money by moving it from your bank, investment, or retirement account. They may ask you to share a verification code.",
+      "signals": "This is always a scam because no legitimate caller will ask for the verification code, and you should never move or transfer your money based on their advice. The caller's request to move your money out of your account is a red flag, as this can leave you unprotected and without recourse if you are scammed.",
+      "text": "Scam category: bank impersonation\n\nTypical caller behaviours: The caller claims to be from the bank or investment company's fraud department and says they have spotted fraudulent activity on one of your accounts. They offer to help \"protect\" your money by moving it from your bank, investment, or retirement account. They may ask you to share a verification code.\n\nDistinguishing signals: This is always a scam because no legitimate caller will ask for the verification code, and you should never move or transfer your money based on their advice. The caller's request to move your money out of your account is a red flag, as this can leave you unprotected and without recourse if you are scammed.",
+      "source": {
+        "url": "https://consumer.ftc.gov/consumer-alerts/2024/06/got-call-about-fraud-activity-your-bank-account-it-could-be-scammer",
+        "domain": "consumer.ftc.gov",
+        "title": "Got a call about fraud activity on your bank account? It ...",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T06:00:49.019857+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 1
+    },
+    {
+      "id": "romance_relationship_0002",
+      "category": "romance_relationship",
+      "behaviours": "The scammer creates a false profile on social media or online dating platforms and contacts the victim, often claiming to have met them in person. They may send romantic messages, photos, and gifts, and eventually ask for money or financial assistance, such as transferring funds or sending gift cards. If the victim has not met the love interest in person, the scammer will claim that they need money due to an emergency.",
+      "signals": "The scam is distinguished by the fact that the love interest requests money or financial assistance, and the victim has not met them in person. Legitimate relationships do not involve sending money or gifts to someone you haven't met, and scammers often use urgency or pressure tactics to get the victim to send funds quickly.",
+      "text": "Scam category: romance relationship\n\nTypical caller behaviours: The scammer creates a false profile on social media or online dating platforms and contacts the victim, often claiming to have met them in person. They may send romantic messages, photos, and gifts, and eventually ask for money or financial assistance, such as transferring funds or sending gift cards. If the victim has not met the love interest in person, the scammer will claim that they need money due to an emergency.\n\nDistinguishing signals: The scam is distinguished by the fact that the love interest requests money or financial assistance, and the victim has not met them in person. Legitimate relationships do not involve sending money or gifts to someone you haven't met, and scammers often use urgency or pressure tactics to get the victim to send funds quickly.",
+      "source": {
+        "url": "https://disb.dc.gov/sites/default/files/dc/sites/disb/page_content/attachments/DISB%20Consumer%20Alert%20Romance%20Scams%20APPROVED.pdf",
+        "domain": "disb.dc.gov",
+        "title": "DISB CONSUMER ALERT Beware of Romance Scams",
+        "published_date": ""
+      },
+      "credibility": {
+        "trust": 1.0,
+        "recency": 0.5,
+        "corroboration": 1.0,
+        "combined": 0.85
+      },
+      "first_seen": "2026-07-24T06:00:49.019857+00:00",
+      "last_seen": "2026-07-24T06:00:49.019857+00:00",
+      "seen_count": 1
+    }
+  ]
+}

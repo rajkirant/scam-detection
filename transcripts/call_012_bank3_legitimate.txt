@@ -1,0 +1,10 @@
+Employee: Hi, this is Peter from Bank3. Am I speaking with Ms Olusegun?
+Customer: Yes, that's me.
+Employee: Hi Ms Olusegun. I'm calling because our records show your appointment with our small business adviser is booked for tomorrow at 10am. I just wanted to confirm the appointment is still convenient.
+Customer: Yes, that still works.
+Employee: Wonderful. Just to remind you, the appointment is at the Queen Street branch, and we've allocated 45 minutes. The adviser is called Rebecca Ling. Do you know how to find the branch?
+Customer: Yes, I've been there before.
+Employee: Excellent. If anything changes, you can reschedule through the app or give us a call. Is there anything I can help with in the meantime?
+Customer: No, I'm all set.
+Employee: Great. Have a good rest of your day.
+Customer: You too. Bye.

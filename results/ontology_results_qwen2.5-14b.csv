@@ -1,0 +1,41 @@
+idx,true,pred,confidence,node,node_score,novel_flag,reason
+0,Normal,Normal,85,,0.2,True,The interaction appears to be a routine customer service transaction for bill payment without any suspicious elements.
+1,Normal,Normal,95,,0.0,True,The call appears to be a routine transaction between a customer and their bank without any signs of manipulation or fraud.
+2,Normal,Normal,95,,0.0,True,The call is a routine scheduling interaction without any signs of manipulation for financial gain or credential theft.
+3,Fraud,Fraud,85,,0.0,True,"The caller is attempting to gather personal information under the pretense of resolving an order issue, which is a common tactic in scam calls."
+4,Fraud,Fraud,85,,0.0,True,"The caller is prompting the recipient to call back due to a security issue, which is a common tactic to lure victims into revealing sensitive information or granting remote access."
+5,Normal,Normal,85,,0.0,True,The interaction appears to be a routine replacement of a lost credit card without any suspicious activities.
+6,Fraud,Fraud,85,,0.0,True,The caller is attempting to manipulate the recipient into confirming a suspicious subscription and may be trying to gather more information for fraudulent activities.
+7,Normal,Fraud,85,,0.0,True,"The caller initiated the password reset process and requested sensitive information such as the phone number's last four digits, which is a common tactic in phishing scams to verify identity without the customer's proactive request."
+8,Normal,Normal,85,,0.2,True,The call appears to be a routine transaction for bill payment without any suspicious activities.
+9,Normal,Normal,95,,0.0,True,The call appears to be a routine transaction between a customer and their bank for transferring money between accounts without any suspicious activities.
+10,Fraud,Fraud,85,,0.0,True,"The caller is attempting to discuss a refund for mis-sold PPI claim without the recipient's initiation, which is a common tactic in scam calls to manipulate recipients into providing personal information or financial details."
+11,Fraud,Fraud,85,,0.0,True,The caller is likely attempting to exploit a security alert to gain access or manipulate the user into providing sensitive information.
+12,Normal,Normal,95,,0.0,True,The call appears to be a routine transaction between a customer and their bank for transferring money between accounts without any suspicious activities.
+13,Normal,Normal,85,,0.0,True,The interaction appears to be a routine service request for a new checkbook without any signs of manipulation or security breaches.
+14,Fraud,Fraud,95,,0.0,True,"The caller is attempting to exploit fear and manipulate the recipient into believing there are security issues with their account, which is a common tactic in scam calls."
+15,Normal,Normal,85,,0.2,True,The interaction appears to be a routine bill payment process without any suspicious activities.
+16,Fraud,Fraud,95,,0.0,True,"The caller is attempting to manipulate the recipient into believing they need to update their computer security when it may not be necessary, and is guiding them towards a cancellation process that seems suspicious."
+17,Fraud,Fraud,95,,0.0,True,The caller is attempting to discuss a suspiciously large investment opportunity over the phone and shows reluctance in using email for verification.
+18,Normal,Normal,85,,0.2,True,The interaction appears to be a routine bill payment process without any suspicious activities.
+19,Normal,Normal,85,,0.0,True,The interaction appears to be a routine customer service transaction for bill payment without any suspicious requests.
+20,Normal,Normal,85,,0.0,True,The call appears to be a routine transaction between a customer and their bank without any signs of manipulation or fraud.
+21,Normal,Normal,85,,0.2,True,The call appears to be a routine transaction between a customer and a bank for bill payment without any suspicious activities.
+22,Fraud,Fraud,85,,0.0,True,The caller is attempting to gather sensitive information under the pretense of resolving a billing issue for an unrequested service renewal.
+23,Fraud,Fraud,85,,0.0,True,"The caller exhibits signs of distress and confusion, and the support agent's response seems overly eager to assist without verifying the issue thoroughly."
+24,Fraud,Fraud,85,,0.1,True,"The caller is attempting to manipulate the recipient into believing there are urgent issues with their computer, which is a common tactic used by scammers to gain access or install remote control software."
+25,Fraud,Fraud,85,,0.0,True,"The caller is attempting to gain remote access to the computer under the guise of fixing an issue, which is a common scam tactic."
+26,Fraud,Fraud,95,,0.0,True,"The caller is attempting to manipulate the recipient into confirming a fraudulent charge and then offering to 'fix' the problem, which is a common scam tactic."
+27,Normal,Normal,95,,0.0,True,The call appears to be a routine transaction between a customer and their bank without any suspicious activities or requests for sensitive information.
+28,Fraud,Fraud,95,,0.0,True,The caller is attempting to guide the recipient into a remote access session which could be used for malicious purposes.
+29,Fraud,Fraud,85,,0.2,True,The caller is attempting to address a suspicious renewal charge and the responder seems to be from a support team but may be guiding the user towards confirming or resolving a fraudulent transaction setup.
+30,Fraud,Fraud,85,,0.0,True,The caller is attempting to manipulate the recipient into taking action on their computer which could lead to revealing information or credentials.
+31,Fraud,Normal,85,,0.0,True,The call appears to be a routine customer service interaction where the representative is assisting with changing a birth date on a Microsoft account.
+32,Fraud,Fraud,85,,0.0,True,The call attempts to pressure the recipient into purchasing an unnecessary warranty extension by suggesting it is a courtesy service and implies consequences if no action is taken.
+33,Fraud,Fraud,85,,0.0,True,"The caller is requesting payment details for a refund, which is a common tactic in scam calls to gain access to financial information."
+34,Normal,Normal,85,,0.2,True,The interaction appears to be a routine bill payment process without any suspicious requests for personal information or financial transfers.
+35,Normal,Normal,95,,0.0,True,The call appears to be a routine transaction between a customer and their bank without any signs of manipulation or fraud.
+36,Normal,Normal,85,,0.0,True,The interaction appears to be a routine service request for a new checkbook without any signs of manipulation or security breaches.
+37,Normal,Normal,85,,0.0,True,The interaction appears to be a routine password reset request between a customer and their bank.
+38,Normal,Fraud,85,,0.0,True,The caller requested and received the customer's address without any prior interaction or context suggesting a legitimate reason.
+39,Fraud,Fraud,85,,0.0,True,The caller is attempting to gather personal information and confirm a suspicious charge for software the customer did not authorize.

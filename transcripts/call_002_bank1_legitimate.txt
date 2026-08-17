@@ -1,0 +1,12 @@
+Employee: Hi there, this is Marcus from Bank1. Am I speaking with Ms Sarah Chen?
+Customer: Yes.
+Employee: Great. Ms Chen, I'm calling because you have an appointment scheduled with our mortgage advisor this coming Thursday at 2pm. I just wanted to confirm that works for you.
+Customer: Yes, that's still fine.
+Employee: Perfect. Just so you know, the appointment will be at the Chapel Street branch. You don't need to bring anything specific — the advisor will guide you through what's needed. Do you have any questions before the meeting?
+Customer: Actually yes — will there be parking available?
+Employee: There is customer parking at the rear of the branch, accessed via Mill Lane. It's free for up to two hours with validation from reception.
+Customer: Okay, thanks.
+Employee: You're welcome. If anything changes and you need to reschedule, you can call our main service line or use the app. Is there anything else I can help with today?
+Customer: No, that's all.
+Employee: Wonderful. Have a good week, Ms Chen. Goodbye.
+Customer: Bye.

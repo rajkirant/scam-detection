@@ -1,0 +1,95 @@
+{
+  "_comment": "Scam ontology for ontology-RAG. Each node: attributes that define the scam, plus legit_contrast: what the LEGITIMATE version of the same interaction looks like. Matching checks FIT (call exhibits defining behaviours) and CONTRADICTION (call matches the legit mirror instead).",
+  "nodes": [
+    {
+      "id": "tech_support",
+      "name": "Fake technical support",
+      "claimed_identity": ["microsoft", "windows", "apple", "tech support", "computer department", "internet provider"],
+      "requested_action": ["remote access", "install software", "anydesk", "teamviewer", "buy gift cards", "pay a fee", "show bank account"],
+      "payment_channel": ["gift card", "wire transfer", "crypto", "prepaid card"],
+      "pressure": ["computer infected", "hacked", "virus", "ip compromised", "immediate action"],
+      "legit_contrast": "Real tech support is contacted BY the customer, never cold-calls about infections, never asks for gift cards, and never needs bank access to fix a computer."
+    },
+    {
+      "id": "bank_impersonation",
+      "name": "Bank impersonation / fake fraud department",
+      "claimed_identity": ["bank", "fraud department", "card services", "security team"],
+      "requested_action": ["move money to safe account", "read one-time code", "confirm full card number", "confirm password", "transfer funds"],
+      "payment_channel": ["bank transfer to unfamiliar account", "wire"],
+      "pressure": ["account compromised", "suspicious activity", "act now", "do not tell anyone"],
+      "legit_contrast": "In a legitimate bank call the CUSTOMER initiates, the bank verifies the customer (not the reverse), money moves only between the customer's own accounts, and codes are sent TO the customer, never read out to the caller."
+    },
+    {
+      "id": "government_tax",
+      "name": "Government / tax / police impersonation",
+      "claimed_identity": ["irs", "tax office", "social security", "police", "interpol", "immigration", "court"],
+      "requested_action": ["pay fine immediately", "buy gift cards", "confirm ssn", "wire money", "stay on the line"],
+      "payment_channel": ["gift card", "wire", "crypto", "prepaid card"],
+      "pressure": ["arrest warrant", "legal action", "deportation", "suspend your ssn", "case against you"],
+      "legit_contrast": "Real agencies write letters, never demand payment by gift card or crypto, never threaten immediate arrest by phone, and never ask you to stay on the line while you pay."
+    },
+    {
+      "id": "refund_scam",
+      "name": "Fake refund / overpayment",
+      "claimed_identity": ["refund department", "billing", "subscription service", "amazon", "paypal"],
+      "requested_action": ["remote access to process refund", "log into bank", "buy gift cards to return overpayment", "send back the difference"],
+      "payment_channel": ["gift card", "wire", "crypto"],
+      "pressure": ["accidentally refunded too much", "account will be charged", "subscription renewing"],
+      "legit_contrast": "Real refunds are pushed back to the original payment method automatically; no legitimate company needs remote access to your computer or repayment in gift cards."
+    },
+    {
+      "id": "prize_lottery",
+      "name": "Prize / lottery / sweepstakes",
+      "claimed_identity": ["lottery", "sweepstakes", "prize department", "publishers clearing"],
+      "requested_action": ["pay fees or taxes upfront", "confirm identity details", "send shipping payment"],
+      "payment_channel": ["gift card", "wire", "prepaid card"],
+      "pressure": ["claim before deadline", "keep it confidential"],
+      "legit_contrast": "Real prizes never require upfront payment of taxes or fees to release winnings."
+    },
+    {
+      "id": "warranty_vehicle",
+      "name": "Vehicle warranty / insurance renewal",
+      "claimed_identity": ["warranty department", "vehicle services", "auto protection"],
+      "requested_action": ["renew expiring warranty", "take payment now", "confirm card details"],
+      "payment_channel": ["card over phone"],
+      "pressure": ["final notice", "coverage expiring today"],
+      "legit_contrast": "Real warranty renewals come from the dealer or insurer you already have a relationship with, in writing, and do not demand immediate card payment on a cold call."
+    },
+    {
+      "id": "order_confirmation",
+      "name": "Fake order / delivery confirmation (Amazon-style)",
+      "claimed_identity": ["amazon", "order department", "delivery service", "customs"],
+      "requested_action": ["confirm you did not order", "press a number", "give account login", "pay customs or redelivery fee", "remote access to cancel"],
+      "payment_channel": ["gift card", "card over phone", "crypto"],
+      "pressure": ["large charge pending", "package held", "unauthorised order"],
+      "legit_contrast": "Real retailers handle order problems inside your account or app; they do not cold-call about orders, ask for remote access, or take cancellation fees."
+    },
+    {
+      "id": "romance_investment",
+      "name": "Romance / investment / crypto grooming",
+      "claimed_identity": ["friend", "romantic partner", "investment advisor", "trader"],
+      "requested_action": ["send money for emergency", "invest in platform", "buy crypto", "keep relationship secret"],
+      "payment_channel": ["crypto", "wire", "gift card"],
+      "pressure": ["emergency", "limited investment window", "trust me"],
+      "legit_contrast": "Legitimate partners and advisors do not require secrecy, urgency, or payment in crypto to unfamiliar wallets."
+    },
+    {
+      "id": "utility_disconnection",
+      "name": "Utility disconnection threat",
+      "claimed_identity": ["power company", "electricity", "gas", "water", "utility"],
+      "requested_action": ["pay immediately to avoid disconnection", "prepaid card payment", "confirm account details"],
+      "payment_channel": ["prepaid card", "gift card", "wire"],
+      "pressure": ["disconnection within hours", "crew on the way"],
+      "legit_contrast": "Real utilities send multiple written notices before disconnection and accept normal payment methods through official channels."
+    },
+    {
+      "id": "grandparent_family",
+      "name": "Family emergency / grandparent scam",
+      "claimed_identity": ["grandchild", "family member", "lawyer for relative", "hospital"],
+      "requested_action": ["send bail or medical money urgently", "keep it secret from family", "wire or gift cards"],
+      "payment_channel": ["wire", "gift card", "cash courier"],
+      "pressure": ["accident", "arrest", "do not tell parents", "urgent"],
+      "legit_contrast": "A genuine family emergency survives verification: calling the relative back on their own number, or checking with other family, is never refused."
+    }
+  ]
+}

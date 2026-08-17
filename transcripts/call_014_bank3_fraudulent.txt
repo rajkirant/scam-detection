@@ -1,0 +1,14 @@
+Employee: Good morning, this is Jason from Bank3's technical support team. Am I speaking with Mrs Ferrari?
+Customer: Yes.
+Employee: Mrs Ferrari, we've detected a virus on your device that is intercepting your online banking sessions. To remove it, I need to walk you through installing our removal tool.
+Customer: A virus?
+Employee: Yes, it's a serious one. If we don't remove it in the next few minutes, the attackers will drain your account. Please open your web browser now.
+Customer: Okay.
+Employee: Now, please type in this URL: bank three security tools dot net. Once the page loads, click the download button for our removal utility.
+Customer: You want me to download something from that website?
+Employee: Yes, it's our official partner site for security tools. Once you install it, our technicians can access your device to remove the virus.
+Customer: Bank3 told me they'd never ask me to install anything from a phone call.
+Employee: This is a rare exception due to the security incident. I assure you it's necessary. If you don't install it now, your account will be emptied within the hour.
+Customer: I'm going to hang up and call Bank3 on the number on my card.
+Employee: There's no time for that — the virus is active right now. Please install the tool immediately.
+Customer: Goodbye.

@@ -1,0 +1,14 @@
+Employee: Good morning, this is Jessica from Bank2. Am I speaking with Mr Lombardi?
+Customer: Yes.
+Employee: Mr Lombardi, I'm calling regarding a transaction dispute you raised through our app yesterday. I need to verify a few details with you before I can discuss the case. Could you please confirm the last four digits of your Bank2 account number?
+Customer: It's 3947.
+Employee: Thank you, that matches. And could you please confirm the last four digits of your Social Security number?
+Customer: 6612.
+Employee: Thank you. I can now discuss the dispute. You reported a charge for $89.99 from an online merchant called TechGear, which you didn't recognise. Is that correct?
+Customer: Yes, exactly.
+Employee: I've opened a formal dispute case for that transaction. You'll receive a temporary credit within two business days while we investigate. The case reference is D-2091847. Would you like me to email that to you?
+Customer: Yes, please.
+Employee: I'll send it now. Is there anything else you'd like to discuss?
+Customer: No, that's it. Thanks.
+Employee: You're welcome. Have a good day, Mr Lombardi.
+Customer: Bye.
