@@ -1,0 +1,307 @@
+{
+  "id": "call_type",
+  "prompt": "What kind of call is this?",
+  "weight": 0.0,
+  "options": [
+
+    {
+      "id": "banking",
+      "text": "Banking, account, or payment",
+      "legit_contrast": "A real bank may call about suspicious activity, but it moves money only between the customer's own accounts, never asks for a full PIN or one-time code, and is happy for the customer to hang up and call the number on their card.",
+      "questions": [
+        {
+          "id": "requested_action",
+          "prompt": "What is the caller asking the person to do?",
+          "weight": 3.0,
+          "options": [
+            { "id": "move_to_other",  "text": "Move money to a new, different, or 'safe' account", "value": 1.0 },
+            { "id": "share_code",     "text": "Read out a one-time code, PIN, or password",        "value": 1.0 },
+            { "id": "move_to_own",    "text": "Move money between their own accounts",             "value": -0.8 },
+            { "id": "confirm_only",   "text": "Confirm or review a transaction, no money moves",   "value": -1.0 },
+            { "id": "call_back",      "text": "Call back on a published number, or visit a branch", "value": -1.0 },
+            { "id": "not_mentioned",  "text": "Not stated",                                        "value": 0.0 }
+          ]
+        },
+        {
+          "id": "destination",
+          "prompt": "Where is the money going?",
+          "weight": 3.0,
+          "options": [
+            { "id": "caller_provided", "text": "Account details given by the caller on this call", "value": 1.0 },
+            { "id": "third_party",     "text": "An account the person does not control",           "value": 1.0 },
+            { "id": "own_account",     "text": "The person's own account",                         "value": -1.0 },
+            { "id": "known_payee",     "text": "A payee the person set up earlier themselves",     "value": -0.8 },
+            { "id": "nothing_moves",   "text": "Nothing is being moved",                           "value": -0.5 },
+            { "id": "not_mentioned",   "text": "Not stated",                                       "value": 0.0 }
+          ]
+        },
+        {
+          "id": "payment_channel",
+          "prompt": "By what means is any payment or transfer made?",
+          "weight": 2.5,
+          "options": [
+            { "id": "vouchers",      "text": "Gift cards, prepaid cards, or vouchers",         "value": 1.0 },
+            { "id": "crypto",        "text": "Cryptocurrency or a crypto ATM",                 "value": 1.0 },
+            { "id": "wire_urgent",   "text": "Immediate wire or irreversible transfer",        "value": 0.8 },
+            { "id": "standard",      "text": "Ordinary bank transfer or card already on file", "value": -0.5 },
+            { "id": "no_payment",    "text": "No payment involved",                            "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                     "value": 0.0 }
+          ]
+        },
+        {
+          "id": "verification_direction",
+          "prompt": "Who is being asked to prove who they are?",
+          "weight": 2.0,
+          "options": [
+            { "id": "asks_full_creds", "text": "Caller asks for a full password, PIN, or one-time code", "value": 1.0 },
+            { "id": "asks_card_full",  "text": "Caller asks for full card number or CVV",                "value": 1.0 },
+            { "id": "partial_check",   "text": "Caller asks only for partial or non-sensitive details",  "value": -0.5 },
+            { "id": "caller_verifies", "text": "Caller proves their own identity, or invites a call back", "value": -1.0 },
+            { "id": "not_mentioned",   "text": "Not stated",                                             "value": 0.0 }
+          ]
+        },
+        {
+          "id": "pressure",
+          "prompt": "How are timing and secrecy handled?",
+          "weight": 1.5,
+          "options": [
+            { "id": "immediate",     "text": "Immediate action demanded, with a consequence for delay", "value": 1.0 },
+            { "id": "secrecy",       "text": "Told not to tell branch staff, family, or anyone",        "value": 1.0 },
+            { "id": "stay_on_line",  "text": "Told to stay on the line while acting",                   "value": 0.8 },
+            { "id": "no_urgency",    "text": "No time pressure; free to act later or hang up",          "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                              "value": 0.0 }
+          ]
+        },
+        {
+          "id": "claimed_identity",
+          "prompt": "Who does the caller say they are?",
+          "weight": 0.2,
+          "options": [
+            { "id": "bank_fraud",    "text": "A bank fraud or security team", "value": 1.0 },
+            { "id": "bank_general",  "text": "A bank, generally",             "value": 0.5 },
+            { "id": "other_org",     "text": "Some other organisation",       "value": 0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                    "value": 0.0 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "tech_support",
+      "text": "Technical support or computer problem",
+      "legit_contrast": "Real tech support is contacted by the customer, does not cold-call about infections, never asks for gift cards, and never needs access to a bank account to fix a computer.",
+      "questions": [
+        {
+          "id": "problem_origin",
+          "prompt": "Who first identified the technical problem?",
+          "weight": 3.0,
+          "options": [
+            { "id": "caller_claims",   "text": "The caller told the person they have a problem",   "value": 1.0 },
+            { "id": "person_reported", "text": "The person had already reported it themselves",    "value": -1.0 },
+            { "id": "scheduled",       "text": "A previously arranged appointment or callback",    "value": -1.0 },
+            { "id": "not_mentioned",   "text": "Not stated",                                       "value": 0.0 }
+          ]
+        },
+        {
+          "id": "requested_action",
+          "prompt": "What is the caller asking the person to do?",
+          "weight": 3.0,
+          "options": [
+            { "id": "install_remote",  "text": "Install software or grant remote access",           "value": 1.0 },
+            { "id": "buy_vouchers",    "text": "Pay a fee using gift cards or vouchers",            "value": 1.0 },
+            { "id": "show_banking",    "text": "Log in to online banking while the caller watches", "value": 1.0 },
+            { "id": "guided_settings", "text": "Change a setting the person can see and control",   "value": -0.5 },
+            { "id": "no_action",       "text": "Nothing, or information only",                      "value": -0.5 },
+            { "id": "not_mentioned",   "text": "Not stated",                                        "value": 0.0 }
+          ]
+        },
+        {
+          "id": "remote_access_purpose",
+          "prompt": "If remote access is requested, what is it for?",
+          "weight": 2.5,
+          "options": [
+            { "id": "refund_screen",   "text": "To show a refund, or to correct a payment error",       "value": 1.0 },
+            { "id": "show_infection",  "text": "To display evidence of an infection or hacking",        "value": 1.0 },
+            { "id": "customer_asked",  "text": "To fix an issue the person themselves reported",        "value": -1.0 },
+            { "id": "no_remote",       "text": "No remote access is requested",                         "value": -0.5 },
+            { "id": "not_mentioned",   "text": "Not stated",                                            "value": 0.0 }
+          ]
+        },
+        {
+          "id": "payment_channel",
+          "prompt": "By what means is any payment made?",
+          "weight": 2.5,
+          "options": [
+            { "id": "vouchers",      "text": "Gift cards, prepaid cards, or vouchers",   "value": 1.0 },
+            { "id": "crypto",        "text": "Cryptocurrency",                           "value": 1.0 },
+            { "id": "wire_urgent",   "text": "Immediate wire transfer",                  "value": 0.8 },
+            { "id": "invoice",       "text": "An invoice or existing support contract",  "value": -0.8 },
+            { "id": "no_payment",    "text": "No payment involved",                      "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                               "value": 0.0 }
+          ]
+        },
+        {
+          "id": "pressure",
+          "prompt": "How are timing and consequences described?",
+          "weight": 1.5,
+          "options": [
+            { "id": "threat_damage", "text": "Claims of infection, hacking, or data loss if not fixed now", "value": 1.0 },
+            { "id": "stay_on_line",  "text": "Told to stay on the line and not close the window",          "value": 0.8 },
+            { "id": "no_urgency",    "text": "No urgency; can be dealt with later",                        "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                                 "value": 0.0 }
+          ]
+        },
+        {
+          "id": "claimed_identity",
+          "prompt": "Who does the caller say they are?",
+          "weight": 0.2,
+          "options": [
+            { "id": "big_tech",      "text": "Microsoft, Windows, Apple, or similar", "value": 1.0 },
+            { "id": "isp",           "text": "The internet or phone provider",        "value": 0.5 },
+            { "id": "own_it_dept",   "text": "The person's own IT department",        "value": 0.0 },
+            { "id": "not_mentioned", "text": "Not stated",                            "value": 0.0 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "government_tax",
+      "text": "Government, tax, or law enforcement",
+      "legit_contrast": "Tax and law enforcement agencies write before they call, do not demand payment in vouchers or crypto, do not threaten immediate arrest by phone, and allow the person to verify through published channels.",
+      "questions": [
+        {
+          "id": "requested_action",
+          "prompt": "What is the caller asking the person to do?",
+          "weight": 3.0,
+          "options": [
+            { "id": "pay_now",         "text": "Pay an outstanding amount immediately",             "value": 1.0 },
+            { "id": "share_id_number", "text": "Confirm a full tax, social security, or ID number", "value": 1.0 },
+            { "id": "move_to_secure",  "text": "Move funds to a government-held or 'secure' account", "value": 1.0 },
+            { "id": "refer_to_letter", "text": "Refer to a letter already sent, or log in themselves", "value": -1.0 },
+            { "id": "no_action",       "text": "Nothing, or information only",                      "value": -0.5 },
+            { "id": "not_mentioned",   "text": "Not stated",                                        "value": 0.0 }
+          ]
+        },
+        {
+          "id": "consequence_threatened",
+          "prompt": "What consequence is described if the person does not comply?",
+          "weight": 2.5,
+          "options": [
+            { "id": "arrest",        "text": "Arrest, deportation, or legal action today",   "value": 1.0 },
+            { "id": "account_frozen","text": "Accounts frozen or licence cancelled today",   "value": 1.0 },
+            { "id": "standard_admin","text": "Ordinary administrative process with a deadline in writing", "value": -0.8 },
+            { "id": "none",          "text": "No consequence described",                     "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                   "value": 0.0 }
+          ]
+        },
+        {
+          "id": "payment_channel",
+          "prompt": "By what means is payment requested?",
+          "weight": 2.5,
+          "options": [
+            { "id": "vouchers",      "text": "Gift cards, prepaid cards, or vouchers",           "value": 1.0 },
+            { "id": "crypto",        "text": "Cryptocurrency or a crypto ATM",                   "value": 1.0 },
+            { "id": "wire_urgent",   "text": "Immediate wire to details given on the call",      "value": 1.0 },
+            { "id": "official_portal","text": "The agency's official published payment channel", "value": -1.0 },
+            { "id": "no_payment",    "text": "No payment involved",                              "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                       "value": 0.0 }
+          ]
+        },
+        {
+          "id": "verification_offered",
+          "prompt": "Can the person verify the caller independently?",
+          "weight": 2.0,
+          "options": [
+            { "id": "discouraged",   "text": "Told not to hang up, or not to contact anyone else", "value": 1.0 },
+            { "id": "caller_only",   "text": "Only a number the caller supplies is offered",       "value": 1.0 },
+            { "id": "encouraged",    "text": "Invited to call the published number or check online", "value": -1.0 },
+            { "id": "not_mentioned", "text": "Not stated",                                         "value": 0.0 }
+          ]
+        },
+        {
+          "id": "claimed_identity",
+          "prompt": "Who does the caller say they are?",
+          "weight": 0.2,
+          "options": [
+            { "id": "tax_agency",    "text": "A tax authority",              "value": 1.0 },
+            { "id": "police",        "text": "Police or law enforcement",    "value": 1.0 },
+            { "id": "immigration",   "text": "An immigration authority",     "value": 1.0 },
+            { "id": "not_mentioned", "text": "Not stated",                   "value": 0.0 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "delivery",
+      "text": "Parcel, courier, or delivery",
+      "legit_contrast": "Genuine couriers may call about a delivery, but customs and redelivery fees are handled through the courier's own published site, not by reading card details to a caller.",
+      "questions": [
+        {
+          "id": "requested_action",
+          "prompt": "What is the caller asking the person to do?",
+          "weight": 3.0,
+          "options": [
+            { "id": "pay_fee",       "text": "Pay a customs, redelivery, or handling fee now",  "value": 1.0 },
+            { "id": "give_card",     "text": "Provide card details over the phone",             "value": 1.0 },
+            { "id": "confirm_slot",  "text": "Confirm or rearrange a delivery time",            "value": -1.0 },
+            { "id": "confirm_addr",  "text": "Confirm an address the person already gave",      "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                      "value": 0.0 }
+          ]
+        },
+        {
+          "id": "parcel_origin",
+          "prompt": "Does the person have a parcel they are expecting?",
+          "weight": 2.5,
+          "options": [
+            { "id": "unexpected",    "text": "The parcel is unexpected or unidentified",         "value": 1.0 },
+            { "id": "expected",      "text": "It matches something the person ordered",          "value": -1.0 },
+            { "id": "not_mentioned", "text": "Not stated",                                       "value": 0.0 }
+          ]
+        },
+        {
+          "id": "payment_channel",
+          "prompt": "By what means is any fee to be paid?",
+          "weight": 2.5,
+          "options": [
+            { "id": "card_by_phone", "text": "Card details read out during the call",           "value": 1.0 },
+            { "id": "vouchers",      "text": "Gift cards or vouchers",                          "value": 1.0 },
+            { "id": "official_site", "text": "The courier's own published tracking site",       "value": -1.0 },
+            { "id": "no_payment",    "text": "No payment involved",                             "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                      "value": 0.0 }
+          ]
+        },
+        {
+          "id": "pressure",
+          "prompt": "How is timing described?",
+          "weight": 1.5,
+          "options": [
+            { "id": "return_today",  "text": "Parcel will be returned or destroyed today",   "value": 1.0 },
+            { "id": "no_urgency",    "text": "No urgency; can be arranged later",            "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated",                                   "value": 0.0 }
+          ]
+        }
+      ]
+    },
+
+    {
+      "id": "other",
+      "text": "Something else, or not clear from the call",
+      "questions": []
+    }
+
+  ],
+
+  "scoring": {
+    "raw": "sum(question.weight * chosen_option.value)",
+    "normalised": "raw / sum(weight of every question asked in the chosen branch)",
+    "note": "Branches have different total weight (banking 12.2, tech_support 12.7, government_tax 10.2, delivery 9.5), so a raw score of +3 does not mean the same thing in each. Bands below apply to the NORMALISED score, which always runs -1.0 to +1.0."
+  },
+
+  "bands": [
+    { "label": "legitimate", "max": -0.15 },
+    { "label": "uncertain",  "min": -0.15, "max": 0.15 },
+    { "label": "scam",       "min": 0.15 }
+  ]
+}
