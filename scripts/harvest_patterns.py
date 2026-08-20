@@ -9,7 +9,7 @@ Pipeline:
     3. Drop anything below the credibility floor
     4. Skip articles already in the KB (no wasted LLM extraction)
     5. Local LLM extracts a structured pattern from each new survivor
-    6. Merge into scam_patterns.json, preserving provenance and history
+    6. Merge into knowledge/scam_patterns.json, preserving provenance and history
 
 Re-running IS the weekly refresh.
 
@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import credibility as W
 
-KB_JSON = Path("./scam_patterns.json")
+KB_JSON = Path(__file__).resolve().parent.parent / "knowledge" / "scam_patterns.json"
 
 KB_CREDIBILITY_FLOOR = 0.55
 RESULTS_PER_QUERY = 6

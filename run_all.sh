@@ -12,7 +12,7 @@ set -uo pipefail
 
 MODEL="qwen2.5:14b"
 DATASET="datasets/zhi_scam_vs_legit_794.csv"
-ONTOLOGY="scripts/scam_ontology.json"
+ONTOLOGY="knowledge/scam_ontology.json"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 LOGDIR="results/logs/run_${STAMP}"
 

@@ -17,12 +17,12 @@ The interesting question: does ontology matching + legit-contrast cut the
 bank false positives below 113?
 """
 import argparse, csv, os, random, time
-from ontology_rag import OntologyRAG
+from ontology_rag import OntologyRAG, DEFAULT_ONTOLOGY
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
-    ap.add_argument("--ontology", default="scam_ontology.json")
+    ap.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
     ap.add_argument("--limit", type=int, default=0, help="run only N calls (balanced sample)")
     ap.add_argument("--model", default=None,
                 help="Ollama model name (default: llama3.1:8b, or $SCAM_MODEL)")

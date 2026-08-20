@@ -1,5 +1,5 @@
 """
-Build the vector index from scam_patterns.json.
+Build the vector index from knowledge/scam_patterns.json.
 
 The JSON is the source of truth. This script derives the searchable index
 from it - no web calls, no LLM, no re-harvesting. Re-run it whenever the JSON
@@ -21,7 +21,7 @@ from pathlib import Path
 import chromadb
 from chromadb.utils import embedding_functions
 
-KB_JSON = Path("./scam_patterns.json")
+KB_JSON = Path(__file__).resolve().parent.parent / "knowledge" / "scam_patterns.json"
 CHROMA_DB_DIR = "./chroma_db"
 COLLECTION_NAME = "scam_patterns"
 EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
@@ -97,7 +97,7 @@ def main():
     do_test = "--test" in sys.argv
 
     print("=" * 70)
-    print("Building vector index from scam_patterns.json")
+    print("Building vector index from knowledge/scam_patterns.json")
     print("=" * 70)
 
     patterns = load_patterns()
@@ -129,7 +129,7 @@ def main():
         print("  That gap is what live web retrieval is meant to close (RQ1).")
 
     print("\n" + "=" * 70)
-    print("Index built. Source of truth remains scam_patterns.json.")
+    print("Index built. Source of truth remains knowledge/scam_patterns.json.")
     print("Re-run this after any harvest, or when changing embedding model.")
     print("=" * 70)
 

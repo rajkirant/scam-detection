@@ -16,13 +16,16 @@ Pipeline per call:
 
 Usage (on cs25003ay, Ollama running):
     from ontology_rag import OntologyRAG
-    d = OntologyRAG("scam_ontology.json")
+    d = OntologyRAG("knowledge/scam_ontology.json")
     out = d.detect(transcript)
     # out: {predicted, confidence, node, node_score, matched, contradicted,
     #        novel_flag, reason, signals}
 """
 
 import json, re, requests, os
+from pathlib import Path
+
+DEFAULT_ONTOLOGY = Path(__file__).resolve().parent.parent / "knowledge" / "scam_ontology.json"
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL = os.environ.get("SCAM_MODEL", "llama3.1:8b")
 
@@ -176,6 +179,6 @@ class OntologyRAG:
 
 if __name__ == "__main__":
     import sys
-    d = OntologyRAG(sys.argv[1] if len(sys.argv) > 1 else "scam_ontology.json")
+    d = OntologyRAG(sys.argv[1] if len(sys.argv) > 1 else str(DEFAULT_ONTOLOGY))
     call = sys.stdin.read().strip()
     print(json.dumps(d.detect(call), indent=2))
