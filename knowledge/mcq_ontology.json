@@ -701,6 +701,274 @@
       ]
     },
     {
+      "id": "billing_subscription",
+      "text": "Billing, invoice, or subscription",
+      "legit_contrast": "A real billing query is settled through the company's own account portal or by post; a genuine agent never needs the customer to read out a full card number, and a subscription can always be cancelled without any payment first.",
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "retailer_billing",
+              "text": "A retailer's billing or accounts team",
+              "value": 0.0
+            },
+            {
+              "id": "subscription_provider",
+              "text": "A subscription or service provider",
+              "value": 0.0
+            },
+            {
+              "id": "collections",
+              "text": "A collections or cancellations department",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ],
+          "note": "Every option scores zero, for the same reason as in the other branches: a real billing team also says it is a billing team, so the claim alone separates nothing."
+        },
+        {
+          "id": "requested_action",
+          "prompt": "What is the caller asking the person to do?",
+          "options": [
+            {
+              "id": "pay_to_release",
+              "text": "Pay an amount now before something is released or continued",
+              "value": 1.0
+            },
+            {
+              "id": "read_card_details",
+              "text": "Read out full card or bank details over the phone",
+              "value": 1.0
+            },
+            {
+              "id": "confirm_charge",
+              "text": "Confirm whether a charge already on the account was authorised",
+              "value": -1.0
+            },
+            {
+              "id": "self_service_cancel",
+              "text": "Cancel or amend something themselves through their account",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "charge_status",
+          "prompt": "Has any money actually moved yet, according to the call?",
+          "options": [
+            {
+              "id": "future_charge",
+              "text": "A charge is described as upcoming or avoidable",
+              "value": 0.5
+            },
+            {
+              "id": "already_settled",
+              "text": "The caller confirms nothing has been taken and explains why",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "payment_channel",
+          "prompt": "By what means is any payment to be made?",
+          "options": [
+            {
+              "id": "card_by_phone",
+              "text": "Full card details read out during the call",
+              "value": 1.0
+            },
+            {
+              "id": "gift_card_or_crypto",
+              "text": "Gift cards, prepaid cards, or cryptocurrency",
+              "value": 1.0
+            },
+            {
+              "id": "self_service_portal",
+              "text": "The company's own online account or published payment page",
+              "value": -1.0
+            },
+            {
+              "id": "no_payment",
+              "text": "No payment is involved",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "pressure",
+          "prompt": "How is timing handled?",
+          "options": [
+            {
+              "id": "act_now_or_lose_service",
+              "text": "Told to act immediately or lose access or face a bigger charge",
+              "value": 1.0
+            },
+            {
+              "id": "no_urgency",
+              "text": "No urgency; can be sorted later through the account",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "order_purchase",
+      "text": "Order, purchase, or refund",
+      "legit_contrast": "A real retailer confirms or cancels an order using details already on file, refunds go back to the original payment method automatically, and no legitimate order confirmation requires the customer to supply fresh card details.",
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "retailer_orders",
+              "text": "A retailer's order or customer service team",
+              "value": 0.0
+            },
+            {
+              "id": "card_fraud_team",
+              "text": "The card issuer's fraud team, about a purchase",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ],
+          "note": "Every option scores zero. Impersonating a retailer or a card issuer is common to both genuine order-verification calls and scams, so the claim on its own carries no signal."
+        },
+        {
+          "id": "requested_action",
+          "prompt": "What is the caller asking the person to do?",
+          "options": [
+            {
+              "id": "confirm_or_deny_order",
+              "text": "Confirm whether they placed an order that appears on the account",
+              "value": -1.0
+            },
+            {
+              "id": "provide_card_to_verify",
+              "text": "Provide or re-enter full card details to verify or cancel an order",
+              "value": 1.0
+            },
+            {
+              "id": "click_or_call_unknown_link",
+              "text": "Use a link or number supplied by the caller to resolve it",
+              "value": 1.0
+            },
+            {
+              "id": "no_action_informational",
+              "text": "Nothing; the call is informational only",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "order_recognised",
+          "prompt": "Does the person recognise the order being discussed?",
+          "options": [
+            {
+              "id": "person_confirms_theirs",
+              "text": "The person confirms it is their own order",
+              "value": -1.0
+            },
+            {
+              "id": "unrecognised_by_person",
+              "text": "The person does not recognise the order at all",
+              "value": 0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "payment_channel",
+          "prompt": "How would any refund or payment be handled?",
+          "options": [
+            {
+              "id": "card_read_aloud",
+              "text": "The person is asked to read out card details",
+              "value": 1.0
+            },
+            {
+              "id": "automatic_to_original_method",
+              "text": "Refund goes automatically to the original payment method",
+              "value": -1.0
+            },
+            {
+              "id": "no_payment",
+              "text": "No payment or refund is involved",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "pressure",
+          "prompt": "How is timing handled?",
+          "options": [
+            {
+              "id": "act_before_order_ships_or_charges",
+              "text": "Told to act now before the order ships or the charge settles",
+              "value": 0.5
+            },
+            {
+              "id": "no_urgency",
+              "text": "No urgency; the order or refund can be checked later",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "other",
       "text": "Something else, or not clear from the call",
       "questions": []
