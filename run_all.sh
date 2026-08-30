@@ -74,7 +74,24 @@ shopt -u nullglob
 [[ ${#DATASETS[@]} -gt 0 ]] || die "no CSV files in datasets/"
 NWIDTH=${#DATASETS[@]}; NWIDTH=${#NWIDTH}   # digits in the highest menu number
 
-rows_of() { echo $(( $(wc -l < "$1") - 1 )); }
+# wc -l counts newline characters, not CSV rows. A transcript field that
+# contains an embedded newline (a multi-turn call quoted across several
+# physical lines) inflates the count - one such file showed "62700 rows"
+# for a CSV that genuinely has 6,022. Parse the file as CSV instead, and
+# fall back to the old line-count method only if that parse fails for some
+# reason, so a malformed file still shows a number rather than crashing
+# the menu.
+rows_of() {
+  python3 -c "
+import csv, sys
+csv.field_size_limit(sys.maxsize)
+try:
+    with open('$1', newline='', encoding='utf-8') as f:
+        print(sum(1 for _ in csv.reader(f)) - 1)
+except Exception:
+    sys.exit(1)
+" 2>/dev/null || echo $(( $(wc -l < "$1") - 1 ))
+}
 
 ask_dataset() {
   echo
