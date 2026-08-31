@@ -8,13 +8,16 @@
 #
 #   1. which dataset    (numbered menu of every CSV in datasets/)
 #   2. which baseline   (one system, or all of them)
-#   3. how many calls   (0 = the whole dataset)
+#   3. how many calls   (0 = the whole dataset, a number = the first N,
+#                         id:<value> = just the one row with that id)
 #   4. which model      (only asked when the baseline actually calls an LLM)
 #
 # Everything can also be given up front, which skips the questions:
 #
 #   ./run_all.sh --dataset datasets/zhi_balanced_333x333.csv --baseline singh \
 #                --limit 40 --model qwen2.5:14b
+#   ./run_all.sh --dataset datasets/paired_scam_legit_198.csv --baseline mcq \
+#                --limit id:19 --model qwen2.5:14b   # just transcript id 19
 #   ./run_all.sh -d 2 -b 4 -l 0 -m 1          # menu numbers work too
 #
 # When the baseline is "all", BERT runs last because qwen2.5:14b holds ~9.5 GB
@@ -62,7 +65,7 @@ while [[ $# -gt 0 ]]; do
     -b|--baseline) ARG_BASELINE="${2:-}"; shift 2 ;;
     -l|--limit)    ARG_LIMIT="${2:-}";    shift 2 ;;
     -m|--model)    ARG_MODEL="${2:-}";    shift 2 ;;
-    -h|--help)     sed -n '2,22p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help)     sed -n '2,26p' "$0" | sed 's/^# \?//'; exit 0 ;;
     *)             die "unknown argument: $1  (try --help)" ;;
   esac
 done
@@ -76,11 +79,9 @@ NWIDTH=${#DATASETS[@]}; NWIDTH=${#NWIDTH}   # digits in the highest menu number
 
 # wc -l counts newline characters, not CSV rows. A transcript field that
 # contains an embedded newline (a multi-turn call quoted across several
-# physical lines) inflates the count - one such file showed "62700 rows"
-# for a CSV that genuinely has 6,022. Parse the file as CSV instead, and
-# fall back to the old line-count method only if that parse fails for some
-# reason, so a malformed file still shows a number rather than crashing
-# the menu.
+# physical lines) inflates the count. Parse the file as CSV instead, and
+# fall back to the old line-count method only if that parse fails, so a
+# malformed file still shows a number rather than crashing the menu.
 rows_of() {
   python3 -c "
 import csv, sys
@@ -131,18 +132,57 @@ ask_baseline() {
 }
 
 # --------------------------------------------------------------- limit menu
+# Accepts three shapes of answer:
+#   0            -> the whole dataset
+#   a number N   -> the first N calls (same as before)
+#   id:<value>   -> just the one row whose "id" column equals <value>
+# LIMIT is set to 0 in the id: case; ONE_ID carries the id to look up. The
+# actual row extraction happens later, once $DATASET is known to exist.
+ONE_ID=""
 ask_limit() {
   echo
-  echo -e "${BLD}  How many calls?${NC}  (0 = the whole dataset)"
+  echo -e "${BLD}  How many calls?${NC}  (0 = the whole dataset, or id:<value> for one transcript)"
   local pick=""
   while true; do
     prompt "  limit: " pick
     if [[ "$pick" =~ ^[0-9]+$ ]]; then
-      LIMIT="$pick"
+      LIMIT="$pick"; ONE_ID=""
       return
     fi
-    warn "enter a whole number, 0 for all"
+    if [[ "$pick" =~ ^id:(.+)$ ]]; then
+      LIMIT=0; ONE_ID="${BASH_REMATCH[1]}"
+      return
+    fi
+    warn "enter a whole number, 0 for all, or id:<value> e.g. id:19"
   done
+}
+
+# Pull the single row whose id column equals $1 out of $2 (the dataset CSV)
+# into a temporary CSV with the same header, and print the temp file's path.
+# Uses Python's csv module rather than grep, since a transcript field can
+# contain commas and embedded newlines that break naive text matching.
+extract_single_row() {
+  local id="$1" csv_in="$2"
+  python3 -c "
+import csv, sys, tempfile
+csv.field_size_limit(sys.maxsize)
+target = '''$id'''
+with open('$csv_in', newline='', encoding='utf-8') as f:
+    r = csv.DictReader(f)
+    rows = [row for row in r if row.get('id') == target]
+    fieldnames = r.fieldnames
+if not rows:
+    sys.stderr.write('no row with id %r in $csv_in\n' % target)
+    sys.exit(1)
+if len(rows) > 1:
+    sys.stderr.write('warning: %d rows share id %r, using the first\n' % (len(rows), target))
+fd, path = tempfile.mkstemp(prefix='run_all_row_', suffix='.csv')
+with open(path, 'w', newline='', encoding='utf-8') as f:
+    w = csv.DictWriter(f, fieldnames=fieldnames)
+    w.writeheader()
+    w.writerow(rows[0])
+print(path)
+"
 }
 
 # --------------------------------------------------------------- model menu
@@ -213,8 +253,13 @@ case "$BASELINE" in
 esac
 
 if [[ -n "$ARG_LIMIT" ]]; then
-  [[ "$ARG_LIMIT" =~ ^[0-9]+$ ]] || die "--limit needs a whole number, got '$ARG_LIMIT'"
-  LIMIT="$ARG_LIMIT"
+  if [[ "$ARG_LIMIT" =~ ^[0-9]+$ ]]; then
+    LIMIT="$ARG_LIMIT"; ONE_ID=""
+  elif [[ "$ARG_LIMIT" =~ ^id:(.+)$ ]]; then
+    LIMIT=0; ONE_ID="${BASH_REMATCH[1]}"
+  else
+    die "--limit needs a whole number or id:<value>, got '$ARG_LIMIT'"
+  fi
 else
   ask_limit
 fi
@@ -259,19 +304,44 @@ else
   warn "no venv/ found, using whatever python is on PATH"
 fi
 
+# If a single transcript was requested, carve it out into a temp 1-row CSV
+# now and point every downstream step at that file instead of the original
+# dataset. This is the only place the id: mode touches the rest of the
+# script - everything after this block behaves exactly as it always did,
+# just against a dataset that happens to have one row in it.
+TMP_ROW_CSV=""
+if [[ -n "$ONE_ID" ]]; then
+  say "Extracting transcript id=$ONE_ID"
+  TMP_ROW_CSV="$(extract_single_row "$ONE_ID" "$DATASET")" \
+    || die "could not find id '$ONE_ID' in $DATASET"
+  ok "wrote $TMP_ROW_CSV"
+  DATASET="$TMP_ROW_CSV"
+  # make sure the temp file is removed however the script exits
+  trap '[[ -n "$TMP_ROW_CSV" ]] && rm -f "$TMP_ROW_CSV"' EXIT
+fi
+
 STAMP="$(date +%Y%m%d_%H%M%S)"
 LOGDIR="results/logs/run_${STAMP}"
 mkdir -p "$LOGDIR"
 
-BASE="$(basename "$DATASET" .csv)"
-if [[ "$LIMIT" -gt 0 ]]; then
-  LIMIT_ARG="--limit $LIMIT"
-  BERT_ARGS="--limit $LIMIT --folds 3 --epochs 2"
-  TAG="${BASE}_pilot${LIMIT}"
-else
+if [[ -n "$ONE_ID" ]]; then
+  BASE="$(basename "${ARG_DATASET:-$DATASET}" .csv)"
+  # sanitise the id for use in a filename (keep alnum, dash, underscore)
+  SAFE_ID="$(echo "$ONE_ID" | tr -c '[:alnum:]_-' '_')"
+  TAG="${BASE}_id${SAFE_ID}"
   LIMIT_ARG=""
-  BERT_ARGS="--folds 5 --epochs 4"
-  TAG="$BASE"
+  BERT_ARGS="--folds 2 --epochs 1"   # a 1-row dataset cannot support 5-fold CV
+else
+  BASE="$(basename "$DATASET" .csv)"
+  if [[ "$LIMIT" -gt 0 ]]; then
+    LIMIT_ARG="--limit $LIMIT"
+    BERT_ARGS="--limit $LIMIT --folds 3 --epochs 2"
+    TAG="${BASE}_pilot${LIMIT}"
+  else
+    LIMIT_ARG=""
+    BERT_ARGS="--folds 5 --epochs 4"
+    TAG="$BASE"
+  fi
 fi
 
 ONTO_OUT="results/ontology_results_${TAG}.csv"
@@ -279,12 +349,23 @@ MCQ_OUT="results/mcq_ontology_results_${TAG}.csv"
 BERT_OUT="results/bert_results_${TAG}.csv"
 
 say "Setup"
-ok "dataset   $DATASET  ($(rows_of "$DATASET") rows)"
+if [[ -n "$ONE_ID" ]]; then
+  ok "dataset   $DATASET  (1 row, id=$ONE_ID)"
+else
+  ok "dataset   $DATASET  ($(rows_of "$DATASET") rows)"
+fi
 ok "baseline  $BASELINE"
-ok "limit     $( [[ "$LIMIT" -gt 0 ]] && echo "$LIMIT calls" || echo "all rows" )"
+if [[ -n "$ONE_ID" ]]; then
+  ok "limit     single transcript (id=$ONE_ID)"
+else
+  ok "limit     $( [[ "$LIMIT" -gt 0 ]] && echo "$LIMIT calls" || echo "all rows" )"
+fi
 ok "model     ${MODEL:-none needed for this baseline}"
 ok "logs      $LOGDIR"
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
+if [[ -n "$ONE_ID" && "$RUN_BERT" -eq 1 ]]; then
+  warn "BERT needs several rows per fold to train on; a 1-row run will fail or be meaningless"
+fi
 
 [[ -n "$MODEL" ]] && export SCAM_MODEL="$MODEL" OLLAMA_MODEL="$MODEL"
 
