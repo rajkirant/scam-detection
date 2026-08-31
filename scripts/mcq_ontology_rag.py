@@ -110,7 +110,22 @@ Transcript:
 
 
 def _words(text):
-    return re.findall(r"[a-z']+", text.lower())
+    """Word tokens for the fidelity check.
+
+    These transcripts write contractions with a space instead of an
+    apostrophe - "it s" rather than "it's" - because that is how the ASR
+    that produced them worked. A labelling model writes ordinary English
+    and puts the apostrophe back. Splitting "it's" into "it" + "s" (the
+    same shape the original already has) makes both sides comparable,
+    rather than merging the original's two tokens into one and creating a
+    new mismatch, which made an earlier version of this function worse
+    than not normalising apostrophes at all.
+
+    This is only a tokenisation choice for comparing wording; quotes are
+    still matched against the raw transcript text exactly as written.
+    """
+    text = re.sub(r"([a-z])'([a-z])", r"\1 \2", text.lower())
+    return re.findall(r"[a-z]+", text)
 
 
 def _strip_preamble(text):
