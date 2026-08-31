@@ -2,22 +2,27 @@
 """
 mcq_ontology_rag.py
 
-MCQ-scored ontology detector.
+MCQ-scored ontology detector, with a speaker-labelling pre-pass.
 
-Scoring is a plain sum, with no per-question weight. Every question counts
-equally, and the strength of a signal lives in the option values themselves
-(-1.0 to +1.0), not in a separate weight field. The claimed_identity question
-present in every branch is recorded but always scores 0.0 - it exists so the
-system can explain the impersonation, not so it can vote.
+Pipeline is now three LLM calls per transcript instead of two:
+  1. route      - which call-type branch applies
+  2. label_turns- split the single-stream transcript into Agent:/Caller:
+                  turns, so the questions call does not have to solve
+                  "who said this" and "what does it mean" at the same time
+  3. questions  - answer the branch's MCQ questions on the labelled text
 
-    score > scam_cutoff   -> "scam"
-    score < legit_cutoff  -> "legitimate"
-    otherwise             -> "uncertain"
+Labelling is strictly improve-or-do-nothing: if the model's labelled output
+does not match the original wording closely enough (checked with
+difflib.SequenceMatcher on the word sequence, threshold 0.92), the original
+unlabelled transcript is used instead and nothing about the rest of the
+pipeline changes. This step can only help or be a no-op; it cannot corrupt
+the transcript, because the fidelity check runs before the labelled version
+is trusted for anything.
 
-Both cutoffs default to 0.0 in the ontology JSON's "bands" section, so by
-default the verdict is simply the sign of the sum. RQ2 (personalised alert
-thresholds) moves the scam cutoff per user profile; nothing else about the
-scoring needs to change to support that.
+Quote verification always checks against the ORIGINAL transcript, never the
+labelled one, so labels can never be used to manufacture a passing quote.
+
+Scoring is a plain sum, as before. No per-question weight.
 """
 
 import json
@@ -26,6 +31,7 @@ import re
 import sys
 from collections import Counter
 from pathlib import Path
+from difflib import SequenceMatcher
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -60,6 +66,8 @@ def extract_json(raw):
 
 
 def quote_supported(quote, transcript, min_words=3):
+    """Checked against the ORIGINAL transcript. Callers must never pass a
+    labelled version here - see the note in MCQOntologyDetector.detect()."""
     if not quote:
         return False
     q, t = _norm(quote), _norm(transcript)
@@ -79,6 +87,60 @@ def quote_supported(quote, transcript, min_words=3):
     return False
 
 
+# ---------------------------------------------------------- turn labelling
+
+LABEL_PROMPT = """This is a single-stream transcript of a phone call, with no
+speaker markers. Split it into turns and label each one, alternating between
+the two parties.
+
+Use exactly these labels:
+  Agent:  - whoever answers or represents an organisation
+  Caller: - whoever placed the call, or is reporting a problem
+
+Rules:
+  - Do not change, add, or remove a single word of the transcript.
+  - Do not paraphrase, correct grammar, or add punctuation beyond what is
+    needed to mark a new turn.
+  - If you cannot tell where a turn ends, keep that stretch under whichever
+    label it more plausibly belongs to rather than guessing at word level.
+  - Output only the labelled transcript, nothing else.
+
+Transcript:
+{text}"""
+
+
+def _words(text):
+    return re.findall(r"[a-z']+", text.lower())
+
+
+def label_fidelity(original, labelled):
+    """Word-sequence similarity, ignoring our own Agent:/Caller: tags.
+    A labelling pass that paraphrases will score low here and be rejected."""
+    stripped = re.sub(r"\b(Agent|Caller):\s*", "", labelled)
+    a, b = _words(original), _words(stripped)
+    if not a:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=900):
+    """Return (text_for_questions, was_labelled).
+
+    Strictly improve-or-do-nothing: if the model's output does not match the
+    original wording closely enough, the original transcript is returned
+    unchanged and was_labelled is False. The rest of the pipeline proceeds
+    exactly as it did before this feature existed.
+    """
+    try:
+        raw = ask_fn(LABEL_PROMPT.format(text=transcript), max_tokens=max_tokens)
+    except Exception:
+        return transcript, False
+    labelled = (raw or "").strip()
+    if not labelled or label_fidelity(transcript, labelled) < min_fidelity:
+        return transcript, False
+    return labelled, True
+
+
 # ------------------------------------------------------------- the detector
 
 class DetectionStats:
@@ -89,6 +151,8 @@ class DetectionStats:
         self.quote_missing = 0
         self.quote_unsupported = 0
         self.invalid_option = 0
+        self.labelling_accepted = 0
+        self.labelling_rejected = 0
         self.branch_counts = Counter()
         self.band_counts = Counter()
 
@@ -101,6 +165,11 @@ class DetectionStats:
             if pct > 15:
                 print("    WARNING: %.0f%% routed to 'other'. Branch coverage "
                       "has gaps; those calls score 0 and read as uncertain." % pct)
+        total_lab = self.labelling_accepted + self.labelling_rejected
+        if total_lab:
+            print("    turn labelling: %d accepted, %d rejected (fell back "
+                  "to unlabelled) of %d"
+                  % (self.labelling_accepted, self.labelling_rejected, total_lab))
         issues = (self.routing_unread + self.answers_unread
                   + self.quote_unsupported + self.invalid_option)
         if issues:
@@ -116,7 +185,7 @@ class DetectionStats:
 class MCQOntologyDetector:
 
     def __init__(self, ontology_path=None, model=None, max_tokens=700,
-                 verify_quotes=True, debug=False):
+                 verify_quotes=True, debug=False, label_speakers=True):
         path = Path(ontology_path or DEFAULT_ONTOLOGY)
         if not path.exists():
             raise SystemExit("ontology not found: %s" % path)
@@ -125,6 +194,7 @@ class MCQOntologyDetector:
         self.max_tokens = max_tokens
         self.verify_quotes = verify_quotes
         self.debug = debug
+        self.label_speakers = label_speakers
         self.stats = DetectionStats()
         self._branches = {o["id"]: o for o in self.ont["options"]}
 
@@ -161,22 +231,31 @@ class MCQOntologyDetector:
         self.stats.routing_unread += 1
         return "other", raw
 
-    def _questions_prompt(self, transcript, branch):
-        lines = ["You are analysing a phone call transcript.",
-                 "Answer each question by choosing exactly ONE option id.",
-                 "",
-                 "For every answer you MUST give a short verbatim quote from "
-                 "the transcript that supports it. If the transcript does not "
-                 "state something, answer not_mentioned with an empty quote. "
-                 "Do not guess and do not infer.",
-                 ""]
+    def _questions_prompt(self, text_for_questions, branch, was_labelled):
+        lines = ["You are analysing a phone call transcript."]
+        if was_labelled:
+            lines.append(
+                "Turns are marked Agent: and Caller:. Agent is whoever "
+                "answers or represents an organisation; Caller is whoever "
+                "placed the call or is reporting something. Use these "
+                "labels to decide who said what - do not re-guess turn "
+                "boundaries from wording alone.")
+        lines += [
+            "Answer each question by choosing exactly ONE option id.",
+            "",
+            "For every answer you MUST give a short verbatim quote from "
+            "the transcript that supports it. If the transcript does not "
+            "state something, answer not_mentioned with an empty quote. "
+            "Do not guess and do not infer.",
+            "",
+        ]
         for q in branch["questions"]:
             lines.append("%s: %s" % (q["id"], q["prompt"]))
             for o in q["options"]:
                 lines.append("    %s = %s" % (o["id"], o["text"]))
             lines.append("")
         lines += [
-            "Transcript:", transcript, "",
+            "Transcript:", text_for_questions, "",
             "Reply with JSON only, in exactly this shape:", "{",
         ]
         lines += ['  "%s": {"option": "<id>", "quote": "<verbatim text or empty>"},'
@@ -184,8 +263,10 @@ class MCQOntologyDetector:
         lines += ["}"]
         return "\n".join(lines)
 
-    def _score(self, branch, answers, transcript):
-        """Plain sum. No weight field is read anywhere in this function."""
+    def _score(self, branch, answers, original_transcript):
+        """Plain sum. Quotes are checked against original_transcript, which
+        must be the raw unlabelled text even when labelling was used for the
+        questions prompt - labels must never be able to satisfy a quote."""
         score, detail = 0.0, []
         for q in branch["questions"]:
             ans = answers.get(q["id"]) or {}
@@ -207,7 +288,7 @@ class MCQOntologyDetector:
                         self.stats.quote_missing += 1
                         oid, value = "not_mentioned", 0.0
                         reason = "no quote given"
-                    elif self.verify_quotes and not quote_supported(quote, transcript):
+                    elif self.verify_quotes and not quote_supported(quote, original_transcript):
                         self.stats.quote_unsupported += 1
                         oid, value = "not_mentioned", 0.0
                         reason = "quote not found in transcript"
@@ -241,9 +322,18 @@ class MCQOntologyDetector:
             self.stats.band_counts[band] += 1
             return {"call_type": call_type, "score": 0.0, "band": band,
                     "predicted": "Fraud" if band == "scam" else "Normal",
-                    "detail": [], "note": "no questions for this branch"}
+                    "detail": [], "labelled": False,
+                    "note": "no questions for this branch"}
 
-        raw = self._ask(self._questions_prompt(transcript, branch))
+        text_for_questions, was_labelled = transcript, False
+        if self.label_speakers:
+            text_for_questions, was_labelled = label_turns(transcript, self._ask)
+            if was_labelled:
+                self.stats.labelling_accepted += 1
+            else:
+                self.stats.labelling_rejected += 1
+
+        raw = self._ask(self._questions_prompt(text_for_questions, branch, was_labelled))
         data = extract_json(raw)
         if data is None:
             self.stats.answers_unread += 1
@@ -251,6 +341,7 @@ class MCQOntologyDetector:
             if self.debug:
                 print("      answers unread: %r" % (raw or "")[:200])
 
+        # quotes always checked against the ORIGINAL transcript
         score, detail = self._score(branch, data, transcript)
         band = self._band(score)
         self.stats.band_counts[band] += 1
@@ -261,12 +352,15 @@ class MCQOntologyDetector:
             "band": band,
             "predicted": "Fraud" if band == "scam" else "Normal",
             "detail": detail,
+            "labelled": was_labelled,
+            "labelled_text": text_for_questions if (self.debug and was_labelled) else None,
             "raw_response": (raw or "")[:800] if self.debug else None,
         }
 
     def explain(self, result):
         out = ["call type: %s" % result["call_type"],
-               "verdict: %s (score %+.2f)" % (result["band"], result["score"])]
+               "verdict: %s (score %+.2f)" % (result["band"], result["score"]),
+               "turns labelled: %s" % result.get("labelled", False)]
         for d in result["detail"]:
             if d["contribution"] == 0:
                 continue
@@ -278,4 +372,7 @@ class MCQOntologyDetector:
         skipped = [d for d in result["detail"] if d["downgraded"]]
         for d in skipped:
             out.append("  %-24s dropped: %s" % (d["question"], d["downgraded"]))
+        if result.get("labelled_text"):
+            out.append("  --- labelled transcript used ---")
+            out.append("  " + result["labelled_text"][:500])
         return "\n".join(out)
