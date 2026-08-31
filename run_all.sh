@@ -9,7 +9,9 @@
 #   1. which dataset    (numbered menu of every CSV in datasets/)
 #   2. which baseline   (one system, or all of them)
 #   3. how many calls   (0 = the whole dataset, a number = the first N,
-#                         id:<value> = just the one row with that id)
+#                         id:<value> = the one row whose id column matches,
+#                         idx:<n> = the same call as index n in a --limit 40
+#                         style shuffled run, matching check_one.py --idx)
 #   4. which model      (only asked when the baseline actually calls an LLM)
 #
 # Everything can also be given up front, which skips the questions:
@@ -17,7 +19,8 @@
 #   ./run_all.sh --dataset datasets/zhi_balanced_333x333.csv --baseline singh \
 #                --limit 40 --model qwen2.5:14b
 #   ./run_all.sh --dataset datasets/paired_scam_legit_198.csv --baseline mcq \
-#                --limit id:19 --model qwen2.5:14b   # just transcript id 19
+#                --limit idx:19 --model qwen2.5:14b  # the SAME call as --idx 19
+#                                                     # in check_one.py / a --limit 40 run
 #   ./run_all.sh -d 2 -b 4 -l 0 -m 1          # menu numbers work too
 #
 # When the baseline is "all", BERT runs last because qwen2.5:14b holds ~9.5 GB
@@ -141,7 +144,7 @@ ask_baseline() {
 ONE_ID=""
 ask_limit() {
   echo
-  echo -e "${BLD}  How many calls?${NC}  (0 = the whole dataset, or id:<value> for one transcript)"
+  echo -e "${BLD}  How many calls?${NC}  (0 = whole dataset, id:<value> = one row by its id column,\n  idx:<n> = the same call as index n in a --limit 40 style run)"
   local pick=""
   while true; do
     prompt "  limit: " pick
@@ -181,6 +184,49 @@ with open(path, 'w', newline='', encoding='utf-8') as f:
     w = csv.DictWriter(f, fieldnames=fieldnames)
     w.writeheader()
     w.writerow(rows[0])
+print(path)
+"
+}
+
+# Pull the row at position $1 in the SAME shuffled order that
+# evaluate_mcq_ontology.py's load() produces for a --limit 40 style run
+# (scam/nonscam split, seed 42, sampled to --limit, then shuffled). This is
+# what check_one.py --idx also reproduces, so idx:N here, --idx N there, and
+# a call's position inside a real --limit N run all agree on the same call.
+extract_by_idx() {
+  local idx="$1" csv_in="$2" idx_limit="$3"
+  python3 -c "
+import csv, sys, random, tempfile
+csv.field_size_limit(sys.maxsize)
+SCAM_WORDS = {'scam', 'fraud', 'fraudulent', '1', 'true', 'yes'}
+with open('$csv_in', newline='', encoding='utf-8') as f:
+    r = csv.DictReader(f)
+    rows = list(r)
+    fieldnames = r.fieldnames
+data = []
+for row in rows:
+    lab = (row.get('label') or '').strip().lower()
+    txt = (row.get('text') or '').strip()
+    if txt:
+        data.append(row)
+limit = $idx_limit
+if limit:
+    scam = [row for row in data if (row.get('label') or '').strip().lower() in SCAM_WORDS]
+    norm = [row for row in data if (row.get('label') or '').strip().lower() not in SCAM_WORDS]
+    k = limit // 2
+    random.seed(42)
+    data = random.sample(scam, min(k, len(scam))) + random.sample(norm, min(limit - k, len(norm)))
+random.seed(42)
+random.shuffle(data)
+idx = $idx
+if not (0 <= idx < len(data)):
+    sys.stderr.write('idx %d out of range for %d rows loaded with limit=%d\n' % (idx, len(data), limit))
+    sys.exit(1)
+fd, path = tempfile.mkstemp(prefix='run_all_row_', suffix='.csv')
+with open(path, 'w', newline='', encoding='utf-8') as f:
+    w = csv.DictWriter(f, fieldnames=fieldnames)
+    w.writeheader()
+    w.writerow(data[idx])
 print(path)
 "
 }
@@ -254,11 +300,13 @@ esac
 
 if [[ -n "$ARG_LIMIT" ]]; then
   if [[ "$ARG_LIMIT" =~ ^[0-9]+$ ]]; then
-    LIMIT="$ARG_LIMIT"; ONE_ID=""
+    LIMIT="$ARG_LIMIT"; ONE_ID=""; ONE_IDX=""
   elif [[ "$ARG_LIMIT" =~ ^id:(.+)$ ]]; then
-    LIMIT=0; ONE_ID="${BASH_REMATCH[1]}"
+    LIMIT=0; ONE_ID="${BASH_REMATCH[1]}"; ONE_IDX=""
+  elif [[ "$ARG_LIMIT" =~ ^idx:([0-9]+)$ ]]; then
+    LIMIT=0; ONE_ID=""; ONE_IDX="${BASH_REMATCH[1]}"
   else
-    die "--limit needs a whole number or id:<value>, got '$ARG_LIMIT'"
+    die "--limit needs a whole number, id:<value>, or idx:<n>, got '$ARG_LIMIT'"
   fi
 else
   ask_limit
@@ -310,13 +358,20 @@ fi
 # script - everything after this block behaves exactly as it always did,
 # just against a dataset that happens to have one row in it.
 TMP_ROW_CSV=""
+IDX_LIMIT_USED=40   # must match the --limit you used when you read the idx off a prior run
 if [[ -n "$ONE_ID" ]]; then
   say "Extracting transcript id=$ONE_ID"
   TMP_ROW_CSV="$(extract_single_row "$ONE_ID" "$DATASET")" \
     || die "could not find id '$ONE_ID' in $DATASET"
   ok "wrote $TMP_ROW_CSV"
   DATASET="$TMP_ROW_CSV"
-  # make sure the temp file is removed however the script exits
+  trap '[[ -n "$TMP_ROW_CSV" ]] && rm -f "$TMP_ROW_CSV"' EXIT
+elif [[ -n "$ONE_IDX" ]]; then
+  say "Extracting transcript idx=$ONE_IDX (same order as --limit $IDX_LIMIT_USED, seed 42)"
+  TMP_ROW_CSV="$(extract_by_idx "$ONE_IDX" "$DATASET" "$IDX_LIMIT_USED")" \
+    || die "idx $ONE_IDX not available - check IDX_LIMIT_USED near the top of the script matches the --limit you used elsewhere"
+  ok "wrote $TMP_ROW_CSV"
+  DATASET="$TMP_ROW_CSV"
   trap '[[ -n "$TMP_ROW_CSV" ]] && rm -f "$TMP_ROW_CSV"' EXIT
 fi
 
@@ -324,11 +379,14 @@ STAMP="$(date +%Y%m%d_%H%M%S)"
 LOGDIR="results/logs/run_${STAMP}"
 mkdir -p "$LOGDIR"
 
-if [[ -n "$ONE_ID" ]]; then
+if [[ -n "$ONE_ID" || -n "$ONE_IDX" ]]; then
   BASE="$(basename "${ARG_DATASET:-$DATASET}" .csv)"
-  # sanitise the id for use in a filename (keep alnum, dash, underscore)
-  SAFE_ID="$(echo "$ONE_ID" | tr -c '[:alnum:]_-' '_')"
-  TAG="${BASE}_id${SAFE_ID}"
+  if [[ -n "$ONE_ID" ]]; then
+    SAFE_ID="$(echo "$ONE_ID" | tr -c '[:alnum:]_-' '_')"
+    TAG="${BASE}_id${SAFE_ID}"
+  else
+    TAG="${BASE}_idx${ONE_IDX}"
+  fi
   LIMIT_ARG=""
   BERT_ARGS="--folds 2 --epochs 1"   # a 1-row dataset cannot support 5-fold CV
 else
@@ -351,19 +409,23 @@ BERT_OUT="results/bert_results_${TAG}.csv"
 say "Setup"
 if [[ -n "$ONE_ID" ]]; then
   ok "dataset   $DATASET  (1 row, id=$ONE_ID)"
+elif [[ -n "$ONE_IDX" ]]; then
+  ok "dataset   $DATASET  (1 row, idx=$ONE_IDX of a --limit $IDX_LIMIT_USED order)"
 else
   ok "dataset   $DATASET  ($(rows_of "$DATASET") rows)"
 fi
 ok "baseline  $BASELINE"
 if [[ -n "$ONE_ID" ]]; then
   ok "limit     single transcript (id=$ONE_ID)"
+elif [[ -n "$ONE_IDX" ]]; then
+  ok "limit     single transcript (idx=$ONE_IDX)"
 else
   ok "limit     $( [[ "$LIMIT" -gt 0 ]] && echo "$LIMIT calls" || echo "all rows" )"
 fi
 ok "model     ${MODEL:-none needed for this baseline}"
 ok "logs      $LOGDIR"
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
-if [[ -n "$ONE_ID" && "$RUN_BERT" -eq 1 ]]; then
+if [[ ( -n "$ONE_ID" || -n "$ONE_IDX" ) && "$RUN_BERT" -eq 1 ]]; then
   warn "BERT needs several rows per fold to train on; a 1-row run will fail or be meaningless"
 fi
 
