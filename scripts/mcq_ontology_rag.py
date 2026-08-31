@@ -4,43 +4,20 @@ mcq_ontology_rag.py
 
 MCQ-scored ontology detector.
 
-How this differs from ontology_rag.py
--------------------------------------
-The original ontology matched extracted attribute strings against term lists
-using exact substring matching (`_overlap`). A capable model that paraphrases
-honestly ("prepaid voucher" for "gift card") never matched, so every call
-novel-flagged and the ontology contributed nothing to the verdict.
+Scoring is a plain sum, with no per-question weight. Every question counts
+equally, and the strength of a signal lives in the option values themselves
+(-1.0 to +1.0), not in a separate weight field. The claimed_identity question
+present in every branch is recorded but always scores 0.0 - it exists so the
+system can explain the impersonation, not so it can vote.
 
-Here the model is instead given a fixed list of options and picks one. The
-model handles the synonym problem itself, and scoring is arithmetic over
-option values, so no string matching is involved anywhere.
+    score > scam_cutoff   -> "scam"
+    score < legit_cutoff  -> "legitimate"
+    otherwise             -> "uncertain"
 
-Three design decisions carried over from the ontology analysis:
-
-1. NESTED QUESTIONS. A neutral routing question selects a call-type branch,
-   and each branch asks its own questions. "What is the caller asking you to
-   do?" has different plausible answers for a banking call than a tech
-   support call. The routing question has weight 0 and never contributes to
-   the verdict, because scams and legitimate calls occupy the same categories.
-
-2. BENIGN COUNTERPARTS WITH NEGATIVE VALUES. Every question offers legitimate
-   options alongside scam ones, and legitimate options score negative rather
-   than zero. A scam-only option list forces the model to pick a scam answer
-   and manufactures false positives. Negative values let a genuinely
-   legitimate call produce positive evidence of legitimacy rather than merely
-   failing to accumulate suspicion, which is what separates fit from
-   proximity.
-
-3. QUOTE-BACKED ANSWERS. Every answer other than "not mentioned" must include
-   a verbatim quote, and the quote is checked against the transcript in code.
-   An answer whose quote cannot be found is downgraded to "not mentioned" and
-   scores zero, so a hallucinating model produces "uncertain" rather than a
-   false positive.
-
-Usage as a library:
-    from mcq_ontology_rag import MCQOntologyDetector
-    det = MCQOntologyDetector("knowledge/mcq_ontology.json")
-    result = det.detect(transcript)
+Both cutoffs default to 0.0 in the ontology JSON's "bands" section, so by
+default the verdict is simply the sign of the sum. RQ2 (personalised alert
+thresholds) moves the scam cutoff per user profile; nothing else about the
+scoring needs to change to support that.
 """
 
 import json
@@ -59,17 +36,10 @@ DEFAULT_ONTOLOGY = (Path(__file__).resolve().parent.parent
 # --------------------------------------------------------------- utilities
 
 def _norm(text):
-    """Lowercase and collapse whitespace, for quote checking."""
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
 def extract_json(raw):
-    """Pull the first JSON object out of a model response.
-
-    Models wrap JSON in prose, markdown fences, or both. Returns None if
-    nothing parseable is found - the caller treats that as an unread answer
-    rather than silently defaulting.
-    """
     if not raw:
         return None
     text = re.sub(r"```(?:json)?", "", raw)
@@ -90,12 +60,6 @@ def extract_json(raw):
 
 
 def quote_supported(quote, transcript, min_words=3):
-    """Is the quote actually present in the transcript?
-
-    Tolerates case, whitespace and light punctuation differences, because
-    models rarely reproduce punctuation exactly. Falls back to checking a
-    contiguous run of words, so a lightly-trimmed quote still counts.
-    """
     if not quote:
         return False
     q, t = _norm(quote), _norm(transcript)
@@ -107,7 +71,6 @@ def quote_supported(quote, transcript, min_words=3):
     t_bare = re.sub(r"[^a-z0-9 ]", "", t)
     if q_bare in t_bare:
         return True
-    # longest contiguous window of the quote that appears verbatim
     words = q_bare.split()
     for size in range(len(words), min_words - 1, -1):
         for i in range(len(words) - size + 1):
@@ -119,8 +82,6 @@ def quote_supported(quote, transcript, min_words=3):
 # ------------------------------------------------------------- the detector
 
 class DetectionStats:
-    """Counts the things that quietly go wrong, so they cannot hide."""
-
     def __init__(self):
         self.calls = 0
         self.routing_unread = 0
@@ -167,24 +128,18 @@ class MCQOntologyDetector:
         self.stats = DetectionStats()
         self._branches = {o["id"]: o for o in self.ont["options"]}
 
-    # -- LLM plumbing --------------------------------------------------
-
     def _ask(self, prompt, max_tokens=None):
         import credibility as C
         return C.call_ollama(prompt, max_tokens=max_tokens or self.max_tokens)
 
-    # -- step 1: routing -----------------------------------------------
-
     def _routing_prompt(self, transcript):
-        lines = ["You are classifying a phone call transcript.",
-                 "", self.ont["prompt"], ""]
+        lines = ["You are classifying a phone call transcript.", "",
+                 self.ont.get("prompt", "What kind of call is this?"), ""]
         for o in self.ont["options"]:
             lines.append("  %s = %s" % (o["id"], o["text"]))
         lines += [
             "",
-            "Transcript:",
-            transcript,
-            "",
+            "Transcript:", transcript, "",
             "This question is only about the SUBJECT of the call. It is not "
             "about whether the call is a scam. Legitimate and fraudulent calls "
             "both occur in every category.",
@@ -199,15 +154,12 @@ class MCQOntologyDetector:
         cid = (data or {}).get("call_type")
         if cid in self._branches:
             return cid, raw
-        # fall back to a bare mention of a known branch id
         low = (raw or "").lower()
         for bid in self._branches:
             if bid in low:
                 return bid, raw
         self.stats.routing_unread += 1
         return "other", raw
-
-    # -- step 2: branch questions --------------------------------------
 
     def _questions_prompt(self, transcript, branch):
         lines = ["You are analysing a phone call transcript.",
@@ -224,23 +176,18 @@ class MCQOntologyDetector:
                 lines.append("    %s = %s" % (o["id"], o["text"]))
             lines.append("")
         lines += [
-            "Transcript:",
-            transcript,
-            "",
-            "Reply with JSON only, in exactly this shape:",
-            "{",
+            "Transcript:", transcript, "",
+            "Reply with JSON only, in exactly this shape:", "{",
         ]
         lines += ['  "%s": {"option": "<id>", "quote": "<verbatim text or empty>"},'
                   % q["id"] for q in branch["questions"]]
         lines += ["}"]
         return "\n".join(lines)
 
-    # -- step 3: scoring -----------------------------------------------
-
     def _score(self, branch, answers, transcript):
-        raw_score, weight_sum, detail = 0.0, 0.0, []
+        """Plain sum. No weight field is read anywhere in this function."""
+        score, detail = 0.0, []
         for q in branch["questions"]:
-            weight_sum += q["weight"]
             ans = answers.get(q["id"]) or {}
             oid = ans.get("option")
             quote = ans.get("quote") or ""
@@ -265,25 +212,23 @@ class MCQOntologyDetector:
                         oid, value = "not_mentioned", 0.0
                         reason = "quote not found in transcript"
 
-            contrib = q["weight"] * value
-            raw_score += contrib
+            score += value
             detail.append({"question": q["id"], "option": oid,
-                           "weight": q["weight"], "value": value,
-                           "contribution": round(contrib, 3),
+                           "value": value, "contribution": round(value, 3),
                            "quote": quote[:160], "downgraded": reason})
 
-        norm = raw_score / weight_sum if weight_sum else 0.0
-        return raw_score, norm, weight_sum, detail
+        return score, detail
 
-    def _band(self, norm):
-        for b in self.ont["bands"]:
-            lo = b.get("min", float("-inf"))
-            hi = b.get("max", float("inf"))
-            if lo <= norm < hi:
-                return b["label"]
-        return self.ont["bands"][-1]["label"]
-
-    # -- public --------------------------------------------------------
+    def _band(self, score):
+        lo = next((b["max"] for b in self.ont["bands"]
+                   if b["label"] == "legitimate"), 0.0)
+        hi = next((b["min"] for b in self.ont["bands"]
+                   if b["label"] == "scam"), 0.0)
+        if score > hi:
+            return "scam"
+        if score < lo:
+            return "legitimate"
+        return "uncertain"
 
     def detect(self, transcript):
         self.stats.calls += 1
@@ -292,11 +237,9 @@ class MCQOntologyDetector:
         branch = self._branches[call_type]
 
         if not branch.get("questions"):
-            # 'other' branch, or any branch with no questions defined
             band = self._band(0.0)
             self.stats.band_counts[band] += 1
-            return {"call_type": call_type, "raw_score": 0.0,
-                    "normalised": 0.0, "band": band,
+            return {"call_type": call_type, "score": 0.0, "band": band,
                     "predicted": "Fraud" if band == "scam" else "Normal",
                     "detail": [], "note": "no questions for this branch"}
 
@@ -308,15 +251,13 @@ class MCQOntologyDetector:
             if self.debug:
                 print("      answers unread: %r" % (raw or "")[:200])
 
-        raw_score, norm, wsum, detail = self._score(branch, data, transcript)
-        band = self._band(norm)
+        score, detail = self._score(branch, data, transcript)
+        band = self._band(score)
         self.stats.band_counts[band] += 1
 
         return {
             "call_type": call_type,
-            "raw_score": round(raw_score, 3),
-            "normalised": round(norm, 4),
-            "branch_weight": wsum,
+            "score": round(score, 3),
             "band": band,
             "predicted": "Fraud" if band == "scam" else "Normal",
             "detail": detail,
@@ -324,10 +265,8 @@ class MCQOntologyDetector:
         }
 
     def explain(self, result):
-        """Human-readable account of a verdict, for the interpretability
-        dimension of the benchmark."""
         out = ["call type: %s" % result["call_type"],
-               "verdict: %s (normalised %.3f)" % (result["band"], result["normalised"])]
+               "verdict: %s (score %+.2f)" % (result["band"], result["score"])]
         for d in result["detail"]:
             if d["contribution"] == 0:
                 continue
