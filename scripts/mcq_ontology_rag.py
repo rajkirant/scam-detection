@@ -113,6 +113,15 @@ def _words(text):
     return re.findall(r"[a-z']+", text.lower())
 
 
+def _strip_preamble(text):
+    """Models often add a line like 'Here is the labelled transcript:'
+    before the real content, despite being told not to. Cut everything
+    before the first real label so that wrapper text cannot fail the
+    fidelity check on its own."""
+    m = re.search(r"\b(Agent|Caller):", text)
+    return text[m.start():] if m else text
+
+
 def label_fidelity(original, labelled):
     """Word-sequence similarity, ignoring our own Agent:/Caller: tags.
     A labelling pass that paraphrases will score low here and be rejected."""
@@ -123,22 +132,35 @@ def label_fidelity(original, labelled):
     return SequenceMatcher(None, a, b).ratio()
 
 
-def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=900):
-    """Return (text_for_questions, was_labelled).
+def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=900, debug=False):
+    """Return (text_for_questions, was_labelled, reason).
 
     Strictly improve-or-do-nothing: if the model's output does not match the
     original wording closely enough, the original transcript is returned
     unchanged and was_labelled is False. The rest of the pipeline proceeds
     exactly as it did before this feature existed.
+
+    A common, harmless failure is the model adding a preamble sentence
+    ("Here is the labelled transcript:") before the real content. That
+    preamble is stripped before the fidelity check, so it cannot sink an
+    otherwise faithful labelling.
     """
     try:
         raw = ask_fn(LABEL_PROMPT.format(text=transcript), max_tokens=max_tokens)
-    except Exception:
-        return transcript, False
-    labelled = (raw or "").strip()
-    if not labelled or label_fidelity(transcript, labelled) < min_fidelity:
-        return transcript, False
-    return labelled, True
+    except Exception as exc:
+        return transcript, False, "request failed: %s" % exc
+
+    labelled = _strip_preamble((raw or "").strip())
+    if not labelled:
+        return transcript, False, "empty response"
+
+    fid = label_fidelity(transcript, labelled)
+    if debug:
+        print("      label fidelity: %.3f (need >= %.2f)" % (fid, min_fidelity))
+        print("      label output  : %r" % labelled[:200])
+    if fid < min_fidelity:
+        return transcript, False, "fidelity %.2f below threshold" % fid
+    return labelled, True, None
 
 
 # ------------------------------------------------------------- the detector
@@ -325,13 +347,16 @@ class MCQOntologyDetector:
                     "detail": [], "labelled": False,
                     "note": "no questions for this branch"}
 
-        text_for_questions, was_labelled = transcript, False
+        text_for_questions, was_labelled, label_reason = transcript, False, None
         if self.label_speakers:
-            text_for_questions, was_labelled = label_turns(transcript, self._ask)
+            text_for_questions, was_labelled, label_reason = label_turns(
+                transcript, self._ask, debug=self.debug)
             if was_labelled:
                 self.stats.labelling_accepted += 1
             else:
                 self.stats.labelling_rejected += 1
+                if self.debug and label_reason:
+                    print("      labelling rejected: %s" % label_reason)
 
         raw = self._ask(self._questions_prompt(text_for_questions, branch, was_labelled))
         data = extract_json(raw)
