@@ -260,6 +260,11 @@
               "value": -1.0
             },
             {
+              "id": "unclear",
+              "text": "Not clear from the transcript who raised it first",
+              "value": 0.0
+            },
+            {
               "id": "not_mentioned",
               "text": "Not stated",
               "value": 0.0
