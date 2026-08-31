@@ -424,6 +424,8 @@ else
 fi
 ok "model     ${MODEL:-none needed for this baseline}"
 ok "logs      $LOGDIR"
+SINGLE_MODE=0
+[[ -n "$ONE_ID" || -n "$ONE_IDX" ]] && SINGLE_MODE=1
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
 if [[ ( -n "$ONE_ID" || -n "$ONE_IDX" ) && "$RUN_BERT" -eq 1 ]]; then
   warn "BERT needs several rows per fold to train on; a 1-row run will fail or be meaningless"
@@ -442,7 +444,17 @@ run_step() {
   say "$name"
   echo "  $*"
   local t0; t0=$(date +%s)
-  if "$@" > "$log" 2>&1; then
+  local status
+  if [[ "${SINGLE_MODE:-0}" -eq 1 ]]; then
+    # show the detail live instead of hiding it in a log file - the whole
+    # point of a single-transcript run is to read this output
+    "$@" 2>&1 | tee "$log"
+    status=${PIPESTATUS[0]}
+  else
+    "$@" > "$log" 2>&1
+    status=$?
+  fi
+  if [[ "$status" -eq 0 ]]; then
     STATUS[$name]="ok"
   else
     STATUS[$name]="FAILED"
@@ -452,7 +464,7 @@ run_step() {
     ok "${DURATION[$name]}s"
   else
     warn "failed after ${DURATION[$name]}s"
-    tail -12 "$log" | sed 's/^/     /'
+    [[ "${SINGLE_MODE:-0}" -eq 0 ]] && tail -12 "$log" | sed 's/^/     /'
   fi
 }
 
@@ -467,18 +479,24 @@ fi
 
 # ---------------------------------------------------------- 2. ontology RAG
 if [[ "$RUN_ONTOLOGY" -eq 1 ]]; then
+  DEBUG_FLAG=""; [[ "$SINGLE_MODE" -eq 1 ]] && DEBUG_FLAG="--debug"
+  if [[ "$SINGLE_MODE" -eq 1 ]]; then
+    warn "evaluate_ontology.py (term-list) has no per-question explain output;"
+    warn "choose baseline 'mcq' instead to see the Agent/Caller breakdown"
+  fi
   # shellcheck disable=SC2086
   run_step "ontology" python -u scripts/evaluate_ontology.py \
     --csv "$DATASET" --model "$MODEL" --ontology "$ONTOLOGY" \
-    --out "$ONTO_OUT" $LIMIT_ARG
+    --out "$ONTO_OUT" $LIMIT_ARG $DEBUG_FLAG
 fi
 
 # ---------------------------------------------------------- 3. MCQ ontology
 if [[ "$RUN_MCQ" -eq 1 ]]; then
+  DEBUG_FLAG=""; [[ "$SINGLE_MODE" -eq 1 ]] && DEBUG_FLAG="--debug"
   # shellcheck disable=SC2086
   run_step "mcq" python -u scripts/evaluate_mcq_ontology.py \
     --csv "$DATASET" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
-    --out "$MCQ_OUT" $LIMIT_ARG
+    --out "$MCQ_OUT" $LIMIT_ARG $DEBUG_FLAG
 fi
 
 # --------------------------------------------------------- 4. free GPU, BERT
