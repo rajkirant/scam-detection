@@ -17,21 +17,13 @@
               "text": "A bank fraud or security team",
               "value": 0.0
             },
-            {
-              "id": "bank_general",
-              "text": "A bank, generally",
-              "value": 0.0
-            },
+            { "id": "bank_general", "text": "A bank, generally", "value": 0.0 },
             {
               "id": "other_org",
               "text": "Some other organisation",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ],
           "note": "Every option scores zero. This attribute is recorded because it is what makes the call an impersonation, and because the verdict has to be explainable to the person: 'someone claiming to be your bank asked you to move money'. It is not scored, because a real bank also says it is a bank, so on its own it separates nothing."
         },
@@ -64,11 +56,7 @@
               "text": "Call back on a published number, or visit a branch",
               "value": -1.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -100,11 +88,7 @@
               "text": "Nothing is being moved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -136,11 +120,7 @@
               "text": "No payment involved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -167,11 +147,7 @@
               "text": "Caller proves their own identity, or invites a call back",
               "value": -1.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -198,11 +174,7 @@
               "text": "No time pressure; free to act later or hang up",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         }
       ]
@@ -232,26 +204,22 @@
               "text": "The person's own IT department",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ],
           "note": "Every option scores zero. This attribute is recorded because it is what makes the call an impersonation, and because the verdict has to be explainable to the person: 'someone claiming to be your bank asked you to move money'. It is not scored, because a real bank also says it is a bank, so on its own it separates nothing."
         },
         {
           "id": "problem_origin",
-          "prompt": "Who first identified the technical problem?",
+          "prompt": "Who first raised the technical problem? The transcript is labelled Agent and Caller: Agent is whoever answers or represents an organisation; Caller is whoever placed the call or is reporting something.",
           "options": [
             {
               "id": "caller_claims",
-              "text": "The caller told the person they have a problem",
+              "text": "The Agent told the Caller about a problem the Caller did not already know about",
               "value": 1.0
             },
             {
               "id": "person_reported",
-              "text": "The person had already reported it themselves",
+              "text": "The Caller already knew about the problem and raised it themselves",
               "value": -1.0
             },
             {
@@ -264,12 +232,9 @@
               "text": "Not clear from the transcript who raised it first",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
-          ]
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
+          ],
+          "note": "Options reference the Agent/Caller labels directly, since the labelling step reliably identifies which turn belongs to which party. Earlier wording ('the caller told the person', 'the person had already reported it') left the model to re-guess the same mapping the labels already establish, and it guessed wrong on inbound support calls where the party who dialled in (the Caller) is the one with the problem, not the one causing it."
         },
         {
           "id": "requested_action",
@@ -300,11 +265,7 @@
               "text": "Nothing, or information only",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -331,11 +292,7 @@
               "text": "No remote access is requested",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -347,11 +304,7 @@
               "text": "Gift cards, prepaid cards, or vouchers",
               "value": 1.0
             },
-            {
-              "id": "crypto",
-              "text": "Cryptocurrency",
-              "value": 1.0
-            },
+            { "id": "crypto", "text": "Cryptocurrency", "value": 1.0 },
             {
               "id": "wire_urgent",
               "text": "Immediate wire transfer",
@@ -367,11 +320,7 @@
               "text": "No payment involved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -393,11 +342,7 @@
               "text": "No urgency; can be dealt with later",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         }
       ]
@@ -412,11 +357,7 @@
           "role": "recorded",
           "prompt": "Who does the caller say they are?",
           "options": [
-            {
-              "id": "tax_agency",
-              "text": "A tax authority",
-              "value": 0.0
-            },
+            { "id": "tax_agency", "text": "A tax authority", "value": 0.0 },
             {
               "id": "police",
               "text": "Police or law enforcement",
@@ -427,11 +368,7 @@
               "text": "An immigration authority",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ],
           "note": "Every option scores zero. This attribute is recorded because it is what makes the call an impersonation, and because the verdict has to be explainable to the person: 'someone claiming to be your bank asked you to move money'. It is not scored, because a real bank also says it is a bank, so on its own it separates nothing."
         },
@@ -464,11 +401,7 @@
               "text": "Nothing, or information only",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -490,16 +423,8 @@
               "text": "Ordinary administrative process with a deadline in writing",
               "value": -0.8
             },
-            {
-              "id": "none",
-              "text": "No consequence described",
-              "value": -0.5
-            },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "none", "text": "No consequence described", "value": -0.5 },
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -531,11 +456,7 @@
               "text": "No payment involved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -557,11 +478,7 @@
               "text": "Invited to call the published number or check online",
               "value": -1.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         }
       ]
@@ -591,11 +508,7 @@
               "text": "A customs or border agency",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ],
           "note": "Every option scores zero. This attribute is recorded because it is what makes the call an impersonation, and because the verdict has to be explainable to the person: 'someone claiming to be your bank asked you to move money'. It is not scored, because a real bank also says it is a bank, so on its own it separates nothing."
         },
@@ -623,11 +536,7 @@
               "text": "Confirm an address the person already gave",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -644,11 +553,7 @@
               "text": "It matches something the person ordered",
               "value": -1.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -675,11 +580,7 @@
               "text": "No payment involved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -696,11 +597,7 @@
               "text": "No urgency; can be arranged later",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         }
       ]
@@ -730,11 +627,7 @@
               "text": "A collections or cancellations department",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ],
           "note": "Every option scores zero, for the same reason as in the other branches: a real billing team also says it is a billing team, so the claim alone separates nothing."
         },
@@ -762,11 +655,7 @@
               "text": "Cancel or amend something themselves through their account",
               "value": -1.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -783,11 +672,7 @@
               "text": "The caller confirms nothing has been taken and explains why",
               "value": -1.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -814,11 +699,7 @@
               "text": "No payment is involved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -835,11 +716,7 @@
               "text": "No urgency; can be sorted later through the account",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         }
       ]
@@ -864,11 +741,7 @@
               "text": "The card issuer's fraud team, about a purchase",
               "value": 0.0
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ],
           "note": "Every option scores zero. Impersonating a retailer or a card issuer is common to both genuine order-verification calls and scams, so the claim on its own carries no signal."
         },
@@ -896,11 +769,7 @@
               "text": "Nothing; the call is informational only",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -917,11 +786,7 @@
               "text": "The person does not recognise the order at all",
               "value": 0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -943,11 +808,7 @@
               "text": "No payment or refund is involved",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         },
         {
@@ -964,11 +825,7 @@
               "text": "No urgency; the order or refund can be checked later",
               "value": -0.5
             },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
+            { "id": "not_mentioned", "text": "Not stated", "value": 0.0 }
           ]
         }
       ]
@@ -988,18 +845,8 @@
     "known_limitation": "A plain sum treats every attribute as independent, so it cannot express a combination such as 'claims to be a bank AND asks for payment in gift cards', which is far more suspicious than either answer alone. Capturing such interactions is left as future work; the attributes involved are recorded so that it remains possible."
   },
   "bands": [
-    {
-      "label": "legitimate",
-      "max": 0.0
-    },
-    {
-      "label": "uncertain",
-      "min": 0.0,
-      "max": 0.0
-    },
-    {
-      "label": "scam",
-      "min": 0.0
-    }
+    { "label": "legitimate", "max": 0.0 },
+    { "label": "uncertain", "min": 0.0, "max": 0.0 },
+    { "label": "scam", "min": 0.0 }
   ]
 }
