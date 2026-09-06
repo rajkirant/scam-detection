@@ -5,10 +5,12 @@
 #   ./web_ui.sh                 # foreground, http://localhost:8000
 #   ./web_ui.sh --port 8080
 #   ./web_ui.sh --tmux          # detached, survives an SSH disconnect
-#   ./web_ui.sh --host 0.0.0.0  # reachable from other machines on the network
+#   ./web_ui.sh --local         # this machine only
 #
-# The server binds to 127.0.0.1 by default, so from your laptop forward the
-# port instead of exposing it:
+# It binds every interface, so another machine on the same network can open
+# it directly - the startup banner prints the address to use. Anyone who can
+# reach the port can start and stop runs on this box, so on an untrusted
+# network use --local and forward the port instead:
 #
 #   ssh -L 8000:localhost:8000 rkt29@cs25003ay
 #
@@ -29,13 +31,14 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR" || die "cannot cd to $PROJECT_DIR"
 
 PORT=8000
-HOST=127.0.0.1
+HOST=0.0.0.0        # every interface: other machines can reach it
 DETACH=0
 SESSION="scam_ui"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--port)    PORT="${2:-}";    shift 2 ;;
     --host)       HOST="${2:-}";    shift 2 ;;
+    --local)      HOST=127.0.0.1;   shift   ;;
     -t|--tmux)    DETACH=1;         shift   ;;
     -s|--session) SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
@@ -60,7 +63,7 @@ command -v python3 >/dev/null || die "python3 not found"
 if [[ "$DETACH" -eq 1 ]]; then
   mkdir -p results/logs
   UILOG="$PROJECT_DIR/results/logs/web_ui.log"
-  CMD="cd $(printf %q "$PROJECT_DIR") && exec python3 scripts/web_ui.py --port $PORT --host $HOST"
+  CMD="cd $(printf %q "$PROJECT_DIR") && exec python3 -u scripts/web_ui.py --port $PORT --host $HOST"
   say "Starting the UI detached"
   if command -v tmux >/dev/null; then
     tmux has-session -t "$SESSION" 2>/dev/null \
@@ -74,12 +77,20 @@ if [[ "$DETACH" -eq 1 ]]; then
     ok "pid       $!"
   fi
   ok "url       http://localhost:$PORT"
+  if [[ "$HOST" == "127.0.0.1" ]]; then
+    ok "reach     this machine only"
+  else
+    LAN="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [[ -n "$LAN" ]] && ok "elsewhere http://$LAN:$PORT"
+  fi
   ok "log       $UILOG"
   echo
-  echo "  from your laptop:  ssh -L $PORT:localhost:$PORT \$USER@\$(hostname)"
+  if [[ "$HOST" == "127.0.0.1" ]]; then
+    echo "  from your laptop:  ssh -L $PORT:localhost:$PORT \$USER@\$(hostname)"
+  fi
   echo "  stop the server:   tmux kill-session -t $SESSION   (runs keep going)"
   echo
   exit 0
 fi
 
-exec python3 scripts/web_ui.py --port "$PORT" --host "$HOST"
+exec python3 -u scripts/web_ui.py --port "$PORT" --host "$HOST"

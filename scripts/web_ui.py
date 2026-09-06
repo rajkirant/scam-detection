@@ -1000,12 +1000,37 @@ boot();
 """
 
 
+def lan_address():
+    """The address other machines can reach this box on.
+
+    Asks the routing table which local interface would be used to get out,
+    which is the one a colleague on the same network will come in on. The
+    UDP socket is never actually sent anything.
+    """
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return None
+    finally:
+        s.close()
+
+
 def main():
     ap = argparse.ArgumentParser(description="browser front end for run_all.sh")
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--host", default="127.0.0.1",
-                    help="127.0.0.1 (default) or 0.0.0.0 to expose it")
+    ap.add_argument("--host", default="0.0.0.0",
+                    help="interface to bind (default 0.0.0.0: every one)")
+    ap.add_argument("--local", action="store_true",
+                    help="bind 127.0.0.1 only - this machine, or an SSH tunnel")
     args = ap.parse_args()
+    if args.local:
+        args.host = "127.0.0.1"
 
     if not RUN_ALL.exists():
         sys.exit("run_all.sh not found next to scripts/ - run this from the repo")
@@ -1013,13 +1038,20 @@ def main():
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     srv.daemon_threads = True
-    where = "http://%s:%d" % ("localhost" if args.host == "127.0.0.1" else args.host,
-                              args.port)
-    print("scam-detection UI on %s" % where)
+
+    print("scam-detection UI")
+    print("  here:           http://localhost:%d" % args.port)
     if args.host == "127.0.0.1":
-        print("over SSH:  ssh -L %d:localhost:%d %s@<host>"
+        print("  local only - other machines cannot reach it")
+        print("  over SSH:      ssh -L %d:localhost:%d %s@<this host>"
               % (args.port, args.port, os.environ.get("USER", "you")))
-    print("ctrl-c to stop the server (runs already going are not affected)")
+    else:
+        ip = lan_address()
+        if ip:
+            print("  other machines: http://%s:%d" % (ip, args.port))
+        # anyone who can reach the port can start and stop runs on this box
+        print("  open to the network - run with --local to keep it to this machine")
+    print("  ctrl-c stops the server (runs already going are not affected)")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
