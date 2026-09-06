@@ -4,7 +4,7 @@
 #
 #   ./run_all.sh
 #
-# Asks up to four questions, then runs just what you picked:
+# Asks up to five questions, then runs just what you picked:
 #
 #   1. which dataset    (numbered menu of every CSV in datasets/)
 #   2. which baseline   (one system, or all of them)
@@ -13,6 +13,7 @@
 #                         idx:<n> = the same call as index n in a --limit 40
 #                         style shuffled run, matching check_one.py --idx)
 #   4. which model      (only asked when the baseline actually calls an LLM)
+#   5. tmux or not      (always asked, whatever the other four answers were)
 #
 # Everything can also be given up front, which skips the questions:
 #
@@ -22,6 +23,19 @@
 #                --limit idx:19 --model qwen2.5:14b  # the SAME call as --idx 19
 #                                                     # in check_one.py / a --limit 40 run
 #   ./run_all.sh -d 2 -b 4 -l 0 -m 1          # menu numbers work too
+#
+# A long run can outlive the SSH session, so question 5 offers to hand the
+# actual work to a detached tmux session: closing the terminal, or losing
+# the link, then does not kill it. It is asked on every run, including a
+# fully flagged one, and defaults to no. --tmux answers it up front:
+#
+#   ./run_all.sh --tmux                       # menus, then detach
+#   ./run_all.sh -d 3 -b 1 -l 0 -m 1 --tmux   # no questions at all
+#   ./run_all.sh --tmux --session nightly     # name the session yourself
+#
+# Everything the run prints is teed to a log, so the output survives even
+# if the tmux session is later killed. With no tmux installed it falls
+# back to setsid+nohup, which also survives a disconnect.
 #
 # When the baseline is "all", BERT runs last because qwen2.5:14b holds ~9.5 GB
 # of 11.4 GB VRAM and BERT fine-tuning needs 3-4 GB. They cannot both be
@@ -62,13 +76,16 @@ prompt() {            # prompt <text> <varname>   - read only echoes its own
 
 # ---------------------------------------------------------------- arguments
 ARG_DATASET=""; ARG_BASELINE=""; ARG_LIMIT=""; ARG_MODEL=""
+DETACH=0; SESSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -d|--dataset)  ARG_DATASET="${2:-}";  shift 2 ;;
     -b|--baseline) ARG_BASELINE="${2:-}"; shift 2 ;;
     -l|--limit)    ARG_LIMIT="${2:-}";    shift 2 ;;
     -m|--model)    ARG_MODEL="${2:-}";    shift 2 ;;
-    -h|--help)     sed -n '2,26p' "$0" | sed 's/^# \?//'; exit 0 ;;
+    -t|--tmux)     DETACH=1;              shift   ;;
+    -s|--session)  SESSION="${2:-}"; DETACH=1; shift 2 ;;
+    -h|--help)     awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
     *)             die "unknown argument: $1  (try --help)" ;;
   esac
 done
@@ -236,6 +253,22 @@ print(path)
 "
 }
 
+# ------------------------------------------------------------- detach menu
+# Deliberately not prompt(), which dies on EOF. A fully flagged run gets
+# asked this too, and such a run may have no terminal on stdin at all, so
+# EOF - like an empty answer - has to mean "no, run in the foreground".
+ask_detach() {
+  echo
+  echo -e "${BLD}  Run detached in tmux?${NC}  (survives an SSH disconnect)"
+  local pick=""
+  printf "  [y/N]: "
+  read -r pick || pick=""
+  case "$pick" in
+    [yY]|[yY][eE][sS]) DETACH=1 ;;
+    *)                 DETACH=0 ;;
+  esac
+}
+
 # --------------------------------------------------------------- model menu
 OLLAMA_URL="http://localhost:11434"
 PULLED=""                       # raw /api/tags JSON, empty if Ollama is down
@@ -330,6 +363,14 @@ if [[ "$NEEDS_MODEL" -eq 1 ]]; then
   fi
 fi
 
+# Asked on every run, no matter how the other four answers arrived, since
+# whether a run should outlive the SSH session is independent of what it
+# is running. --tmux/--session on the command line have already answered
+# it, and the copy inside tmux must not be asked at all.
+if [[ "$DETACH" -eq 0 && -z "${RUN_ALL_DETACHED:-}" ]]; then
+  ask_detach
+fi
+
 # --------------------------------------------------------------- preflight
 # only the LLM baselines need Ollama, so only they are blocked by it
 if [[ "$NEEDS_MODEL" -eq 1 ]]; then
@@ -346,6 +387,71 @@ fi
 [[ -f "$DATASET" ]] || die "missing $DATASET"
 [[ "$RUN_ONTOLOGY" -eq 1 && ! -f "$ONTOLOGY" ]] && die "missing $ONTOLOGY"
 [[ "$RUN_MCQ" -eq 1 && ! -f "$MCQ_ONTOLOGY" ]] && die "missing $MCQ_ONTOLOGY"
+
+# ------------------------------------------------------- detached re-exec
+# Everything above is cheap and interactive: the menus, the Ollama probe,
+# the file checks. Everything below is the long part. So the split happens
+# here - the answers are turned back into flags and handed to a copy of
+# this script running under tmux, which asks nothing and outlives the SSH
+# session. RUN_ALL_DETACHED stops that copy from detaching again.
+SELF="$PROJECT_DIR/$(basename "${BASH_SOURCE[0]}")"
+
+relaunch_cmd() {           # the exact command line the detached copy runs
+  local lim
+  if   [[ -n "$ONE_ID"  ]]; then lim="id:$ONE_ID"
+  elif [[ -n "$ONE_IDX" ]]; then lim="idx:$ONE_IDX"
+  else                           lim="$LIMIT"
+  fi
+  printf 'bash %q --dataset %q --baseline %q --limit %q' \
+    "$SELF" "$DATASET" "$BASELINE" "$lim"
+  [[ -n "$MODEL" ]] && printf ' --model %q' "$MODEL"
+  printf '\n'
+}
+
+if [[ "$DETACH" -eq 1 && -z "${RUN_ALL_DETACHED:-}" ]]; then
+  DSTAMP="$(date +%Y%m%d_%H%M%S)"
+  [[ -n "$SESSION" ]] || SESSION="scam_${BASELINE}_${DSTAMP}"
+  mkdir -p results/logs
+  DLOG="$PROJECT_DIR/results/logs/detached_${SESSION}.log"
+
+  # A launcher script rather than a nested -c string: no quoting to get
+  # wrong, and it is left on disk as a record of what was actually run.
+  LAUNCH="$PROJECT_DIR/results/logs/launch_${SESSION}.sh"
+  {
+    echo "#!/usr/bin/env bash"
+    printf 'cd %q || exit 1\n' "$PROJECT_DIR"
+    echo "export RUN_ALL_DETACHED=1"
+    printf '%s 2>&1 | tee -a %q\n' "$(relaunch_cmd)" "$DLOG"
+  } > "$LAUNCH"
+  chmod +x "$LAUNCH"
+
+  say "Detaching"
+  ok "dataset   $DATASET"
+  ok "baseline  $BASELINE"
+  ok "model     ${MODEL:-none}"
+  if command -v tmux >/dev/null; then
+    tmux new-session -d -s "$SESSION" "bash $(printf %q "$LAUNCH")" \
+      || die "tmux could not start session $SESSION"
+    # keep the finished pane around so the results table can be read back
+    tmux set-option -t "$SESSION" remain-on-exit on >/dev/null 2>&1 || true
+    ok "session   $SESSION"
+    ok "log       $DLOG"
+    echo
+    echo "  watch it:   tmux attach -t $SESSION      (detach again: ctrl-b d)"
+    echo "  or tail:    tail -f $DLOG"
+    echo "  stop it:    tmux kill-session -t $SESSION"
+  else
+    warn "falling back to setsid + nohup, which also survives a disconnect"
+    setsid nohup bash "$LAUNCH" >/dev/null 2>&1 &
+    ok "pid       $!"
+    ok "log       $DLOG"
+    echo
+    echo "  watch it:   tail -f $DLOG"
+    echo "  stop it:    kill $!"
+  fi
+  echo
+  exit 0
+fi
 
 if [[ -f venv/bin/activate ]]; then
   # shellcheck disable=SC1091
