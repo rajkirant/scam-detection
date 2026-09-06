@@ -505,17 +505,51 @@ if [[ "$RUN_MCQ" -eq 1 ]]; then
 fi
 
 # --------------------------------------------------------- 4. free GPU, BERT
+# Ask Ollama what it is currently holding in VRAM. Prints one model name per
+# line, and nothing at all if Ollama is down or idle.
+ollama_loaded() {
+  curl -s -m 5 "$OLLAMA_URL/api/ps" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    for m in json.load(sys.stdin).get('models', []):
+        name = m.get('name') or m.get('model')
+        if name:
+            print(name)
+except Exception:
+    pass
+" 2>/dev/null
+}
+
+BERT_MIN_FREE_MB="${BERT_MIN_FREE_MB:-4000}"
+
 if [[ "$RUN_BERT" -eq 1 ]]; then
-  if [[ -n "$MODEL" && "$OLLAMA_UP" -eq 1 ]]; then
-    say "Unloading $MODEL"
-    curl -s "$OLLAMA_URL/api/generate" \
-      -d "{\"model\":\"$MODEL\",\"prompt\":\"\",\"keep_alive\":0}" >/dev/null
-    sleep 5
+  # Every resident model has to go, not just $MODEL. When the baseline is
+  # "bert" on its own $MODEL is empty, but a qwen2.5:14b left loaded by an
+  # earlier run still owns ~9 GB, and BERT then OOMs part way into fold 1.
+  if [[ "$OLLAMA_UP" -eq 1 ]]; then
+    LOADED="$(ollama_loaded)"
+    if [[ -n "$LOADED" ]]; then
+      while read -r m; do
+        [[ -z "$m" ]] && continue
+        say "Unloading $m"
+        curl -s "$OLLAMA_URL/api/generate" \
+          -d "{\"model\":\"$m\",\"prompt\":\"\",\"keep_alive\":0}" >/dev/null
+      done <<< "$LOADED"
+      sleep 5
+    fi
   fi
-  if command -v nvidia-smi >/dev/null; then
+  if command -v nvidia-smi >/dev/null && [[ "$BERT_MIN_FREE_MB" -gt 0 ]]; then
     FREE="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1 | tr -d ' ')"
     ok "${FREE} MB VRAM free"
-    [[ "$FREE" -lt 4000 ]] && warn "low, BERT may hit CUDA OOM"
+    if [[ "$FREE" -lt "$BERT_MIN_FREE_MB" ]]; then
+      # Stopping here costs a second. Going ahead costs minutes and still fails.
+      warn "BERT needs about ${BERT_MIN_FREE_MB} MB, only ${FREE} MB is free"
+      [[ "$OLLAMA_UP" -eq 1 ]] && warn "still resident: $(ollama_loaded | tr '\n' ' ')"
+      die "not enough VRAM for BERT
+       see what holds the GPU with:  nvidia-smi
+       if it is Ollama:              ollama stop <model>
+       to try anyway:                BERT_MIN_FREE_MB=0 ./run_all.sh ..."
+    fi
   fi
   # shellcheck disable=SC2086
   run_step "bert" python -u scripts/bert_baseline.py cv \
