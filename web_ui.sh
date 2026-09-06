@@ -89,16 +89,32 @@ start_tunnel() {
       > "$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
 
+  # localhost.run greets you with a banner full of its own links - a support
+  # page, a twitter account - several seconds before the tunnel URL turns up.
+  # Matching "any https:// in the log" therefore latches one of those. Take
+  # the URL off the announcement line instead, which is the only line that
+  # names the tunnel, and hold out for it rather than settling for the first
+  # link that scrolls past.
   say "Opening a public link"
   local url="" i
   for (( i = 0; i < 40; i++ )); do
-    url="$(grep -oEm1 "https://[A-Za-z0-9._-]+\\.lhr\\.life" "$TUNNEL_LOG" 2>/dev/null)"
+    # "<host> tunneled with tls termination, https://<host>"
+    url="$(sed -n "s@.*tunneled with[^,]*, *\(https://[A-Za-z0-9._-]*\).*@\1@p" \
+           "$TUNNEL_LOG" 2>/dev/null | head -1)"
+    # their current domain, in case the wording of that line ever changes
     [[ -z "$url" ]] \
-      && url="$(grep -oEm1 "https://[A-Za-z0-9._-]{4,}" "$TUNNEL_LOG" 2>/dev/null)"
+      && url="$(grep -oEm1 "https://[A-Za-z0-9-]+\.lhr\.life" "$TUNNEL_LOG" 2>/dev/null)"
     [[ -n "$url" ]] && break
     kill -0 "$TUNNEL_PID" 2>/dev/null || break
     sleep 1
   done
+
+  # Last resort, and only once the two reliable patterns have had their full
+  # wait: any link that is not one of the ones the banner always carries.
+  if [[ -z "$url" ]]; then
+    url="$(grep -oE "https://[A-Za-z0-9._-]+" "$TUNNEL_LOG" 2>/dev/null \
+           | grep -vE "localhost\.run|twitter|github" | head -1)"
+  fi
 
   if [[ -n "$url" ]]; then
     ok "public    $url"
