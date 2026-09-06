@@ -295,9 +295,9 @@ RUN_COMBINED=0; RUN_ONTOLOGY=0; RUN_MCQ=0; RUN_BERT=0; COMBINED_EXTRA=""; NEEDS_
 case "$BASELINE" in
   all)      RUN_COMBINED=1; RUN_ONTOLOGY=1; RUN_MCQ=1; RUN_BERT=1 ;;
   trivial)  RUN_COMBINED=1; COMBINED_EXTRA="--trivial-only"; NEEDS_MODEL=0 ;;
-  llm_only) RUN_COMBINED=1; COMBINED_EXTRA="--skip singh,webrag" ;;
-  singh)    RUN_COMBINED=1; COMBINED_EXTRA="--skip llm_only,webrag" ;;
-  webrag)   RUN_COMBINED=1; COMBINED_EXTRA="--skip llm_only,singh" ;;
+  llm_only) RUN_COMBINED=1; COMBINED_EXTRA="--skip length,bow,singh,webrag" ;;
+  singh)    RUN_COMBINED=1; COMBINED_EXTRA="--skip length,bow,llm_only,webrag" ;;
+  webrag)   RUN_COMBINED=1; COMBINED_EXTRA="--skip length,bow,llm_only,singh" ;;
   ontology) RUN_ONTOLOGY=1 ;;
   mcq)      RUN_MCQ=1 ;;
   bert)     RUN_BERT=1; NEEDS_MODEL=0 ;;

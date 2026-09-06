@@ -395,7 +395,8 @@ def main():
     ap.add_argument("--csv", default="./datasets/combined_delex_dataset.csv")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--trivial-only", action="store_true")
-    ap.add_argument("--skip", default="", help="comma list: llm_only,singh,webrag")
+    ap.add_argument("--skip", default="",
+                    help="comma list: length,bow,llm_only,singh,webrag")
     ap.add_argument("--max-tokens", type=int, default=300,
                     help="token budget for LLM verdicts (was 60, which truncated "
                          "verbose models mid-answer)")
@@ -425,13 +426,16 @@ def main():
     results = {}
     raw_log = {}
 
-    print("\nTrivial reference classifiers (no LLM):")
-    results["length"] = trivial_length(data)
-    show("length-only (>45 words)", metrics(results["length"]))
-    bow = trivial_bow(data, folds=args.folds, show_features=args.bow_features)
-    if bow:
-        results["bow"] = bow
-        show("bag-of-words (TF-IDF+LR)", metrics(bow))
+    if {"length", "bow"} - skip:
+        print("\nTrivial reference classifiers (no LLM):")
+    if "length" not in skip:
+        results["length"] = trivial_length(data)
+        show("length-only (>45 words)", metrics(results["length"]))
+    if "bow" not in skip:
+        bow = trivial_bow(data, folds=args.folds, show_features=args.bow_features)
+        if bow:
+            results["bow"] = bow
+            show("bag-of-words (TF-IDF+LR)", metrics(bow))
 
     if args.trivial_only:
         print("\n--trivial-only: stopping before the LLM systems.")
