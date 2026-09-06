@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Parse the per-baseline logs from a run and print one aligned table."""
-import re, sys, os
+import re, sys, os, json
 
-LOGDIR = sys.argv[1] if len(sys.argv) > 1 else "."
+# --json prints the same numbers as a JSON object instead of the table, so
+# the web UI can render real HTML rows without a second copy of the regex.
+AS_JSON = "--json" in sys.argv[1:]
+ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
+LOGDIR = ARGS[0] if ARGS else "."
 
 METRIC = re.compile(
     r"acc\s+([\d.]+)%\s+P\s+([\d.]+)\s+R\s+([\d.]+)\s+F1\s+([\d.]+)"
@@ -35,6 +39,26 @@ for label, fname, pattern in WANT:
         if pattern is None or re.search(pattern, ln):
             hit = METRIC.search(ln)       # keep last match
     rows.append((label, hit))
+
+if AS_JSON:
+    out = {"logdir": LOGDIR, "systems": []}
+    for label, m in rows:
+        if m is None:
+            out["systems"].append({"system": label, "ran": False})
+            continue
+        acc, pr, rc, f1, tp, fp, fn, tn = m.groups()
+        out["systems"].append({
+            "system": label, "ran": True,
+            "acc": float(acc), "p": float(pr), "r": float(rc), "f1": float(f1),
+            "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+        })
+    bert_log = os.path.join(LOGDIR, "bert.log")
+    if os.path.exists(bert_log):
+        txt = open(bert_log, encoding="utf-8", errors="replace").read()
+        out["bert_spread"] = [e.strip() for e in
+                              re.findall(r"(mean accuracy.*|mean F1.*)", txt)]
+    print(json.dumps(out))
+    sys.exit(0)
 
 w = 74
 print("=" * w)

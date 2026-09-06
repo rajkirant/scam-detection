@@ -1,2 +1,5 @@
 # shell scripts must keep LF endings so they run on the Linux box
 *.sh text eol=lf
+
+# web_ui.py is executable, so its shebang must not pick up CRLF
+scripts/web_ui.py text eol=lf

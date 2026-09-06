@@ -1,5 +1,13 @@
 cd ~/scam-detection && source venv/bin/activate
 
+# 0. Browser UI - everything run_all.sh does, as a form
+./web_ui.sh --tmux            # server on http://localhost:8000, detached
+# from your laptop:
+#   ssh -L 8000:localhost:8000 rkt29@cs25003ay
+# Runs started from the page are detached from the server, so closing the
+# browser, dropping the SSH link, or restarting the server does not stop
+# them - reopen the URL and the run is still there.
+
 # 1. Five baselines: length, BoW, LLM-only, Singh, Web-RAG
 export SCAM_MODEL=qwen2.5:14b
 python scripts/combined_evaluate.py --csv datasets/zhi_scam_vs_legit_794.csv --limit 20

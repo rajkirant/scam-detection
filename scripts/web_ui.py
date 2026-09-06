@@ -56,6 +56,7 @@ MODELS = ["qwen2.5:14b", "llama3.1:8b"]
 LIMIT_RE = re.compile(r"^(?:\d+|id:.+|idx:\d+)$")
 EXIT_MARK = "__RUN_EXIT__"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
+STEP_LOG_TAIL = 400_000      # bytes of a step log the page will show
 
 # The shell run_all.sh is handed to. Overridable because "bash" on PATH is
 # not always the POSIX one - on Windows it resolves to WSL, which cannot
@@ -295,25 +296,107 @@ def read_log(run_id, offset):
     return {"offset": size, "text": text}
 
 
-def results_of(run_id):
-    """The finished numbers, via collect_results.py --json."""
-    meta = load_run(run_id)
-    if not meta:
-        return None
+def logdir_of(run_id):
+    """The results/logs/run_<stamp> directory this run wrote into.
+
+    run_all.sh announces it on its "ok logs" line, so it is read back out
+    of the captured output rather than guessed from timestamps.
+    """
     log = run_path(run_id, "log")
     if not log.exists():
         return None
     text = log.read_text(encoding="utf-8", errors="replace")
-    m = re.findall(r"(results/logs/run_\d{8}_\d{6})", text)
-    if not m:
+    hits = re.findall(r"(results/logs/run_\d{8}_\d{6})", text)
+    if not hits:
+        return None
+    d = PROJECT_DIR / hits[-1]
+    return d if d.is_dir() else None
+
+
+def results_of(run_id):
+    """The finished numbers, via collect_results.py --json."""
+    d = logdir_of(run_id)
+    if d is None:
         return None
     try:
         out = subprocess.run(
-            [sys.executable, "scripts/collect_results.py", m[-1], "--json"],
+            [sys.executable, "scripts/collect_results.py",
+             str(d.relative_to(PROJECT_DIR)), "--json"],
             cwd=str(PROJECT_DIR), capture_output=True, text=True, timeout=30)
         return json.loads(out.stdout)
     except Exception:
         return None
+
+
+def artifacts_of(run_id):
+    """Everything a run left behind: per-step logs, and per-call CSVs.
+
+    The CSV names are not guessable - they carry a tag built from the
+    dataset and the limit - but every script prints the path it wrote, so
+    the paths are harvested from the logs and then checked against disk.
+    Only names collected this way are ever served, which is also what
+    keeps a crafted ?name= from reaching outside results/.
+    """
+    out = {"steps": [], "csvs": []}
+    d = logdir_of(run_id)
+    text = ""
+    weblog = run_path(run_id, "log")
+    if weblog.exists():
+        text = weblog.read_text(encoding="utf-8", errors="replace")
+    if d is not None:
+        for f in sorted(d.glob("*.log")):
+            out["steps"].append({"name": f.name, "bytes": f.stat().st_size})
+            text += "\n" + f.read_text(encoding="utf-8", errors="replace")
+    seen = set()
+    for name in re.findall(r"results[/\\]([A-Za-z0-9_.\-]+\.csv)", text):
+        if name in seen:
+            continue
+        seen.add(name)
+        f = PROJECT_DIR / "results" / name
+        if f.exists():
+            out["csvs"].append({"name": name, "bytes": f.stat().st_size})
+    out["csvs"].sort(key=lambda c: c["name"])
+    return out
+
+
+def step_log(run_id, name):
+    """One per-step log, tail-capped so a huge debug run cannot flood the page."""
+    art = artifacts_of(run_id)
+    if name not in {s["name"] for s in art["steps"]}:
+        raise ValueError("no such step log")
+    f = logdir_of(run_id) / name
+    size = f.stat().st_size
+    with open(f, "rb") as fh:
+        if size > STEP_LOG_TAIL:
+            fh.seek(size - STEP_LOG_TAIL)
+        chunk = fh.read()
+    text = ANSI.sub("", chunk.decode("utf-8", "replace"))
+    return {"name": name, "bytes": size,
+            "truncated": size > STEP_LOG_TAIL, "text": text}
+
+
+def csv_page(run_id, name, offset, limit):
+    """One page of a per-call CSV: the actual prediction for each transcript."""
+    import csv
+    art = artifacts_of(run_id)
+    if name not in {c["name"] for c in art["csvs"]}:
+        raise ValueError("no such results file")
+    csv.field_size_limit(sys.maxsize)
+    rows = []
+    columns = []
+    total = 0
+    with open(PROJECT_DIR / "results" / name, newline="",
+              encoding="utf-8", errors="replace") as f:
+        r = csv.reader(f)
+        for n, row in enumerate(r):
+            if n == 0:
+                columns = row
+                continue
+            total += 1
+            if offset < total <= offset + limit:
+                rows.append(row)
+    return {"name": name, "columns": columns, "rows": rows,
+            "offset": offset, "total": total}
 
 
 # ------------------------------------------------------------------ server
@@ -361,7 +444,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, out)
             if u.path == "/api/results":
                 return self._send(200, {"results": results_of(q.get("id", [""])[0])})
+            if u.path == "/api/artifacts":
+                return self._send(200, artifacts_of(q.get("id", [""])[0]))
+            if u.path == "/api/steplog":
+                return self._send(200, step_log(q.get("id", [""])[0],
+                                                q.get("name", [""])[0]))
+            if u.path == "/api/csv":
+                return self._send(200, csv_page(
+                    q.get("id", [""])[0], q.get("name", [""])[0],
+                    int(q.get("offset", ["0"])[0]),
+                    min(200, int(q.get("limit", ["50"])[0]))))
             return self._send(404, {"error": "not found"})
+        except ValueError as e:
+            return self._send(400, {"error": str(e)})
         except Exception as e:
             return self._send(500, {"error": str(e)})
 
@@ -429,7 +524,17 @@ PAGE = r"""<!doctype html>
   .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px;
           padding:14px 16px; margin-bottom:18px; }
-  .err { border-color:var(--bad); color:var(--bad); }
+
+  /* ---- the tab strip that appears once a run is selected ---- */
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line);
+          margin-bottom:16px; flex-wrap:wrap; }
+  .tabs button { background:none; border:none; border-bottom:2px solid transparent;
+                 border-radius:0; padding:9px 14px; color:var(--dim); font-weight:600; }
+  .tabs button:hover { color:var(--ink); }
+  .tabs button.on { color:var(--accent); border-bottom-color:var(--accent); }
+  .tabs button[disabled] { opacity:.4; cursor:not-allowed; }
+  .tabs .count { font-weight:400; font-size:12px; opacity:.75; }
+
   pre.log { background:var(--panel); border:1px solid var(--line); border-radius:8px;
             padding:14px 16px; font-family:var(--mono); font-size:12.5px;
             line-height:1.5; max-height:52vh; overflow:auto; white-space:pre-wrap;
@@ -438,12 +543,21 @@ PAGE = r"""<!doctype html>
   .l-ok   { color:var(--accent); }
   .l-warn { color:var(--warn); }
   .l-fail { color:var(--bad); font-weight:600; }
+
+  .scroll { overflow-x:auto; }
   table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
-  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line); }
+  th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line);
+           white-space:nowrap; }
   th:first-child, td:first-child { text-align:left; font-family:var(--mono); }
   th { color:var(--dim); font-weight:600; font-size:12px; text-transform:uppercase;
        letter-spacing:.04em; }
   tr.skipped td { color:var(--dim); }
+  table.calls td, table.calls th { font-size:12.5px; }
+  table.calls td.text { text-align:left; white-space:normal; min-width:340px;
+                        max-width:640px; color:var(--dim); }
+  table.calls td.hit  { color:var(--accent); }
+  table.calls td.miss { color:var(--bad); font-weight:600; }
+
   .pill { font-size:12px; padding:2px 9px; border-radius:99px; border:1px solid var(--line);
           color:var(--dim); }
   .pill.running { color:var(--accent); border-color:var(--accent); }
@@ -452,8 +566,15 @@ PAGE = r"""<!doctype html>
   .hist a { display:block; padding:7px 0; border-bottom:1px solid var(--line);
             color:inherit; text-decoration:none; cursor:pointer; }
   .hist a:hover { color:var(--accent); }
-  .hist .meta { color:var(--dim); font-size:12px; }
+  .hist a.on { color:var(--accent); font-weight:600; }
+  .hist .meta { color:var(--dim); font-size:12px; font-weight:400; }
   .muted { color:var(--dim); }
+  .pager { display:flex; align-items:center; gap:12px; margin-top:12px; }
+  .pager button { border-color:var(--line); background:var(--panel); color:var(--ink); }
+  .pager button[disabled] { opacity:.4; cursor:not-allowed; }
+  .filepick { display:flex; align-items:center; gap:10px; margin-bottom:12px;
+              flex-wrap:wrap; }
+  .filepick select { width:auto; min-width:260px; }
 </style>
 </head>
 <body>
@@ -485,6 +606,7 @@ PAGE = r"""<!doctype html>
     <div class="hint" id="formerr" style="color:var(--bad)"></div>
 
     <label style="margin-top:26px">Recent runs</label>
+    <div class="hint" style="margin-top:-2px">pick one to read its output and results</div>
     <div class="hist" id="hist"></div>
   </div>
 
@@ -499,20 +621,61 @@ PAGE = r"""<!doctype html>
       <div class="hint" id="runsub"></div>
     </div>
 
-    <div class="card" id="resultscard" hidden>
-      <table id="results"></table>
-      <div class="hint" id="spread"></div>
+    <div class="tabs" id="tabs" hidden>
+      <button data-tab="output">Output</button>
+      <button data-tab="results">Results</button>
+      <button data-tab="calls">Per-call <span class="count" id="c-calls"></span></button>
+      <button data-tab="steps">Step logs <span class="count" id="c-steps"></span></button>
     </div>
 
-    <pre class="log" id="log">Pick a dataset and a baseline, then press Run.
+    <!-- output -->
+    <div id="t-output">
+      <pre class="log" id="log">Pick a dataset and a baseline, then press Run.
 
 The run is detached from this page: closing the browser, or losing the SSH
-connection, does not stop it. Come back to this URL and it is still here.</pre>
+connection, does not stop it. Come back to this URL and it is still here.
+
+Past runs are on the left - selecting one brings back its output, its
+results table, and the prediction it made for every single call.</pre>
+    </div>
+
+    <!-- results -->
+    <div id="t-results" hidden>
+      <div class="card">
+        <div class="scroll"><table id="results"></table></div>
+        <div class="hint" id="spread"></div>
+      </div>
+    </div>
+
+    <!-- per-call -->
+    <div id="t-calls" hidden>
+      <div class="filepick">
+        <select id="csvpick"></select>
+        <span class="hint" id="csvinfo"></span>
+      </div>
+      <div class="scroll"><table class="calls" id="calls"></table></div>
+      <div class="pager">
+        <button id="prev">‹ Previous</button>
+        <button id="next">Next ›</button>
+        <span class="hint" id="pageinfo"></span>
+      </div>
+    </div>
+
+    <!-- step logs -->
+    <div id="t-steps" hidden>
+      <div class="filepick">
+        <select id="steppick"></select>
+        <span class="hint" id="stepinfo"></span>
+      </div>
+      <pre class="log" id="steplog"></pre>
+    </div>
   </div>
 </div>
 
 <script>
 let CFG = null, current = null, offset = 0, timer = null;
+let ART = {steps: [], csvs: []}, tab = 'output';
+let page = 0, PAGE_SIZE = 50;
 
 const $ = id => document.getElementById(id);
 
@@ -552,6 +715,12 @@ async function boot() {
   onBaseline();
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
+  for (const b of $('tabs').querySelectorAll('button')) b.onclick = () => showTab(b.dataset.tab);
+  $('csvpick').onchange = () => { page = 0; loadCalls(); };
+  $('steppick').onchange = loadStep;
+  $('prev').onclick = () => { if (page > 0) { page--; loadCalls(); } };
+  $('next').onclick = () => { page++; loadCalls(); };
+
   await refreshHistory();
   const running = (await api('/api/runs')).runs.find(r => r.status === 'running');
   if (running) select(running.id);
@@ -585,12 +754,32 @@ async function stop() {
 }
 
 function select(id) {
-  current = id; offset = 0;
+  current = id; offset = 0; page = 0;
+  ART = {steps: [], csvs: []};
   $('log').textContent = '';
-  $('resultscard').hidden = true;
+  $('tabs').hidden = false;
+  $('results').innerHTML = '';
+  $('calls').innerHTML = '';
+  $('steplog').textContent = '';
+  showTab('output');
+  markHistory();
+  // load them now as well as on completion, so a run selected while it is
+  // still going already offers the step logs of whatever has finished
+  loadArtifacts();
   if (timer) clearInterval(timer);
   poll();
   timer = setInterval(poll, 900);
+}
+
+// ------------------------------------------------------------------ tabs
+function showTab(name) {
+  tab = name;
+  for (const b of $('tabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.tab === name);
+  for (const t of ['output','results','calls','steps'])
+    $('t-' + t).hidden = t !== name;
+  if (name === 'calls' && !$('calls').rows.length) loadCalls();
+  if (name === 'steps' && !$('steplog').textContent) loadStep();
 }
 
 // ------------------------------------------------------------------ polling
@@ -607,6 +796,7 @@ async function poll() {
   if (r.status !== 'running') {
     clearInterval(timer); timer = null;
     await refreshHistory();
+    await loadArtifacts();
     await showResults();
   }
 }
@@ -644,13 +834,12 @@ function paintHeader(meta, status) {
 // ------------------------------------------------------------------ results
 async function showResults() {
   const r = (await api(`/api/results?id=${encodeURIComponent(current)}`)).results;
-  if (!r) return;
+  if (!r) { $('results').innerHTML = '<tr><td class="muted">no results parsed</td></tr>'; return; }
   const head = ['system','acc','P','R','F1','TP','FP','FN','TN'];
   let h = '<tr>' + head.map(x => `<th>${x}</th>`).join('') + '</tr>';
   for (const s of r.systems) {
     if (!s.ran) {
-      h += `<tr class="skipped"><td>${s.system}</td>` +
-           `<td colspan="8">not run</td></tr>`;
+      h += `<tr class="skipped"><td>${s.system}</td><td colspan="8">not run</td></tr>`;
       continue;
     }
     h += `<tr><td>${s.system}</td><td>${s.acc.toFixed(1)}%</td>` +
@@ -660,7 +849,79 @@ async function showResults() {
   }
   $('results').innerHTML = h;
   $('spread').textContent = (r.bert_spread || []).join(' · ');
-  $('resultscard').hidden = false;
+}
+
+// ---------------------------------------------------------------- artifacts
+async function loadArtifacts() {
+  ART = await api(`/api/artifacts?id=${encodeURIComponent(current)}`);
+  $('c-calls').textContent = ART.csvs.length ? '(' + ART.csvs.length + ')' : '';
+  $('c-steps').textContent = ART.steps.length ? '(' + ART.steps.length + ')' : '';
+  for (const b of $('tabs').querySelectorAll('button')) {
+    if (b.dataset.tab === 'calls') b.disabled = !ART.csvs.length;
+    if (b.dataset.tab === 'steps') b.disabled = !ART.steps.length;
+  }
+  $('csvpick').innerHTML = ART.csvs.map(c =>
+    `<option value="${c.name}">${c.name} — ${kb(c.bytes)}</option>`).join('');
+  $('steppick').innerHTML = ART.steps.map(s =>
+    `<option value="${s.name}">${s.name} — ${kb(s.bytes)}</option>`).join('');
+}
+
+function kb(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+// ------------------------------------------------------------ per-call rows
+async function loadCalls() {
+  const name = $('csvpick').value;
+  if (!name) return;
+  const r = await api(`/api/csv?id=${encodeURIComponent(current)}` +
+                      `&name=${encodeURIComponent(name)}` +
+                      `&offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`);
+  if (r.error) { $('calls').innerHTML = `<tr><td class="muted">${r.error}</td></tr>`; return; }
+
+  // "true" is the gold label; every other non-text column is a system's call,
+  // so it can be marked as agreeing with the label or not.
+  const cols = r.columns;
+  const truthAt = cols.indexOf('true');
+  let h = '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
+  for (const row of r.rows) {
+    h += '<tr>' + row.map((v, i) => {
+      const c = cols[i];
+      if (c === 'text' || c === 'transcript')
+        return `<td class="text">${esc(v.length > 260 ? v.slice(0, 260) + '…' : v)}</td>`;
+      if (truthAt >= 0 && i > truthAt && v)
+        return `<td class="${v === row[truthAt] ? 'hit' : 'miss'}">${esc(v)}</td>`;
+      return `<td>${esc(v)}</td>`;
+    }).join('') + '</tr>';
+  }
+  $('calls').innerHTML = h;
+
+  const from = r.total ? r.offset + 1 : 0;
+  const to = Math.min(r.offset + PAGE_SIZE, r.total);
+  $('pageinfo').textContent = `${from}–${to} of ${r.total}`;
+  $('csvinfo').textContent = truthAt >= 0
+    ? 'green = agrees with the true label, red = got it wrong' : '';
+  $('prev').disabled = page === 0;
+  $('next').disabled = to >= r.total;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+// ------------------------------------------------------------- step logs
+async function loadStep() {
+  const name = $('steppick').value;
+  if (!name) return;
+  const r = await api(`/api/steplog?id=${encodeURIComponent(current)}` +
+                      `&name=${encodeURIComponent(name)}`);
+  if (r.error) { $('steplog').textContent = r.error; return; }
+  $('steplog').textContent = r.text;
+  $('stepinfo').textContent = r.truncated
+    ? 'showing the last part of ' + kb(r.bytes) : kb(r.bytes);
 }
 
 // ------------------------------------------------------------------ history
@@ -675,6 +936,12 @@ async function refreshHistory() {
         ${new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
+  markHistory();
+}
+
+function markHistory() {
+  for (const a of $('hist').querySelectorAll('a'))
+    a.classList.toggle('on', a.dataset.id === current);
 }
 
 boot();
