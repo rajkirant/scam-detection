@@ -208,20 +208,29 @@ def pid_alive(pid):
 def start_run(form):
     """Validate the form, then hand the work to run_all.sh."""
     ds = form.get("dataset", "")
-    baseline = form.get("baseline", "")
     limit = str(form.get("limit", "0")).strip()
     model = form.get("model", "")
+    # the form sends a list; a bare string is still accepted so the older
+    # single-baseline shape of this call keeps working
+    picked = form.get("baselines") or form.get("baseline") or []
+    if isinstance(picked, str):
+        picked = [b for b in picked.split(",") if b.strip()]
 
     valid_ds = {d["path"] for d in datasets()}
     if ds not in valid_ds:
         raise ValueError("unknown dataset")
-    entry = next((b for b in BASELINES if b[0] == baseline), None)
-    if entry is None:
-        raise ValueError("unknown baseline")
+    known = {b[0]: b for b in BASELINES}
+    bad = [b for b in picked if b not in known]
+    if bad:
+        raise ValueError("unknown baseline: " + ", ".join(bad))
+    if not picked:
+        raise ValueError("tick at least one baseline")
+    # keep menu order, drop duplicates: run_all.sh reorders anyway, but the
+    # run label should read the same way the checkboxes do
+    baselines = [b[0] for b in BASELINES if b[0] in set(picked)]
     if not LIMIT_RE.match(limit):
         raise ValueError("limit must be a whole number, id:<value>, or idx:<n>")
-    needs_model = entry[3]
-    if needs_model:
+    if any(known[b][3] for b in baselines):
         if model not in MODELS:
             raise ValueError("pick a model")
     else:
@@ -233,10 +242,13 @@ def start_run(form):
                          "cannot hold two." % running[0]["id"])
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    run_id = time.strftime("%Y%m%d_%H%M%S") + "_" + baseline
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_" + (
+        "all" if len(baselines) == len(BASELINES) - 1
+        else "+".join(baselines))
     log = run_path(run_id, "log")
 
-    flags = ["--dataset", ds, "--baseline", baseline, "--limit", limit]
+    flags = ["--dataset", ds, "--baseline", ",".join(baselines),
+             "--limit", limit]
     if model:
         flags += ["--model", model]
 
@@ -259,7 +271,8 @@ def start_run(form):
 
     LIVE[run_id] = proc
 
-    meta = {"id": run_id, "pid": proc.pid, "dataset": ds, "baseline": baseline,
+    meta = {"id": run_id, "pid": proc.pid, "dataset": ds,
+            "baseline": ",".join(baselines), "baselines": baselines,
             "limit": limit, "model": model, "started": time.time()}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
@@ -516,6 +529,17 @@ PAGE = r"""<!doctype html>
     width:100%; padding:8px 10px; border:1px solid var(--line); border-radius:6px;
     background:var(--panel); color:var(--ink); font:inherit; }
   .hint { color:var(--dim); font-size:12px; margin-top:5px; }
+  .checks { margin-top:8px; }
+  .checks label { display:flex; gap:9px; align-items:flex-start; margin:0;
+                  padding:6px 0; font-weight:400; cursor:pointer;
+                  border-bottom:1px solid var(--line); }
+  .checks label:last-child { border-bottom:none; }
+  .checks input { margin:3px 0 0; flex:none; }
+  .checks .name { font-weight:600; }
+  .checks .note { color:var(--dim); font-size:12px; display:block; }
+  button.link { background:none; border:none; padding:0; color:var(--accent);
+                font-size:12px; font-weight:600; text-decoration:underline;
+                cursor:pointer; }
   button { font:inherit; font-weight:600; padding:9px 16px; border-radius:6px;
            border:1px solid transparent; cursor:pointer; }
   .go { background:var(--accent); color:#fff; width:100%; margin-top:20px; }
@@ -588,9 +612,13 @@ PAGE = r"""<!doctype html>
     <label for="dataset">Dataset</label>
     <select id="dataset"></select>
 
-    <label for="baseline">Baseline</label>
-    <select id="baseline"></select>
-    <div class="hint" id="bnote"></div>
+    <label>Baselines</label>
+    <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
+    <div class="checks" id="baselines"></div>
+    <div class="row">
+      <button class="link" id="pickall">select all</button>
+      <button class="link" id="picknone">clear</button>
+    </div>
 
     <label for="limit">How many calls</label>
     <input type="text" id="limit" value="0" spellcheck="false">
@@ -694,8 +722,14 @@ async function boot() {
     `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
   ).join('');
 
-  $('baseline').innerHTML = CFG.baselines.map(b =>
-    `<option value="${b.key}">${b.label}</option>`).join('');
+  // "all" is not offered as a box of its own - ticking every box is "all",
+  // and the select-all link is a clearer way to say it
+  $('baselines').innerHTML = CFG.baselines.filter(b => b.key !== 'all').map(b => `
+    <label>
+      <input type="checkbox" value="${b.key}">
+      <span><span class="name">${b.label}</span>
+            <span class="note">${b.note}</span></span>
+    </label>`).join('');
 
   const o = CFG.ollama;
   $('model').innerHTML = CFG.models.map(m =>
@@ -711,8 +745,10 @@ async function boot() {
     $('ollama').textContent = 'Ollama up · nothing loaded';
   }
 
-  $('baseline').onchange = onBaseline;
-  onBaseline();
+  for (const c of checks()) c.onchange = onBaselines;
+  $('pickall').onclick = () => setAll(true);
+  $('picknone').onclick = () => setAll(false);
+  onBaselines();
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
   for (const b of $('tabs').querySelectorAll('button')) b.onclick = () => showTab(b.dataset.tab);
@@ -726,10 +762,23 @@ async function boot() {
   if (running) select(running.id);
 }
 
-function onBaseline() {
-  const b = CFG.baselines.find(x => x.key === $('baseline').value);
-  $('bnote').textContent = b.note;
-  $('modelbox').hidden = !b.needs_model;
+const checks = () => Array.from($('baselines').querySelectorAll('input'));
+const chosen = () => checks().filter(c => c.checked).map(c => c.value);
+
+function setAll(on) {
+  for (const c of checks()) c.checked = on;
+  onBaselines();
+}
+
+// The model question only matters if something that calls an LLM is ticked,
+// and there is nothing to run until at least one box is.
+function onBaselines() {
+  const sel = chosen();
+  $('modelbox').hidden = !sel.some(k =>
+    CFG.baselines.find(b => b.key === k).needs_model);
+  $('go').disabled = sel.length === 0;
+  $('go').textContent = sel.length > 1 ? `Run ${sel.length} baselines` : 'Run';
+  if (!sel.length) $('formerr').textContent = '';
 }
 
 // -------------------------------------------------------------- run control
@@ -738,11 +787,11 @@ async function go() {
   $('go').disabled = true;
   const res = await api('/api/run', {
     dataset: $('dataset').value,
-    baseline: $('baseline').value,
+    baselines: chosen(),
     limit: $('limit').value,
     model: $('model').value,
   });
-  $('go').disabled = false;
+  onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }
   await refreshHistory();
   select(res.id);

@@ -7,7 +7,7 @@
 # Asks up to five questions, then runs just what you picked:
 #
 #   1. which dataset    (numbered menu of every CSV in datasets/)
-#   2. which baseline   (one system, or all of them)
+#   2. which baselines  (one, several as a comma list, or all of them)
 #   3. how many calls   (0 = the whole dataset, a number = the first N,
 #                         id:<value> = the one row whose id column matches,
 #                         idx:<n> = the same call as index n in a --limit 40
@@ -23,6 +23,8 @@
 #                --limit idx:19 --model qwen2.5:14b  # the SAME call as --idx 19
 #                                                     # in check_one.py / a --limit 40 run
 #   ./run_all.sh -d 2 -b 4 -l 0 -m 1          # menu numbers work too
+#   ./run_all.sh -b llm_only,mcq,bert -l 0    # just those three, one run
+#   ./run_all.sh -b 3,7,8 -l 0                # the same three, by number
 #
 # A long run can outlive the SSH session, so question 5 offers to hand the
 # actual work to a detached tmux session: closing the terminal, or losing
@@ -133,21 +135,52 @@ ask_dataset() {
 }
 
 # ------------------------------------------------------------ baseline menu
+# Turns an answer into SEL, the list of baselines to run. Accepts menu
+# numbers, key names, and any comma-separated mix of the two, so "3", "mcq"
+# and "3,7,8" are all valid. "all" expands to every real baseline.
+# Whatever order they arrive in, SEL comes back in menu order, which is why
+# BERT still runs last: it is last in BL_KEYS, and it cannot share the GPU
+# with a loaded qwen.
+SEL=()
+parse_baselines() {
+  local raw="$1" tok key k picked=() ordered=()
+  local IFS=,
+  for tok in $raw; do
+    tok="${tok// /}"
+    [[ -z "$tok" ]] && continue
+    if [[ "$tok" =~ ^[0-9]+$ ]]; then
+      (( tok >= 1 && tok <= ${#BL_KEYS[@]} )) || return 1
+      key="${BL_KEYS[$((tok - 1))]}"
+    else
+      printf "%s\n" "${BL_KEYS[@]}" | grep -qx "$tok" || return 1
+      key="$tok"
+    fi
+    if [[ "$key" == "all" ]]; then
+      picked=("${BL_KEYS[@]:1}")
+    else
+      picked+=("$key")
+    fi
+  done
+  for k in "${BL_KEYS[@]:1}"; do
+    printf "%s\n" "${picked[@]:-}" | grep -qx "$k" && ordered+=("$k")
+  done
+  [[ ${#ordered[@]} -gt 0 ]] || return 1
+  SEL=("${ordered[@]}")
+  return 0
+}
+
 ask_baseline() {
   echo
-  echo -e "${BLD}  Which baseline?${NC}"
+  echo -e "${BLD}  Which baselines?${NC}  (one, or several separated by commas)"
   local i
   for i in "${!BL_KEYS[@]}"; do
     printf "    %d) %s\n" $((i + 1)) "${BL_LABELS[$i]}"
   done
   local pick=""
   while true; do
-    prompt "  choose 1-${#BL_KEYS[@]}: " pick
-    if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#BL_KEYS[@]} )); then
-      BASELINE="${BL_KEYS[$((pick - 1))]}"
-      return
-    fi
-    warn "enter a number between 1 and ${#BL_KEYS[@]}"
+    prompt "  choose 1-${#BL_KEYS[@]}, e.g. 3 or 3,7,8: " pick
+    parse_baselines "$pick" && return
+    warn "enter numbers or names between 1 and ${#BL_KEYS[@]}, comma-separated"
   done
 }
 
@@ -312,29 +345,45 @@ else
 fi
 
 if [[ -n "$ARG_BASELINE" ]]; then
-  if [[ "$ARG_BASELINE" =~ ^[0-9]+$ ]] && (( ARG_BASELINE >= 1 && ARG_BASELINE <= ${#BL_KEYS[@]} )); then
-    BASELINE="${BL_KEYS[$((ARG_BASELINE - 1))]}"
-  else
-    BASELINE="$ARG_BASELINE"
-    printf "%s\n" "${BL_KEYS[@]}" | grep -qx "$BASELINE" \
-      || die "unknown baseline: $BASELINE  (one of: ${BL_KEYS[*]})"
-  fi
+  parse_baselines "$ARG_BASELINE" \
+    || die "unknown baseline in: $ARG_BASELINE  (one of: ${BL_KEYS[*]})"
 else
   ask_baseline
 fi
 
-# what the chosen baseline actually runs
-RUN_COMBINED=0; RUN_ONTOLOGY=0; RUN_MCQ=0; RUN_BERT=0; COMBINED_EXTRA=""; NEEDS_MODEL=1
-case "$BASELINE" in
-  all)      RUN_COMBINED=1; RUN_ONTOLOGY=1; RUN_MCQ=1; RUN_BERT=1 ;;
-  trivial)  RUN_COMBINED=1; COMBINED_EXTRA="--trivial-only"; NEEDS_MODEL=0 ;;
-  llm_only) RUN_COMBINED=1; COMBINED_EXTRA="--skip length,bow,singh,webrag" ;;
-  singh)    RUN_COMBINED=1; COMBINED_EXTRA="--skip length,bow,llm_only,webrag" ;;
-  webrag)   RUN_COMBINED=1; COMBINED_EXTRA="--skip length,bow,llm_only,singh" ;;
-  ontology) RUN_ONTOLOGY=1 ;;
-  mcq)      RUN_MCQ=1 ;;
-  bert)     RUN_BERT=1; NEEDS_MODEL=0 ;;
-esac
+has_bl() { printf "%s\n" "${SEL[@]}" | grep -qx "$1"; }
+
+# what the chosen baselines actually run
+RUN_COMBINED=0; RUN_ONTOLOGY=0; RUN_MCQ=0; RUN_BERT=0; COMBINED_EXTRA=""
+has_bl ontology && RUN_ONTOLOGY=1
+has_bl mcq      && RUN_MCQ=1
+has_bl bert     && RUN_BERT=1
+
+# combined_evaluate.py owns four of the seven systems, so it runs whenever
+# any of them was picked, and is told to skip the ones that were not.
+COMBINED_SKIP=()
+has_bl trivial  || COMBINED_SKIP+=(length bow)
+has_bl llm_only || COMBINED_SKIP+=(llm_only)
+has_bl singh    || COMBINED_SKIP+=(singh)
+has_bl webrag   || COMBINED_SKIP+=(webrag)
+if [[ ${#COMBINED_SKIP[@]} -lt 5 ]]; then     # fewer than all five skipped
+  RUN_COMBINED=1
+  [[ ${#COMBINED_SKIP[@]} -gt 0 ]] \
+    && COMBINED_EXTRA="--skip $(IFS=,; echo "${COMBINED_SKIP[*]}")"
+fi
+
+# only the systems that actually call an LLM make the model question worth
+# asking - a trivial+bert selection needs no model at all
+NEEDS_MODEL=0
+for _k in llm_only singh webrag ontology mcq; do
+  has_bl "$_k" && NEEDS_MODEL=1
+done
+
+BASELINE="$(IFS=,; echo "${SEL[*]}")"
+# a short name for logs and tmux sessions: no commas, and "all" when it is
+BASELINE_TAG="$BASELINE"
+[[ ${#SEL[@]} -eq $(( ${#BL_KEYS[@]} - 1 )) ]] && BASELINE_TAG="all"
+BASELINE_TAG="${BASELINE_TAG//,/+}"
 
 if [[ -n "$ARG_LIMIT" ]]; then
   if [[ "$ARG_LIMIT" =~ ^[0-9]+$ ]]; then
@@ -410,7 +459,7 @@ relaunch_cmd() {           # the exact command line the detached copy runs
 
 if [[ "$DETACH" -eq 1 && -z "${RUN_ALL_DETACHED:-}" ]]; then
   DSTAMP="$(date +%Y%m%d_%H%M%S)"
-  [[ -n "$SESSION" ]] || SESSION="scam_${BASELINE}_${DSTAMP}"
+  [[ -n "$SESSION" ]] || SESSION="scam_${BASELINE_TAG}_${DSTAMP}"
   mkdir -p results/logs
   DLOG="$PROJECT_DIR/results/logs/detached_${SESSION}.log"
 
@@ -427,7 +476,7 @@ if [[ "$DETACH" -eq 1 && -z "${RUN_ALL_DETACHED:-}" ]]; then
 
   say "Detaching"
   ok "dataset   $DATASET"
-  ok "baseline  $BASELINE"
+  ok "baseline  ${SEL[*]}"
   ok "model     ${MODEL:-none}"
   if command -v tmux >/dev/null; then
     tmux new-session -d -s "$SESSION" "bash $(printf %q "$LAUNCH")" \
@@ -525,7 +574,7 @@ elif [[ -n "$ONE_IDX" ]]; then
 else
   ok "dataset   $DATASET  ($(rows_of "$DATASET") rows)"
 fi
-ok "baseline  $BASELINE"
+ok "baseline  ${SEL[*]}"
 if [[ -n "$ONE_ID" ]]; then
   ok "limit     single transcript (id=$ONE_ID)"
 elif [[ -n "$ONE_IDX" ]]; then
