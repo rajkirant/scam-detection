@@ -142,6 +142,7 @@ ask_baseline() {
 # LIMIT is set to 0 in the id: case; ONE_ID carries the id to look up. The
 # actual row extraction happens later, once $DATASET is known to exist.
 ONE_ID=""
+ONE_IDX=""
 ask_limit() {
   echo
   echo -e "${BLD}  How many calls?${NC}  (0 = whole dataset, id:<value> = one row by its id column,\n  idx:<n> = the same call as index n in a --limit 40 style run)"
@@ -149,14 +150,18 @@ ask_limit() {
   while true; do
     prompt "  limit: " pick
     if [[ "$pick" =~ ^[0-9]+$ ]]; then
-      LIMIT="$pick"; ONE_ID=""
+      LIMIT="$pick"; ONE_ID=""; ONE_IDX=""
+      return
+    fi
+    if [[ "$pick" =~ ^idx:([0-9]+)$ ]]; then
+      LIMIT=0; ONE_ID=""; ONE_IDX="${BASH_REMATCH[1]}"
       return
     fi
     if [[ "$pick" =~ ^id:(.+)$ ]]; then
-      LIMIT=0; ONE_ID="${BASH_REMATCH[1]}"
+      LIMIT=0; ONE_ID="${BASH_REMATCH[1]}"; ONE_IDX=""
       return
     fi
-    warn "enter a whole number, 0 for all, or id:<value> e.g. id:19"
+    warn "enter a whole number, 0 for all, id:<value> e.g. id:19, or idx:<n> e.g. idx:19"
   done
 }
 
