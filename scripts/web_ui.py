@@ -115,6 +115,21 @@ def datasets():
     return out
 
 
+def idx_pool(default=40):
+    """The --limit whose ordering an idx:<n> is counted against.
+
+    run_all.sh carves that row out of a sample of this size, so indexes above
+    it name nothing - and the number is defined there, in IDX_LIMIT_USED, not
+    here. Read rather than duplicated so the two cannot drift apart.
+    """
+    try:
+        m = re.search(r"^IDX_LIMIT_USED=(\d+)",
+                      RUN_ALL.read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return default
+    return int(m.group(1)) if m else default
+
+
 def ollama_state():
     """Which models Ollama has pulled, and which it is holding in VRAM."""
     state = {"up": False, "pulled": [], "loaded": []}
@@ -629,6 +644,7 @@ class Handler(BaseHTTPRequestHandler):
                                   "harvests": h is not None, "exclusive": x}
                                  for k, l, n, h, _, x in KB_MODES],
                     "kb": kb_state(),
+                    "idx_pool": idx_pool(),
                 })
             if u.path == "/api/kb":
                 return self._send(200, {"kb": kb_state()})
@@ -865,10 +881,16 @@ PAGE = r"""<!doctype html>
       <button class="link" id="picknone">clear</button>
     </div>
 
-    <label for="limit">How many calls</label>
+    <label for="scope">How much to run</label>
+    <select id="scope">
+      <option value="count">A number of calls</option>
+      <option value="idx">One transcript, by index</option>
+      <option value="id">One transcript, by id</option>
+    </select>
+
+    <label for="limit" id="limitlabel">How many calls</label>
     <input type="text" id="limit" value="0" spellcheck="false">
-    <div class="hint">0 = whole dataset · N = first N · id:&lt;value&gt; = one row
-      · idx:&lt;n&gt; = the n-th call of a --limit 40 run</div>
+    <div class="hint" id="limithint"></div>
 
     <div id="modelbox">
       <label for="model">Model</label>
@@ -1076,6 +1098,10 @@ async function boot() {
   onKbMode();
   paintKb(CFG.kb);
 
+  if (CFG.idx_pool) IDX_POOL = CFG.idx_pool;
+  $('scope').onchange = onScope;
+  $('limit').onkeydown = e => { if (e.key === 'Enter' && !$('go').disabled) go(); };
+  onScope();
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
   for (const b of $('tabs').querySelectorAll('button')) b.onclick = () => showTab(b.dataset.tab);
@@ -1110,14 +1136,74 @@ function onBaselines() {
   if (!sel.length) $('formerr').textContent = '';
 }
 
+// The three shapes run_all.sh --limit takes. Picking one here rather than
+// typing "idx:19" into a free text box is the whole point: the common case -
+// re-running the single transcript a previous run went wrong on - is now a
+// menu choice and a number.
+let IDX_POOL = 40;      // replaced at boot by run_all.sh's IDX_LIMIT_USED
+
+const SCOPES = {
+  count: {label: 'How many calls', prefix: '', preset: '0', ph: '0', ok: /^\d+$/,
+          hint: '0 = the whole dataset · N = the first N calls',
+          bad: 'enter a whole number, or 0 for the whole dataset'},
+  idx:   {label: 'Transcript index', prefix: 'idx:', preset: '', ph: 'e.g. 19',
+          ok: /^\d+$/,
+          hint: () => 'the n-th call of a --limit ' + IDX_POOL + ' run, '
+              + 'counting from 0 - the same call check_one.py --idx n '
+              + 'reproduces, so an index read off an earlier run names the '
+              + 'same transcript here',
+          bad: 'enter the index as a whole number, e.g. 19'},
+  id:    {label: 'Transcript id', prefix: 'id:', preset: '', ph: 'e.g. CONV_0421',
+          ok: /.+/,
+          hint: "matched against the dataset's id column - the one row that "
+              + 'equals it is the whole run',
+          bad: 'enter the id exactly as the dataset spells it'},
+};
+
+// Relabel the box under the menu and clear what was typed for the old shape:
+// a 0 left over from "a number of calls" is not a transcript anyone means.
+function onScope() {
+  const s = SCOPES[$('scope').value];
+  $('limitlabel').textContent = s.label;
+  $('limithint').textContent = typeof s.hint === 'function' ? s.hint() : s.hint;
+  $('limit').value = s.preset;
+  $('limit').placeholder = s.ph;
+  $('formerr').textContent = '';
+}
+
+// What goes on the wire as --limit. The server checks this too; the point of
+// checking here is to say which box is wrong while it is still on screen.
+function limitValue() {
+  const key = $('scope').value, s = SCOPES[key], v = $('limit').value.trim();
+  if (!s.ok.test(v)) { $('formerr').textContent = s.bad; return null; }
+  if (key === 'idx' && Number(v) >= IDX_POOL) {
+    $('formerr').textContent = 'that order only has ' + IDX_POOL
+      + ' calls in it, so the last index is ' + (IDX_POOL - 1);
+    return null;
+  }
+  return s.prefix + v;
+}
+
+// "limit idx:19" is not what anyone calls that run - say it the way the form
+// asked the question.
+function limitText(limit) {
+  const l = String(limit == null ? '' : limit);
+  if (l.startsWith('idx:')) return 'transcript idx ' + l.slice(4);
+  if (l.startsWith('id:'))  return 'transcript id ' + l.slice(3);
+  if (l === '0') return 'all rows';
+  return l + ' calls';
+}
+
 // -------------------------------------------------------------- run control
 async function go() {
   $('formerr').textContent = '';
+  const limit = limitValue();
+  if (limit === null) return;
   $('go').disabled = true;
   const res = await api('/api/run', {
     dataset: $('dataset').value,
     baselines: chosen(),
-    limit: $('limit').value,
+    limit: limit,
     model: $('model').value,
   });
   onBaselines();
@@ -1278,7 +1364,7 @@ function paintHeader(meta, status) {
   if (kb && tab !== 'output') showTab('output');
   $('runtitle').textContent = meta.label ||
     (meta.baseline + ' · ' + meta.dataset.replace('datasets/', ''));
-  const bits = [kb ? meta.dataset : 'limit ' + meta.limit];
+  const bits = [kb ? meta.dataset : limitText(meta.limit)];
   if (meta.model) bits.push(meta.model);
   bits.push(new Date(meta.started * 1000).toLocaleString());
   $('runsub').textContent = bits.join(' · ');
@@ -1565,7 +1651,7 @@ async function refreshHistory() {
     <a data-id="${r.id}">
       ${r.label || (r.baseline + ' · ' + r.dataset.replace('datasets/',''))}
       <span class="pill ${r.status}">${r.status}</span>
-      <div class="meta">${r.kind === 'kb' ? '' : 'limit ' + r.limit + ' · '}${
+      <div class="meta">${r.kind === 'kb' ? '' : limitText(r.limit) + ' · '}${
         r.model ? r.model + ' · ' : ''}${new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
