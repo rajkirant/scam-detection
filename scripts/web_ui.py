@@ -53,6 +53,31 @@ BASELINES = [
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
 MODELS = ["qwen2.5:14b", "llama3.1:8b"]
+
+# The Web-RAG knowledge base. harvest_patterns.py writes the JSON, which is
+# the source of truth, and build_index.py derives the vector index from it -
+# the same two scripts section C of the README runs by hand. Each mode below
+# is one combination of the flags those two already support.
+#   key, label, note, harvest flags (None = do not harvest), rebuild?, exclusive?
+KB_JSON = PROJECT_DIR / "knowledge" / "scam_patterns.json"
+CHROMA_DB = PROJECT_DIR / "chroma_db" / "chroma.sqlite3"
+KB_COLLECTION = "scam_patterns"
+KB_MODES = [
+    ("refresh", "Harvest the web, then rebuild the index",
+     "Tavily for new articles, the local LLM extracts a pattern from each, "
+     "then everything is re-embedded", [], True, True),
+    ("nocache", "Harvest ignoring the cache, then rebuild",
+     "the same, but every seed query is fetched fresh - spends Tavily credits",
+     ["--no-cache"], True, True),
+    ("index", "Rebuild the index only",
+     "re-embed knowledge/scam_patterns.json as it stands - no web calls, no LLM",
+     None, True, True),
+    ("dry", "Dry run - show the plan",
+     "the seed queries and what they would cost, stopping before any network call",
+     ["--dry-run"], False, False),
+    ("stats", "Stats only",
+     "summarise what the knowledge base already holds", ["--stats"], False, False),
+]
 LIMIT_RE = re.compile(r"^(?:\d+|id:.+|idx:\d+)$")
 EXIT_MARK = "__RUN_EXIT__"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
@@ -105,6 +130,69 @@ def ollama_state():
                                for m in json.load(r).get("models", [])]
     except Exception:
         pass
+    return state
+
+
+def tavily_key_present():
+    """Is there a Tavily key for the harvest to use? .env is read here rather
+    than loaded, so this server never changes its own environment."""
+    if os.environ.get("TAVILY_API_KEY", "").strip():
+        return True
+    try:
+        for line in (PROJECT_DIR / ".env").read_text(encoding="utf-8").splitlines():
+            key, _, val = line.strip().partition("=")
+            if key.strip() == "TAVILY_API_KEY" and val.strip().strip("\"'"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def index_vectors():
+    """How many vectors the scam_patterns collection holds.
+
+    Read with sqlite3, not chromadb: this server is standard library only and
+    has to start whether or not the venv is active. None means the question
+    could not be answered - no database file yet, or a Chroma schema this
+    query no longer fits.
+    """
+    if not CHROMA_DB.exists():
+        return None
+    import sqlite3
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % CHROMA_DB.as_posix(), uri=True)
+    except Exception:
+        return None
+    try:
+        row = con.execute(
+            "SELECT COUNT(e.id) FROM collections c "
+            "LEFT JOIN segments s ON s.collection = c.id "
+            "LEFT JOIN embeddings e ON e.segment_id = s.id "
+            "WHERE c.name = ?", (KB_COLLECTION,)).fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return None
+    finally:
+        con.close()
+
+
+def kb_state():
+    """What the Web-RAG knowledge base holds: the JSON, and the index built
+    from it. They disagree whenever a harvest has not been followed by a
+    rebuild, which is the case the page needs to be able to point at."""
+    state = {"patterns": None, "categories": 0, "last_refresh": None,
+             "refresh_count": 0, "vectors": index_vectors(),
+             "stale": False, "tavily": tavily_key_present()}
+    try:
+        kb = json.loads(KB_JSON.read_text(encoding="utf-8"))
+    except Exception:
+        return state
+    patterns = kb.get("patterns", [])
+    state["patterns"] = len(patterns)
+    state["categories"] = len({p.get("category") for p in patterns})
+    state["last_refresh"] = kb.get("last_refresh")
+    state["refresh_count"] = kb.get("refresh_count", 0)
+    state["stale"] = state["vectors"] is not None and state["vectors"] != len(patterns)
     return state
 
 
@@ -279,6 +367,93 @@ def start_run(form):
     return meta
 
 
+def start_kb_run(form):
+    """Refresh the Web-RAG knowledge base: harvest -> JSON -> vector index.
+
+    Same shape as start_run - a detached child writing into the same runs
+    directory - so a knowledge-base update shows up under Recent runs, streams
+    into the same Output pane, and can be stopped with the same button.
+    """
+    mode = str(form.get("mode", "refresh"))
+    known = {m[0]: m for m in KB_MODES}
+    if mode not in known:
+        raise ValueError("unknown knowledge-base mode: " + mode)
+    _, label, _, harvest, rebuild, exclusive = known[mode]
+
+    # --dry-run and --stats touch nothing, so they are allowed at any time.
+    # The rest either drive the LLM or delete and recreate the collection a
+    # webrag run may be reading from.
+    if exclusive:
+        running = [r for r in all_runs() if r["status"] == "running"]
+        if running:
+            raise ValueError("a run is already going (%s). Stop it first - the "
+                             "index cannot be rebuilt underneath one."
+                             % running[0]["id"])
+        if harvest is not None and not tavily_key_present():
+            raise ValueError("no TAVILY_API_KEY in .env or the environment, so "
+                             "there is nothing to harvest with. \"Rebuild the "
+                             "index only\" needs no key.")
+
+    steps = []
+    if harvest is not None:
+        step = ("plan" if "--dry-run" in harvest else
+                "stats" if "--stats" in harvest else "harvest")
+        steps.append((step, ["scripts/harvest_patterns.py"] + harvest))
+    if rebuild:
+        steps.append(("index", ["scripts/build_index.py"]))
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_kb_" + mode
+    log = run_path(run_id, "log")
+
+    # run_all.sh is not involved here, so its venv preamble is repeated: the
+    # server itself runs on system python and must not assume the venv one.
+    body = [
+        "kb_update() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+    ]
+    for name, cmd in steps:
+        quoted = " ".join(shlex.quote(c) for c in cmd)
+        # ==> / ok / fail are the same three shapes run_all.sh prints, which is
+        # what the Output pane colours on
+        body += [
+            '  printf "\\n==> %s\\n" ' + shlex.quote(name),
+            '  "$PY" -u ' + quoted + ' || { printf "  fail %s\\n" '
+            + shlex.quote(name) + '; return 1; }',
+            '  printf "  ok %s\\n" ' + shlex.quote(name),
+        ]
+    body += ["}", "kb_update",
+             'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK]
+    argv = [BASH, "-c", "\n".join(body)]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        for _, cmd in steps:
+            out.write(("$ python " + " ".join(shlex.quote(c) for c in cmd)
+                       + "\n").encode())
+        out.write(b"\n")
+        out.flush()
+        proc = subprocess.Popen(
+            argv, cwd=str(PROJECT_DIR), stdout=out, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, env=env, **DETACHED)
+
+    LIVE[run_id] = proc
+
+    meta = {"id": run_id, "pid": proc.pid, "kind": "kb", "mode": mode,
+            "label": "knowledge base · " + label[0].lower() + label[1:],
+            "dataset": "knowledge/scam_patterns.json",
+            "baseline": "kb:" + mode, "limit": "-", "model": "",
+            "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
 def stop_run(run_id):
     meta = load_run(run_id)
     if not meta:
@@ -443,7 +618,13 @@ class Handler(BaseHTTPRequestHandler):
                                   for k, l, n, m in BASELINES],
                     "models": MODELS,
                     "ollama": ollama_state(),
+                    "kb_modes": [{"key": k, "label": l, "note": n,
+                                  "harvests": h is not None, "exclusive": x}
+                                 for k, l, n, h, _, x in KB_MODES],
+                    "kb": kb_state(),
                 })
+            if u.path == "/api/kb":
+                return self._send(200, {"kb": kb_state()})
             if u.path == "/api/runs":
                 return self._send(200, {"runs": all_runs()})
             # "output", not "log": privacy filter lists block paths that
@@ -493,6 +674,11 @@ class Handler(BaseHTTPRequestHandler):
                 sys.stderr.write("started %s  %s / %s / limit %s%s\n" % (
                     meta["id"], meta["dataset"], meta["baseline"], meta["limit"],
                     ("  " + meta["model"]) if meta["model"] else ""))
+                return self._send(200, meta)
+            if u.path == "/api/kb":
+                meta = start_kb_run(form)
+                sys.stderr.write("started %s  knowledge base / %s\n"
+                                 % (meta["id"], meta["mode"]))
                 return self._send(200, meta)
             if u.path == "/api/stop":
                 return self._send(200, stop_run(form.get("id", "")))
@@ -685,6 +871,13 @@ PAGE = r"""<!doctype html>
     <button class="go" id="go">Run</button>
     <div class="hint" id="formerr" style="color:var(--bad)"></div>
 
+    <label style="margin-top:26px" for="kbmode">Web-RAG knowledge base</label>
+    <div class="hint" style="margin-top:-2px" id="kbstate">checking…</div>
+    <select id="kbmode" style="margin-top:8px"></select>
+    <div class="hint" id="kbnote"></div>
+    <button class="go" id="kbgo">Update knowledge base</button>
+    <div class="hint" id="kberr" style="color:var(--bad)"></div>
+
     <label style="margin-top:26px">Recent runs</label>
     <div class="hint" style="margin-top:-2px">pick one to read its output and results</div>
     <div class="hist" id="hist"></div>
@@ -763,6 +956,9 @@ results table, and the prediction it made for every single call.</pre>
 <script>
 let CFG = null, current = null, offset = 0, timer = null;
 let ART = {steps: [], csvs: []}, tab = 'output';
+// id -> meta for every run the page knows about, so the panes can tell a
+// benchmark from a knowledge-base update before the first poll comes back
+let RUNS = {};
 let page = 0, PAGE_SIZE = 50;
 
 const $ = id => document.getElementById(id);
@@ -842,6 +1038,13 @@ async function boot() {
   $('pickall').onclick = () => setAll(true);
   $('picknone').onclick = () => setAll(false);
   onBaselines();
+  $('kbmode').innerHTML = CFG.kb_modes.map(m =>
+    `<option value="${m.key}">${m.label}</option>`).join('');
+  $('kbmode').onchange = onKbMode;
+  $('kbgo').onclick = updateKb;
+  onKbMode();
+  paintKb(CFG.kb);
+
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
   for (const b of $('tabs').querySelectorAll('button')) b.onclick = () => showTab(b.dataset.tab);
@@ -897,6 +1100,52 @@ async function stop() {
   await api('/api/stop', {id: current});
 }
 
+// ------------------------------------------------- Web-RAG knowledge base
+// harvest_patterns.py writes knowledge/scam_patterns.json, build_index.py
+// re-embeds it into chroma_db. The webrag baseline reads the second one, so
+// the two counts disagreeing is worth saying out loud.
+let KB = null;
+
+function paintKb(kb) {
+  if (!kb) return;
+  KB = kb;
+  const bits = [kb.patterns === null ? 'no scam_patterns.json yet'
+                : kb.patterns + ' patterns · ' + kb.categories + ' categories'];
+  bits.push(kb.vectors === null ? 'index unreadable'
+            : kb.vectors + ' indexed' + (kb.stale ? ' — index out of step, rebuild it' : ''));
+  if (kb.last_refresh)
+    bits.push('harvested ' + new Date(kb.last_refresh).toLocaleDateString());
+  $('kbstate').textContent = bits.join(' · ');
+  $('kbstate').style.color = kb.stale ? 'var(--warn)' : '';
+  onKbMode();
+}
+
+function onKbMode() {
+  const m = CFG.kb_modes.find(x => x.key === $('kbmode').value);
+  if (!m) return;
+  $('kbnote').textContent = m.note;
+  // the two read-only modes never call Tavily, so the missing key is only a
+  // problem for the ones that would harvest
+  $('kberr').textContent = (m.harvests && m.exclusive && KB && !KB.tavily)
+    ? 'no TAVILY_API_KEY in .env — harvesting needs one, rebuilding the index does not'
+    : '';
+}
+
+async function updateKb() {
+  $('kberr').textContent = '';
+  $('kbgo').disabled = true;
+  const res = await api('/api/kb', {mode: $('kbmode').value});
+  $('kbgo').disabled = false;
+  if (res.error) { $('kberr').textContent = res.error; return; }
+  await refreshHistory();
+  select(res.id);
+}
+
+async function refreshKb() {
+  const r = await api('/api/kb');
+  if (!r.error) paintKb(r.kb);
+}
+
 function select(id) {
   current = id; offset = 0; page = 0;
   ART = {steps: [], csvs: []};
@@ -905,14 +1154,24 @@ function select(id) {
   $('results').innerHTML = '';
   $('calls').innerHTML = '';
   $('steplog').textContent = '';
+  // a knowledge-base update produces no results table and no per-call CSV,
+  // so it gets the Output pane on its own
+  showKbTabs(isKb(id));
   showTab('output');
   markHistory();
   // load them now as well as on completion, so a run selected while it is
   // still going already offers the step logs of whatever has finished
-  loadArtifacts();
+  if (!isKb(id)) loadArtifacts();
   if (timer) clearInterval(timer);
   poll();
   timer = setInterval(poll, 900);
+}
+
+const isKb = id => !!(RUNS[id] && RUNS[id].kind === 'kb');
+
+function showKbTabs(kb) {
+  for (const b of $('tabs').querySelectorAll('button'))
+    b.hidden = kb && b.dataset.tab !== 'output';
 }
 
 // ------------------------------------------------------------------ tabs
@@ -947,13 +1206,18 @@ async function poll() {
   if (r.text) append(r.text);
 
   const meta = (await api('/api/runs')).runs.find(x => x.id === current);
-  if (meta) paintHeader(meta, r.status);
+  if (meta) { RUNS[meta.id] = meta; paintHeader(meta, r.status); }
 
   if (r.status !== 'running') {
     clearInterval(timer); timer = null;
     await refreshHistory();
-    await loadArtifacts();
-    await showResults();
+    if (isKb(current)) {
+      // the counts on the left are what just changed
+      await refreshKb();
+    } else {
+      await loadArtifacts();
+      await showResults();
+    }
   }
 }
 
@@ -975,8 +1239,12 @@ function append(text) {
 }
 
 function paintHeader(meta, status) {
-  $('runtitle').textContent = meta.baseline + ' · ' + meta.dataset.replace('datasets/', '');
-  const bits = ['limit ' + meta.limit];
+  const kb = meta.kind === 'kb';
+  showKbTabs(kb);
+  if (kb && tab !== 'output') showTab('output');
+  $('runtitle').textContent = meta.label ||
+    (meta.baseline + ' · ' + meta.dataset.replace('datasets/', ''));
+  const bits = [kb ? meta.dataset : 'limit ' + meta.limit];
   if (meta.model) bits.push(meta.model);
   bits.push(new Date(meta.started * 1000).toLocaleString());
   $('runsub').textContent = bits.join(' · ');
@@ -1255,13 +1523,14 @@ async function loadStep() {
 // ------------------------------------------------------------------ history
 async function refreshHistory() {
   const runs = (await api('/api/runs')).runs.slice(0, 15);
+  for (const r of runs) RUNS[r.id] = r;
   if (!runs.length) { $('hist').innerHTML = '<div class="muted">nothing yet</div>'; return; }
   $('hist').innerHTML = runs.map(r => `
     <a data-id="${r.id}">
-      ${r.baseline} · ${r.dataset.replace('datasets/','')}
+      ${r.label || (r.baseline + ' · ' + r.dataset.replace('datasets/',''))}
       <span class="pill ${r.status}">${r.status}</span>
-      <div class="meta">limit ${r.limit}${r.model ? ' · ' + r.model : ''} ·
-        ${new Date(r.started * 1000).toLocaleString()}</div>
+      <div class="meta">${r.kind === 'kb' ? '' : 'limit ' + r.limit + ' · '}${
+        r.model ? r.model + ' · ' : ''}${new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
   markHistory();

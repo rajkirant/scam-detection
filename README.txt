@@ -42,6 +42,26 @@ cd ~/scam-detection && source venv/bin/activate
 # them - reopen the URL and the run is still there. Pick a run under
 # "Recent runs" to get its Output, Results, Per-call predictions and the
 # per-baseline Step logs.
+#
+# Under the Run button, "Web-RAG knowledge base" does what section C.6 does
+# by hand: harvest_patterns.py refreshes knowledge/scam_patterns.json, then
+# build_index.py re-embeds it into chroma_db, which is what the webrag
+# baseline retrieves from. The line above the picker is the current state -
+# patterns in the JSON, vectors in the index, and the date of the last
+# harvest - and it turns amber when the two counts disagree, i.e. the index
+# needs rebuilding. Five options:
+#
+#   Harvest the web, then rebuild the index    the weekly refresh
+#   Harvest ignoring the cache, then rebuild   re-fetches every seed query
+#   Rebuild the index only                     no web calls, no LLM
+#   Dry run - show the plan                    stops before any network call
+#   Stats only                                 what the KB already holds
+#
+# Harvesting needs TAVILY_API_KEY in .env and Ollama up; the last two options
+# need neither and can be used while a benchmark is running. The others take
+# the same lock a benchmark does - the index cannot be rebuilt underneath a
+# run that is reading it. The update streams into the same Output pane and
+# lands in "Recent runs" like any other run.
 
 
 # =====================================================================
@@ -101,6 +121,14 @@ python scripts/evaluate_mcq_ontology.py \
 
 # 5. Re-print the table for any past run
 python scripts/collect_results.py results/logs/run_<stamp>
+
+# 6. Refresh the Web-RAG knowledge base (needs TAVILY_API_KEY in .env).
+#    The JSON is the source of truth; the vector index is derived from it,
+#    so the rebuild follows the harvest.
+python scripts/harvest_patterns.py --stats      # what is in there now
+python scripts/harvest_patterns.py --dry-run    # the plan, no network
+python scripts/harvest_patterns.py              # harvest (--no-cache to refetch)
+python scripts/build_index.py                   # re-embed into chroma_db
 
 
 
