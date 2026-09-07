@@ -24,6 +24,12 @@ cd ~/scam-detection && source venv/bin/activate
 #   ==> Opening a public link
 #     ok public    https://fa58e6c3b454ab.lhr.life
 #
+# The tunnel is supervised - localhost.run drops it eventually, and a new
+# one is opened and announced in the terminal. With an SSH key on this
+# machine the address survives a reconnect; without one it changes each
+# time (ssh-keygen -t ed25519, once, fixes that). See
+# results/logs/tunnel.log for the connection history.
+#
 # That link has no password in front of it: anyone who opens it can start
 # and stop runs on this box and read every transcript. Fine for showing a
 # result to someone for ten minutes, not something to leave up. On an

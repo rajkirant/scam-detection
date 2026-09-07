@@ -24,6 +24,16 @@
 # anyone who opens it can start and stop runs on this machine and read every
 # transcript, with no password in front of it.
 #
+# localhost.run does not hold a connection forever, so the tunnel is
+# supervised: when it drops, a new one is opened and the link is printed
+# again. If this machine has an SSH key the address stays the same across
+# those reconnects; without one every reconnect gets a fresh address, and the
+# previous link stops working - so on a box you will share a link from,
+#
+#   ssh-keygen -t ed25519      (once, no passphrase needed for this)
+#
+# is worth doing. The whole history is in results/logs/tunnel.log.
+#
 # Benchmark runs started from the page are detached from this server, so
 # stopping it does not stop a run that is already going.
 #
@@ -70,54 +80,138 @@ fi
 # requirement - but the runs it launches do need it, and they inherit it.
 command -v python3 >/dev/null || die "python3 not found"
 
-# localhost.run wants no account: it accepts any key for the "nokey" user and
-# prints the public URL over the session. That output goes to a file so the
-# URL can be picked out of it without tangling with the server's own output.
+# localhost.run needs no account: it accepts any key for the "nokey" user and
+# prints the public URL over the session. That output goes to a file so the URL
+# can be picked out of it without tangling with the server's own output.
+#
+# The connection does not last forever - localhost.run drops it, or the network
+# blips - so ssh is run under a supervisor that reconnects instead of leaving a
+# dead link behind. Two things make that work: -o ServerAliveInterval makes ssh
+# notice a connection that has stopped answering rather than hanging on it, and
+# -n takes the terminal away from ssh's stdin. Without -n a backgrounded ssh is
+# stopped by SIGTTIN the moment it reads, which looks exactly like a drop.
 TUNNEL_PID=""
 TUNNEL_LOG="$PROJECT_DIR/results/logs/tunnel.log"
+TUNNEL_PIDFILE="$PROJECT_DIR/results/logs/.tunnel.ssh.pid"
+TUNNEL_TARGETFILE="$PROJECT_DIR/results/logs/.tunnel.target"
+TUNNEL_TARGET="nokey@localhost.run"
+
+# localhost.run gives a keyed connection the same subdomain every time, and the
+# "nokey" user a fresh random one on every reconnect. A stable link matters
+# more here than anonymity - a link handed to someone must survive a reconnect -
+# so use a key when there is one. If that turns out not to connect, start_tunnel
+# falls back to nokey.
+pick_target() {
+  local k
+  for k in ~/.ssh/id_ed25519 ~/.ssh/id_ecdsa ~/.ssh/id_rsa; do
+    [[ -f "$k" ]] && { echo "${USER:-ui}@localhost.run"; return; }
+  done
+  echo "nokey@localhost.run"
+}
+
+# The URL of the most recent connection in the log. The announcement line
+# ("<host> tunneled with tls termination, https://<host>") is the only line
+# that names the tunnel - the welcome banner is full of localhost.run's own
+# links, so matching any https:// would latch one of those instead.
+latest_url() {
+  local u
+  u="$(sed -n "s@.*tunneled with[^,]*, *\(https://[A-Za-z0-9._-]*\).*@\1@p" \
+       "$TUNNEL_LOG" 2>/dev/null | tail -1)"
+  [[ -z "$u" ]] \
+    && u="$(grep -oE "https://[A-Za-z0-9-]+\.lhr\.life" "$TUNNEL_LOG" 2>/dev/null | tail -1)"
+  echo "$u"
+}
+
+# Wait for a URL that is not the one we already had. $1 = the previous URL,
+# $2 = how many seconds to wait, $3 = the ssh pid to give up on if it dies.
+await_url() {
+  local prev="$1" secs="$2" pid="${3:-}" url i
+  for (( i = 0; i < secs; i++ )); do
+    url="$(latest_url)"
+    [[ -n "$url" && "$url" != "$prev" ]] && { echo "$url"; return 0; }
+    [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null && break
+    sleep 1
+  done
+  echo ""
+  return 1
+}
+
+# Keeps one ssh alive. A connection that dies without ever announcing a URL is
+# a failure rather than a drop, so those back off instead of hammering
+# localhost.run, and two of them in a row mean the key is not welcome - at
+# which point it switches to the anonymous user rather than retrying forever.
+tunnel_loop() {
+  local sshpid prev url t0 el fails=0 pause had=0
+  while true; do
+    prev="$(latest_url)"
+    t0=$(date +%s)
+    ssh -n -T -o StrictHostKeyChecking=accept-new \
+           -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+           -o ExitOnForwardFailure=yes \
+           -R 80:localhost:"$PORT" "$TUNNEL_TARGET" \
+        >> "$TUNNEL_LOG" 2>&1 &
+    sshpid=$!
+    echo "$sshpid" > "$TUNNEL_PIDFILE"
+
+    # The first working URL is announced by start_tunnel, which is still
+    # waiting for it. Only once a link has actually existed is a new one a
+    # reconnect worth reporting - and with the anonymous user it is a
+    # different address from the one before, so it has to be reported.
+    if [[ "$had" -eq 1 ]]; then
+      url="$(await_url "$prev" 40 "$sshpid")"
+      if [[ -n "$url" ]]; then
+        echo -e "\n${YLW}  warn${NC} the tunnel dropped and reconnected"
+        echo -e "${GRN}  ok${NC} public    $url"
+        [[ "$TUNNEL_TARGET" == nokey@* ]] \
+          && echo -e "${YLW}  warn${NC} that is a new address - the previous link is dead"
+      fi
+    fi
+
+    wait "$sshpid" 2>/dev/null
+    [[ -n "$(latest_url)" ]] && had=1
+    el=$(( $(date +%s) - t0 ))
+    if [[ "$(latest_url)" != "$prev" ]]; then
+      fails=0                     # it did connect, however briefly
+    else
+      fails=$(( fails + 1 ))
+    fi
+    echo "" >> "$TUNNEL_LOG"
+    echo "[$(date "+%F %T")] ssh exited after ${el}s (consecutive failures: $fails)" \
+      >> "$TUNNEL_LOG"
+
+    if [[ "$fails" -ge 2 && "$TUNNEL_TARGET" != nokey@* ]]; then
+      TUNNEL_TARGET="nokey@localhost.run"
+      echo "$TUNNEL_TARGET" > "$TUNNEL_TARGETFILE"
+      echo -e "${YLW}  warn${NC} localhost.run would not take your SSH key, using an anonymous tunnel"
+      fails=0
+    fi
+
+    pause=$(( fails <= 1 ? 3 : fails * 10 ))
+    (( pause > 60 )) && pause=60
+    sleep "$pause"
+  done
+}
+
 start_tunnel() {
   command -v ssh >/dev/null || die "ssh not found, needed for --public"
   mkdir -p results/logs
   : > "$TUNNEL_LOG"
-  # accept-new answers the first-connection host key prompt without turning
-  # checking off; ExitOnForwardFailure makes a refused forward an error rather
-  # than a tunnel that silently forwards nothing.
-  ssh -T -o StrictHostKeyChecking=accept-new \
-         -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
-         -o ExitOnForwardFailure=yes \
-         -R 80:localhost:"$PORT" nokey@localhost.run \
-      > "$TUNNEL_LOG" 2>&1 &
-  TUNNEL_PID=$!
+  TUNNEL_TARGET="$(pick_target)"
+  echo "$TUNNEL_TARGET" > "$TUNNEL_TARGETFILE"
 
-  # localhost.run greets you with a banner full of its own links - a support
-  # page, a twitter account - several seconds before the tunnel URL turns up.
-  # Matching "any https:// in the log" therefore latches one of those. Take
-  # the URL off the announcement line instead, which is the only line that
-  # names the tunnel, and hold out for it rather than settling for the first
-  # link that scrolls past.
   say "Opening a public link"
-  local url="" i
-  for (( i = 0; i < 40; i++ )); do
-    # "<host> tunneled with tls termination, https://<host>"
-    url="$(sed -n "s@.*tunneled with[^,]*, *\(https://[A-Za-z0-9._-]*\).*@\1@p" \
-           "$TUNNEL_LOG" 2>/dev/null | head -1)"
-    # their current domain, in case the wording of that line ever changes
-    [[ -z "$url" ]] \
-      && url="$(grep -oEm1 "https://[A-Za-z0-9-]+\.lhr\.life" "$TUNNEL_LOG" 2>/dev/null)"
-    [[ -n "$url" ]] && break
-    kill -0 "$TUNNEL_PID" 2>/dev/null || break
-    sleep 1
-  done
-
-  # Last resort, and only once the two reliable patterns have had their full
-  # wait: any link that is not one of the ones the banner always carries.
-  if [[ -z "$url" ]]; then
-    url="$(grep -oE "https://[A-Za-z0-9._-]+" "$TUNNEL_LOG" 2>/dev/null \
-           | grep -vE "localhost\.run|twitter|github" | head -1)"
-  fi
+  tunnel_loop &
+  TUNNEL_PID=$!
+  # long enough to cover a refused key, the switch, and the retry after it
+  local url; url="$(await_url "" 60)"
+  local target; target="$(cat "$TUNNEL_TARGETFILE" 2>/dev/null)"
 
   if [[ -n "$url" ]]; then
     ok "public    $url"
+    if [[ "$target" == nokey@* ]]; then
+      warn "anonymous tunnel, so a reconnect gets a different address"
+      warn "(an SSH key on this machine would keep the address stable)"
+    fi
     warn "no password in front of it - anyone with the link can start runs here"
   else
     warn "localhost.run did not hand back a URL, see $TUNNEL_LOG"
@@ -126,7 +220,11 @@ start_tunnel() {
 }
 
 stop_tunnel() {
+  # the supervisor first, so it cannot start another ssh, then the ssh itself
   [[ -n "$TUNNEL_PID" ]] && kill "$TUNNEL_PID" 2>/dev/null
+  [[ -s "$TUNNEL_PIDFILE" ]] && kill "$(cat "$TUNNEL_PIDFILE")" 2>/dev/null
+  rm -f "$TUNNEL_PIDFILE" "$TUNNEL_TARGETFILE"
+  TUNNEL_PID=""
   return 0
 }
 
