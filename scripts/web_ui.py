@@ -446,20 +446,27 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if u.path == "/api/runs":
                 return self._send(200, {"runs": all_runs()})
-            if u.path == "/api/log":
+            # "output", not "log": privacy filter lists block paths that
+            # look like telemetry, and Edge has tracking prevention on by
+            # default - these two endpoints were the only ones carrying the
+            # word "log", and the only ones that never arrived there. The old
+            # paths stay as aliases so a page left open somewhere still works.
+            if u.path in ("/api/output", "/api/log"):
                 rid = q.get("id", [""])[0]
                 off = int(q.get("offset", ["0"])[0])
                 meta = load_run(rid)
-                if not meta:
-                    return self._send(404, {"error": "no such run"})
+                if not meta and not run_path(rid, "log").exists():
+                    return self._send(404, {"error": "no such run: %s" % rid})
                 out = read_log(rid, off)
-                out["status"] = meta["status"]
+                # a run whose .json went missing still has its output, and
+                # that is the part worth showing
+                out["status"] = meta["status"] if meta else run_status({"id": rid})
                 return self._send(200, out)
             if u.path == "/api/results":
                 return self._send(200, {"results": results_of(q.get("id", [""])[0])})
             if u.path == "/api/artifacts":
                 return self._send(200, artifacts_of(q.get("id", [""])[0]))
-            if u.path == "/api/steplog":
+            if u.path in ("/api/step", "/api/steplog"):
                 return self._send(200, step_log(q.get("id", [""])[0],
                                                 q.get("name", [""])[0]))
             if u.path == "/api/csv":
@@ -760,12 +767,45 @@ let page = 0, PAGE_SIZE = 50;
 
 const $ = id => document.getElementById(id);
 
+// Always resolves to an object. A fetch that fails, or a reply that is not
+// JSON - a proxy's error page, say - used to reject and take the whole poll
+// down with it, leaving a blank panel and no clue why.
 async function api(path, body) {
   const opt = body ? {method:'POST', headers:{'Content-Type':'application/json'},
                       body: JSON.stringify(body)} : {};
-  const r = await fetch(path, opt);
-  return r.json();
+  let r;
+  try {
+    r = await fetch(path, opt);
+  } catch (e) {
+    // The server being down and an extension refusing the request look the
+    // same from here, and the second is far more likely for a page that was
+    // loading a moment ago.
+    return {error: 'could not fetch ' + path + ' (' + e.message + ') - if the ' +
+                   'rest of the page works, an ad blocker or Edge tracking ' +
+                   'prevention is probably blocking this request'};
+  }
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return {error: 'HTTP ' + r.status + ' from ' + path + ' - ' +
+                   (text.slice(0, 200) || 'empty reply')};
+  }
 }
+
+// Put a problem where it can be seen, rather than returning quietly.
+function fail(msg) {
+  const log = $('log');
+  const span = document.createElement('span');
+  span.className = 'l-fail';
+  span.textContent = msg + '\n';
+  log.appendChild(span);
+  log.scrollTop = log.scrollHeight;
+  $('runsub').textContent = msg;
+}
+
+addEventListener('unhandledrejection', e => fail('script error: ' + (e.reason && e.reason.message || e.reason)));
+addEventListener('error', e => fail('script error: ' + e.message));
 
 // ------------------------------------------------------------------ setup
 async function boot() {
@@ -884,7 +924,11 @@ function showTab(name) {
     $('t-' + t).hidden = t !== name;
   // a chart drawn while its tab was hidden measured a zero-width box and fell
   // back to the minimum, so redraw it now that it has a real width
+  // Each tab fetches what it needs rather than relying on the poll loop
+  // having got there first - a poll that failed must not leave Results blank.
+  if (name === 'results' && !RESULTS) showResults();
   if (name === 'results' && view === 'chart' && RESULTS) paintChart();
+  if (name === 'output' && current && !$('log').textContent) { offset = 0; poll(); }
   if (name === 'calls' && !$('calls').rows.length) loadCalls();
   if (name === 'steps' && !$('steplog').textContent) loadStep();
 }
@@ -892,8 +936,13 @@ function showTab(name) {
 // ------------------------------------------------------------------ polling
 async function poll() {
   if (!current) return;
-  const r = await api(`/api/log?id=${encodeURIComponent(current)}&offset=${offset}`);
-  if (r.error) return;
+  const r = await api(`/api/output?id=${encodeURIComponent(current)}&offset=${offset}`);
+  if (r.error) {
+    // looping on a broken request just hides it behind another one
+    clearInterval(timer); timer = null;
+    fail(r.error);
+    return;
+  }
   offset = r.offset;
   if (r.text) append(r.text);
 
@@ -948,9 +997,16 @@ const METRICS = [
 ];
 
 async function showResults() {
-  RESULTS = (await api(`/api/results?id=${encodeURIComponent(current)}`)).results;
+  if (!current) return;
+  const got = await api(`/api/results?id=${encodeURIComponent(current)}`);
+  if (got.error) {
+    $('results').innerHTML = `<tr><td class="muted">${esc(got.error)}</td></tr>`;
+    return;
+  }
+  RESULTS = got.results;
   if (!RESULTS) {
-    $('results').innerHTML = '<tr><td class="muted">no results parsed</td></tr>';
+    $('results').innerHTML = '<tr><td class="muted">no numbers in this run\'s ' +
+                             'logs yet - see the Output tab</td></tr>';
     return;
   }
   paintTable();
@@ -1188,7 +1244,7 @@ function esc(s) {
 async function loadStep() {
   const name = $('steppick').value;
   if (!name) return;
-  const r = await api(`/api/steplog?id=${encodeURIComponent(current)}` +
+  const r = await api(`/api/step?id=${encodeURIComponent(current)}` +
                       `&name=${encodeURIComponent(name)}`);
   if (r.error) { $('steplog').textContent = r.error; return; }
   $('steplog').textContent = r.text;
