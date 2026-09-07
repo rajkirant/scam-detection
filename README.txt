@@ -1,34 +1,100 @@
 cd ~/scam-detection && source venv/bin/activate
 
-# 0. Browser UI - everything run_all.sh does, as a form
-./web_ui.sh --tmux            # server on http://localhost:8000, detached
-# from your laptop:
+
+# =====================================================================
+#  A. Browser UI - everything run_all.sh does, as a form
+# =====================================================================
+
+./web_ui.sh                   # http://localhost:8000, ctrl-c to stop
+./web_ui.sh --tmux            # detached: survives an SSH disconnect
+./web_ui.sh --port 8080       # somewhere else
+./web_ui.sh --local           # this machine only (then forward the port)
+./web_ui.sh --public          # plus an https link that works from anywhere
+
+# It binds every interface, so another machine on the same network can open
+# it directly - the startup banner prints the address to use:
+#
+#   scam-detection UI
+#     here:           http://localhost:8000
+#     other machines: http://10.196.217.243:8000
+#
+# --public also opens an SSH reverse tunnel to localhost.run (no account
+# needed) and prints the public URL:
+#
+#   ==> Opening a public link
+#     ok public    https://fa58e6c3b454ab.lhr.life
+#
+# That link has no password in front of it: anyone who opens it can start
+# and stop runs on this box and read every transcript. Fine for showing a
+# result to someone for ten minutes, not something to leave up. On an
+# untrusted network use --local and tunnel in yourself instead:
+#
 #   ssh -L 8000:localhost:8000 rkt29@cs25003ay
+#
 # Runs started from the page are detached from the server, so closing the
 # browser, dropping the SSH link, or restarting the server does not stop
-# them - reopen the URL and the run is still there.
+# them - reopen the URL and the run is still there. Pick a run under
+# "Recent runs" to get its Output, Results, Per-call predictions and the
+# per-baseline Step logs.
+
+
+# =====================================================================
+#  B. The same thing in the terminal
+# =====================================================================
+
+./run_all.sh                  # asks five questions, then runs
+./run_all.sh --tmux           # ... and detaches into tmux
+
+# or answer up front and it asks nothing:
+./run_all.sh -d 3 -b all -l 0 -m 1
+./run_all.sh --dataset datasets/paired_scam_legit_198.csv \
+             --baseline llm_only,mcq,bert --limit 40 --model qwen2.5:14b
+
+# baselines: all trivial llm_only singh webrag ontology mcq bert
+#   comma-separate for several - "-b 3,7,8" works too (menu numbers)
+# limit:     0 = whole dataset, N = first N calls,
+#            id:<value> = one row by its id column,
+#            idx:<n> = the n-th call of a --limit 40 style run
+#
+# Each step streams its progress as it goes, plus a heartbeat every 30s so a
+# quiet LLM step is distinguishable from a hung one. HEARTBEAT_SECS=10
+# ./run_all.sh makes that more frequent.
+#
+# Results land in results/logs/run_<stamp>/ (one log per baseline) and
+# results/*.csv (one row per call).
+
+
+# =====================================================================
+#  C. The individual scripts, if you want one on its own
+# =====================================================================
 
 # 1. Five baselines: length, BoW, LLM-only, Singh, Web-RAG
 export SCAM_MODEL=qwen2.5:14b
-python scripts/combined_evaluate.py --csv datasets/zhi_scam_vs_legit_794.csv --limit 20
+python scripts/combined_evaluate.py --csv datasets/paired_scam_legit_198.csv --limit 20
+#   --skip length,bow,singh,webrag   run just one of the five
 
 # 2. Ontology RAG
 python scripts/evaluate_ontology.py \
-  --csv datasets/zhi_scam_vs_legit_794.csv \
+  --csv datasets/paired_scam_legit_198.csv \
   --model qwen2.5:14b \
   --ontology knowledge/scam_ontology.json
-  
-# 3. Unload qwen, then BERT
+
+# 3. Unload qwen, then BERT - qwen holds ~9.5 GB of 11.4 GB and BERT
+#    fine-tuning needs 3-4 GB, so they cannot both be resident
 curl -s http://localhost:11434/api/generate \
   -d '{"model":"qwen2.5:14b","prompt":"","keep_alive":0}' > /dev/null
 
-python scripts/bert_baseline.py cv --csv datasets/zhi_scam_vs_legit_794.csv \
-  --out results/bert_results_794.csv
+python scripts/bert_baseline.py cv --csv datasets/paired_scam_legit_198.csv \
+  --out results/bert_results_198.csv
 
+# 4. MCQ ontology (two LLM calls per transcript)
 python scripts/evaluate_mcq_ontology.py \
-  --csv datasets/zhi_scam_vs_legit_794.csv \
+  --csv datasets/paired_scam_legit_198.csv \
   --model qwen2.5:14b \
   --limit 20 --debug
+
+# 5. Re-print the table for any past run
+python scripts/collect_results.py results/logs/run_<stamp>
 
 
 

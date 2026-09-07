@@ -584,6 +584,9 @@ else
 fi
 ok "model     ${MODEL:-none needed for this baseline}"
 ok "logs      $LOGDIR"
+# a single-transcript run is for reading the model reasoning, so it turns
+# on --debug where the baseline supports it (every step now streams its output
+# either way)
 SINGLE_MODE=0
 [[ -n "$ONE_ID" || -n "$ONE_IDX" ]] && SINGLE_MODE=1
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
@@ -597,23 +600,67 @@ declare -A STATUS DURATION
 STEPS_RUN=()
 START_ALL=$(date +%s)
 
+# mm:ss for anything under an hour, h:mm:ss past that
+hms() {
+  local s="$1"
+  if (( s >= 3600 )); then
+    printf "%dh%02dm%02ds" $(( s / 3600 )) $(( s % 3600 / 60 )) $(( s % 60 ))
+  else
+    printf "%dm%02ds" $(( s / 60 )) $(( s % 60 ))
+  fi
+}
+
+# Printed alongside a running step. Every baseline reports its own progress
+# ("LLM-only: 40/198", "fold 2/3"), but a single LLM call can take a minute,
+# and a terminal that has gone quiet for a minute looks exactly like one that
+# has hung. Comparing the log size against last time says which it is.
+HEARTBEAT_SECS="${HEARTBEAT_SECS:-30}"
+heartbeat() {
+  local log="$1" t0="$2" last=0 size el
+  while true; do
+    sleep "$HEARTBEAT_SECS"
+    size=$(wc -c < "$log" 2>/dev/null || echo 0)
+    el=$(( $(date +%s) - t0 ))
+    if (( size > last )); then
+      echo -e "    ${CYN}...${NC} $(hms "$el") elapsed, output still coming"
+    elif (( el > 600 )); then
+      # ten minutes of complete silence is worth a second look
+      echo -e "    ${YLW}...${NC} $(hms "$el") elapsed, still no output - check nvidia-smi / ollama ps"
+    else
+      echo -e "    ${CYN}...${NC} $(hms "$el") elapsed, running (nothing printed yet)"
+    fi
+    last="$size"
+  done
+}
+
 run_step() {
   local name="$1"; shift
   local log="$LOGDIR/${name}.log"
   STEPS_RUN+=("$name")
   say "$name"
   echo "  $*"
+  echo "  started $(date +%H:%M:%S)"
   local t0; t0=$(date +%s)
-  local status
-  if [[ "${SINGLE_MODE:-0}" -eq 1 ]]; then
-    # show the detail live instead of hiding it in a log file - the whole
-    # point of a single-transcript run is to read this output
-    "$@" 2>&1 | tee "$log"
-    status=${PIPESTATUS[0]}
-  else
-    "$@" > "$log" 2>&1
-    status=$?
-  fi
+
+  heartbeat "$log" "$t0" &
+  local hb=$!
+
+  # tee first, indent second: the log keeps the exact output the script
+  # produced (collect_results.py and the web UI both read it), while the
+  # copy on screen is indented so it sits under this step, live.
+  # A read loop rather than sed: sed block-buffers when its stdout is a file
+  # rather than a terminal, which is exactly the case under the web UI, and
+  # the whole run would then land in one lump at the end. read is always one
+  # line at a time.
+  local status line
+  "$@" 2>&1 | tee "$log" | while IFS= read -r line || [[ -n "$line" ]]; do
+    printf "    %s\n" "$line"
+  done
+  status=${PIPESTATUS[0]}
+
+  kill "$hb" 2>/dev/null
+  wait "$hb" 2>/dev/null
+
   if [[ "$status" -eq 0 ]]; then
     STATUS[$name]="ok"
   else
@@ -621,10 +668,9 @@ run_step() {
   fi
   DURATION[$name]=$(( $(date +%s) - t0 ))
   if [[ "${STATUS[$name]}" == "ok" ]]; then
-    ok "${DURATION[$name]}s"
+    ok "$name finished in $(hms "${DURATION[$name]}")"
   else
-    warn "failed after ${DURATION[$name]}s"
-    [[ "${SINGLE_MODE:-0}" -eq 0 ]] && tail -12 "$log" | sed 's/^/     /'
+    warn "$name FAILED after $(hms "${DURATION[$name]}") - full log: $log"
   fi
 }
 

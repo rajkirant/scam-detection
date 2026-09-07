@@ -408,6 +408,7 @@ def main():
     args = ap.parse_args()
 
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+    print("Reading %s ..." % args.csv, flush=True)
     data = load_combined(args.csv, limit=args.limit)
     n_fraud = sum(1 for _, l in data if l == "Fraud")
 
@@ -429,9 +430,12 @@ def main():
     if {"length", "bow"} - skip:
         print("\nTrivial reference classifiers (no LLM):")
     if "length" not in skip:
+        print("  length-only ...", flush=True)
         results["length"] = trivial_length(data)
         show("length-only (>45 words)", metrics(results["length"]))
     if "bow" not in skip:
+        print("  bag-of-words: %d-fold TF-IDF + logistic regression over %d calls ..."
+              % (args.folds, len(data)), flush=True)
         bow = trivial_bow(data, folds=args.folds, show_features=args.bow_features)
         if bow:
             results["bow"] = bow
@@ -445,6 +449,7 @@ def main():
     if "llm_only" not in skip:
         print("\nLLM-only (no retrieval):")
         t0 = time.time()
+        print("    %s calls to go, one per transcript" % len(data), flush=True)
         results["llm_only"], raw_log["llm_only"] = run_llm_only(
             data, args.max_tokens, args.debug)
         show("LLM-only", metrics(results["llm_only"]))
@@ -453,6 +458,7 @@ def main():
     if "singh" not in skip:
         print("\nSingh baseline (policy compliance):")
         t0 = time.time()
+        print("    %s calls to go, one per transcript" % len(data), flush=True)
         results["singh"], raw_log["singh"] = run_singh(
             data, args.max_tokens, args.debug)
         show("Singh baseline", metrics(results["singh"]))
@@ -461,6 +467,7 @@ def main():
     if "webrag" not in skip:
         print("\nWeb-RAG system (KB-only):")
         t0 = time.time()
+        print("    %s calls to go, one per transcript" % len(data), flush=True)
         results["webrag"], raw_log["webrag"] = run_webrag(data, args.debug)
         show("Web-RAG (KB-only)", metrics(results["webrag"]))
         print("    (%.0fs)" % (time.time() - t0))
