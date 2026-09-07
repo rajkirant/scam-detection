@@ -590,10 +590,17 @@ PAGE = r"""<!doctype html>
                 padding:6px 15px; font-size:13px; }
   .seg button + button { border-left:1px solid var(--line); }
   .seg button.on { background:var(--accent); color:#fff; }
-  .legend { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px; }
-  .legend span { display:flex; align-items:center; gap:7px; font-size:12px;
-                 color:var(--dim); }
-  .legend i { width:11px; height:11px; border-radius:3px; display:block; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  .legend button { display:flex; align-items:center; gap:7px; font-size:12px;
+                   font-weight:500; color:var(--ink); background:transparent;
+                   border:1px solid var(--line); border-radius:99px;
+                   padding:4px 12px 4px 9px; }
+  .legend button:hover { border-color:var(--dim); }
+  .legend button.off { color:var(--dim); }
+  .legend button.off i { background:transparent !important;
+                         box-shadow:inset 0 0 0 1.5px var(--dim); }
+  .legend i { width:11px; height:11px; border-radius:3px; display:block;
+              flex:none; }
   .viz text { font:12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
   .viz .tick { fill:var(--dim); }
   .viz .name { fill:var(--ink); font-weight:600; }
@@ -977,88 +984,139 @@ function paintTable() {
 }
 
 // --------------------------------------------------------------- the graph
-// Grouped horizontal bars: one band per system that ran, four bars inside it.
-// All four measures live on one 0-100% axis - accuracy is already a
+// Grouped columns: one band per system that ran, one column per metric still
+// switched on. All of them share a single 0-100% axis - accuracy is already a
 // percentage and P/R/F1 are scaled to match, so there is never a second scale
-// to reconcile. Drawn as plain SVG; nothing is fetched from anywhere.
-const BAR = 12, BARGAP = 2, BANDPAD = 22, PADL = 104, PADR = 64, PADT = 6, PADB = 30;
+// to reconcile. Plain SVG; nothing is fetched from anywhere.
+//
+// Turning a metric off removes its column and nothing else: the axis stays
+// 0-100 and every surviving metric keeps the colour it had, so a chart read
+// before the click still reads the same way after it.
+const VISIBLE = new Set(METRICS.map(m => m.key));
+const COLMAX = 24, COLGAP = 2, BANDPAD = 26, PLOTH = 300;
+const PADL = 46, PADR = 14, PADT = 22;
+
+function paintKey() {
+  $('chartkey').innerHTML = METRICS.map(m => `
+    <button data-k="${m.key}" class="${VISIBLE.has(m.key) ? '' : 'off'}"
+            aria-pressed="${VISIBLE.has(m.key)}">
+      <i style="background:var(--series-${m.slot})"></i>${m.label}
+    </button>`).join('');
+  for (const b of $('chartkey').querySelectorAll('button')) {
+    b.onclick = () => {
+      const k = b.dataset.k;
+      if (VISIBLE.has(k)) VISIBLE.delete(k); else VISIBLE.add(k);
+      paintChart();
+    };
+  }
+}
 
 function paintChart() {
+  paintKey();
   const rows = (RESULTS ? RESULTS.systems : []).filter(s => s.ran);
+  const ms = METRICS.filter(m => VISIBLE.has(m.key));
   const box = $('chart');
+
   if (!rows.length) {
-    $('chartkey').innerHTML = '';
     box.innerHTML = '<div class="muted">nothing ran in this run, so there is ' +
                     'nothing to plot</div>';
     return;
   }
+  if (!ms.length) {
+    box.innerHTML = '<div class="muted">every metric is switched off - turn ' +
+                    'one back on above</div>';
+    return;
+  }
 
-  $('chartkey').innerHTML = METRICS.map(m =>
-    `<span><i style="background:var(--series-${m.slot})"></i>${m.label}</span>`).join('');
-
-  const bandH = METRICS.length * BAR + (METRICS.length - 1) * BARGAP + BANDPAD;
-  const W = Math.max(box.clientWidth || 640, 460);
-  const H = PADT + rows.length * bandH + PADB;
+  const W = Math.max(box.clientWidth || 640, 420);
   const plotW = W - PADL - PADR;
-  const x = v => PADL + (v / 100) * plotW;
+  const bandW = plotW / rows.length;
+
+  let colW = (bandW - BANDPAD - (ms.length - 1) * COLGAP) / ms.length;
+  colW = Math.max(4, Math.min(COLMAX, colW));
+  const groupW = ms.length * colW + (ms.length - 1) * COLGAP;
+
+  // Measure before deciding: a value on every cap is right when the columns
+  // are wide enough to hold one, and unreadable overlap when they are not.
+  // The gridline ticks and the Data view carry the numbers either way.
+  // Only when a single metric is on: four columns 24px apart cannot each
+  // carry a 33px label, but one column per system has the whole band to itself.
+  const capLabels = ms.length === 1 && bandW >= 40;
+  const nameW = Math.max(...rows.map(r => r.system.length)) * 6.6;
+  const tilt = bandW < nameW + 10;
+  const PADB = tilt ? Math.min(96, Math.round(nameW * 0.62) + 26) : 42;
+
+  const H = PADT + PLOTH + PADB;
+  const base = PADT + PLOTH;
+  const y = v => PADT + PLOTH * (1 - v / 100);
 
   let g = '';
 
-  // recessive hairline grid, and the ticks that carry what the bar labels do not
+  // recessive hairline grid; its ticks carry whatever the caps do not
   for (const t of [0, 25, 50, 75, 100]) {
-    g += `<line x1="${x(t)}" y1="${PADT}" x2="${x(t)}" y2="${H - PADB + 4}"
+    g += `<line x1="${PADL}" y1="${y(t)}" x2="${PADL + plotW}" y2="${y(t)}"
            stroke="var(--${t === 0 ? 'axis' : 'grid'})" stroke-width="1"/>`;
-    g += `<text class="tick" x="${x(t)}" y="${H - PADB + 18}"
-           text-anchor="${t === 0 ? 'start' : t === 100 ? 'end' : 'middle'}">${t}%</text>`;
+    g += `<text class="tick" x="${PADL - 9}" y="${y(t)}" text-anchor="end"
+           dominant-baseline="middle">${t}%</text>`;
   }
 
-  rows.forEach((s, gi) => {
-    const top = PADT + gi * bandH;
-    // One hover band per system rather than per bar: the whole row is a big
-    // target, and the tooltip can then show all four measures at once.
-    g += `<rect class="band" data-i="${gi}" x="${PADL - 8}" y="${top - 4}"
-           width="${plotW + 8}" height="${bandH - BANDPAD + 12}"/>`;
-    g += `<text class="name" x="${PADL - 12}" y="${top + (bandH - BANDPAD) / 2}"
-           text-anchor="end" dominant-baseline="middle">${esc(s.system)}</text>`;
+  rows.forEach((sy, gi) => {
+    const bandX = PADL + gi * bandW;
+    const x0 = bandX + (bandW - groupW) / 2;
 
-    METRICS.forEach((m, si) => {
-      const v = m.pct ? s[m.key] : s[m.key] * 100;
-      const y = top + si * (BAR + BARGAP);
-      g += bar(PADL, y, x(v) - PADL, BAR, `var(--series-${m.slot})`);
-      g += `<text class="val" x="${x(v) + 7}" y="${y + BAR / 2}"
-             dominant-baseline="middle">${m.pct ? v.toFixed(1) + '%'
-                                                : (v / 100).toFixed(3)}</text>`;
+    // One hover target per system, the full height of the band, so there is
+    // never a thin column to chase with the pointer.
+    g += `<rect class="band" data-i="${gi}" x="${bandX}" y="${PADT}"
+           width="${bandW}" height="${PLOTH}"/>`;
+
+    ms.forEach((m, si) => {
+      const v = m.pct ? sy[m.key] : sy[m.key] * 100;
+      const x = x0 + si * (colW + COLGAP);
+      g += col(x, y(v), colW, base - y(v), `var(--series-${m.slot})`);
+      if (capLabels) {
+        g += `<text class="val" x="${x + colW / 2}" y="${y(v) - 6}"
+               text-anchor="middle">${m.pct ? v.toFixed(1) + '%'
+                                            : (v / 100).toFixed(3)}</text>`;
+      }
     });
+
+    const cx = bandX + bandW / 2;
+    g += tilt
+      ? `<text class="name" x="${cx}" y="${base + 14}" text-anchor="end"
+          transform="rotate(-35 ${cx} ${base + 14})">${esc(sy.system)}</text>`
+      : `<text class="name" x="${cx}" y="${base + 18}" text-anchor="middle"
+          dominant-baseline="hanging">${esc(sy.system)}</text>`;
   });
 
   box.innerHTML = `<svg class="viz" width="${W}" height="${H}" role="img"
-    aria-label="accuracy, precision, recall and F1 for each system that ran">${g}</svg>`;
+    aria-label="${ms.map(m => m.label).join(', ')} for each system that ran"
+    >${g}</svg>`;
 
   for (const b of box.querySelectorAll('.band')) {
-    b.onmousemove = e => tip(e, rows[+b.dataset.i]);
+    b.onmousemove = e => tip(e, rows[+b.dataset.i], ms);
     b.onmouseleave = hideTip;
   }
 }
 
-// A bar with a 4px rounded data-end and a square foot on the baseline.
-function bar(x0, y, len, h, fill) {
-  if (len <= 0.5) return '';
-  const r = Math.min(4, len);
-  return `<path d="M${x0},${y} H${x0 + len - r} a${r},${r} 0 0 1 ${r},${r}
-           V${y + h - r} a${r},${r} 0 0 1 ${-r},${r} H${x0} Z" fill="${fill}"/>`;
+// A column with a 4px rounded cap and a square foot on the baseline.
+function col(x, yTop, w, h, fill) {
+  if (h <= 0.5) return '';
+  const r = Math.min(4, w / 2, h);
+  return `<path d="M${x},${yTop + h} V${yTop + r} a${r},${r} 0 0 1 ${r},${-r}
+           H${x + w - r} a${r},${r} 0 0 1 ${r},${r} V${yTop + h} Z" fill="${fill}"/>`;
 }
 
 let TIP = null;
-function tip(e, s) {
+function tip(e, sy, ms) {
   if (!TIP) { TIP = document.createElement('div'); TIP.className = 'tip';
               document.body.appendChild(TIP); }
-  TIP.innerHTML = `<b>${esc(s.system)}</b><table>` +
-    METRICS.map(m => `<tr><td>${m.label}</td><td>${m.pct ? s[m.key].toFixed(1) + '%'
-                        : s[m.key].toFixed(3)}</td></tr>`).join('') +
-    `<tr><td>TP / FP</td><td>${s.tp} / ${s.fp}</td></tr>` +
-    `<tr><td>FN / TN</td><td>${s.fn} / ${s.tn}</td></tr></table>`;
+  TIP.innerHTML = `<b>${esc(sy.system)}</b><table>` +
+    ms.map(m => `<tr><td>${m.label}</td><td>${m.pct ? sy[m.key].toFixed(1) + '%'
+                    : sy[m.key].toFixed(3)}</td></tr>`).join('') +
+    `<tr><td>TP / FP</td><td>${sy.tp} / ${sy.fp}</td></tr>` +
+    `<tr><td>FN / TN</td><td>${sy.fn} / ${sy.tn}</td></tr></table>`;
   TIP.style.left = Math.min(e.clientX + 16, innerWidth - 300) + 'px';
-  TIP.style.top = Math.min(e.clientY + 16, innerHeight - 170) + 'px';
+  TIP.style.top = Math.min(e.clientY + 16, innerHeight - 190) + 'px';
   TIP.hidden = false;
 }
 function hideTip() { if (TIP) TIP.hidden = true; }
