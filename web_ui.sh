@@ -94,6 +94,9 @@ TUNNEL_PID=""
 TUNNEL_LOG="$PROJECT_DIR/results/logs/tunnel.log"
 TUNNEL_PIDFILE="$PROJECT_DIR/results/logs/.tunnel.ssh.pid"
 TUNNEL_TARGETFILE="$PROJECT_DIR/results/logs/.tunnel.target"
+# An anonymous tunnel gets a new address every reconnect, so the link
+# printed at startup goes stale. This file always holds the live one.
+PUBLIC_URL_FILE="$PROJECT_DIR/results/logs/public_url.txt"
 TUNNEL_TARGET="nokey@localhost.run"
 
 # localhost.run gives a keyed connection the same subdomain every time, and the
@@ -160,6 +163,7 @@ tunnel_loop() {
     if [[ "$had" -eq 1 ]]; then
       url="$(await_url "$prev" 40 "$sshpid")"
       if [[ -n "$url" ]]; then
+        echo "$url" > "$PUBLIC_URL_FILE"
         echo -e "\n${YLW}  warn${NC} the tunnel dropped and reconnected"
         echo -e "${GRN}  ok${NC} public    $url"
         [[ "$TUNNEL_TARGET" == nokey@* ]] \
@@ -183,6 +187,12 @@ tunnel_loop() {
       TUNNEL_TARGET="nokey@localhost.run"
       echo "$TUNNEL_TARGET" > "$TUNNEL_TARGETFILE"
       echo -e "${YLW}  warn${NC} localhost.run would not take your SSH key, using an anonymous tunnel"
+      # the reason matters: a passphrase-protected key with no agent looks
+      # exactly like a rejected one from here, and is worth knowing about
+      local why
+      why="$(grep -iE "permission denied|passphrase|no such identity|Too many auth" \
+             "$TUNNEL_LOG" 2>/dev/null | tail -1)"
+      [[ -n "$why" ]] && echo -e "${YLW}  warn${NC} ssh said: ${why# }"
       fails=0
     fi
 
@@ -207,23 +217,42 @@ start_tunnel() {
   local target; target="$(cat "$TUNNEL_TARGETFILE" 2>/dev/null)"
 
   if [[ -n "$url" ]]; then
+    echo "$url" > "$PUBLIC_URL_FILE"
     ok "public    $url"
+    check_public "$url"
     if [[ "$target" == nokey@* ]]; then
       warn "anonymous tunnel, so a reconnect gets a different address"
       warn "(an SSH key on this machine would keep the address stable)"
     fi
     warn "no password in front of it - anyone with the link can start runs here"
+    ok "current   $PUBLIC_URL_FILE always holds the live address"
   else
     warn "localhost.run did not hand back a URL, see $TUNNEL_LOG"
     warn "the server still starts, just without the public link"
   fi
 }
 
+# Fetch the public URL and see whether it reaches this machine. Printing a
+# link and leaving you to discover in a browser that it does not answer is the
+# one thing worth spending three seconds to avoid.
+check_public() {
+  command -v curl >/dev/null || return 0
+  local code
+  code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "$1" 2>/dev/null)"
+  if [[ "$code" == "200" ]]; then
+    ok "checked   that link reaches this server"
+    return 0
+  fi
+  warn "that link did NOT answer (HTTP ${code:-no reply})"
+  warn "the tunnel log is $TUNNEL_LOG"
+  return 1
+}
+
 stop_tunnel() {
   # the supervisor first, so it cannot start another ssh, then the ssh itself
   [[ -n "$TUNNEL_PID" ]] && kill "$TUNNEL_PID" 2>/dev/null
   [[ -s "$TUNNEL_PIDFILE" ]] && kill "$(cat "$TUNNEL_PIDFILE")" 2>/dev/null
-  rm -f "$TUNNEL_PIDFILE" "$TUNNEL_TARGETFILE"
+  rm -f "$TUNNEL_PIDFILE" "$TUNNEL_TARGETFILE" "$PUBLIC_URL_FILE"
   TUNNEL_PID=""
   return 0
 }
@@ -265,7 +294,41 @@ if [[ "$DETACH" -eq 1 ]]; then
   exit 0
 fi
 
-# No exec: the trap has to survive the server so the tunnel is closed with it.
-trap stop_tunnel EXIT INT TERM
-[[ "$PUBLIC" -eq 1 ]] && start_tunnel
-python3 -u scripts/web_ui.py --port "$PORT" --host "$HOST"
+SERVER_PID=""
+cleanup() {
+  stop_tunnel
+  [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null
+  return 0
+}
+
+# Wait until the server actually answers, so the tunnel is never published
+# pointing at a port with nothing behind it.
+wait_for_server() {
+  command -v curl >/dev/null || { sleep 2; return 0; }
+  local i
+  for (( i = 0; i < 30; i++ )); do
+    curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/" && return 0
+    kill -0 "$SERVER_PID" 2>/dev/null || return 1
+    sleep 1
+  done
+  return 1
+}
+
+# No exec: the trap has to outlive the server so the tunnel is closed with it.
+trap cleanup EXIT INT TERM
+
+python3 -u scripts/web_ui.py --port "$PORT" --host "$HOST" &
+SERVER_PID=$!
+
+# The tunnel goes up second. The other way round publishes a URL that answers
+# with an error for however long the server takes to bind, and leaves nothing
+# for check_public to test against.
+if [[ "$PUBLIC" -eq 1 ]]; then
+  if wait_for_server; then
+    start_tunnel
+  else
+    warn "the server never came up, so no tunnel was opened"
+  fi
+fi
+
+wait "$SERVER_PID"
