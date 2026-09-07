@@ -569,6 +569,44 @@ PAGE = r"""<!doctype html>
   .l-fail { color:var(--bad); font-weight:600; }
 
   .scroll { overflow-x:auto; }
+
+  /* Chart palette: slots 1-4 of the reference categorical order, validated
+     against this card's own surface (#fff light, #1e1e23 dark) - every check
+     passes; light mode returns a contrast WARN on aqua and yellow, whose
+     relief is the value label on every bar plus the Table view beside it. */
+  .viz {
+    --series-1:#2a78d6; --series-2:#eb6834; --series-3:#1baf7a; --series-4:#eda100;
+    --grid:#e1e0d9; --axis:#c3c2b7;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz {
+      --series-1:#3987e5; --series-2:#d95926; --series-3:#199e70; --series-4:#c98500;
+      --grid:#2c2c2a; --axis:#383835;
+    }
+  }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:7px;
+         overflow:hidden; margin-bottom:14px; }
+  .seg button { border:none; border-radius:0; background:transparent; color:var(--dim);
+                padding:6px 15px; font-size:13px; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.on { background:var(--accent); color:#fff; }
+  .legend { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px; }
+  .legend span { display:flex; align-items:center; gap:7px; font-size:12px;
+                 color:var(--dim); }
+  .legend i { width:11px; height:11px; border-radius:3px; display:block; }
+  .viz text { font:12px ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .viz .tick { fill:var(--dim); }
+  .viz .name { fill:var(--ink); font-weight:600; }
+  .viz .val  { fill:var(--dim); font-size:11px; }
+  .viz .band { fill:transparent; }
+  .viz .band:hover { fill:var(--line); opacity:.35; }
+  .tip { position:fixed; z-index:9; pointer-events:none; background:var(--panel);
+         border:1px solid var(--line); border-radius:7px; padding:9px 11px;
+         font-size:12px; box-shadow:0 6px 20px rgba(0,0,0,.16); max-width:280px; }
+  .tip b { display:block; margin-bottom:5px; font-family:var(--mono); }
+  .tip table { width:auto; }
+  .tip td { border:none; padding:1px 0 1px 12px; text-align:right; }
+  .tip td:first-child { padding-left:0; text-align:left; color:var(--dim); }
   table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums; }
   th, td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--line);
            white-space:nowrap; }
@@ -670,7 +708,15 @@ results table, and the prediction it made for every single call.</pre>
     <!-- results -->
     <div id="t-results" hidden>
       <div class="card">
-        <div class="scroll"><table id="results"></table></div>
+        <div class="seg">
+          <button id="v-table" class="on">Data</button>
+          <button id="v-chart">Graph</button>
+        </div>
+        <div id="r-table"><div class="scroll"><table id="results"></table></div></div>
+        <div id="r-chart" hidden>
+          <div class="legend viz" id="chartkey"></div>
+          <div class="scroll viz" id="chart"></div>
+        </div>
         <div class="hint" id="spread"></div>
       </div>
     </div>
@@ -752,6 +798,8 @@ async function boot() {
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
   for (const b of $('tabs').querySelectorAll('button')) b.onclick = () => showTab(b.dataset.tab);
+  $('v-table').onclick = () => showView('table');
+  $('v-chart').onclick = () => showView('chart');
   $('csvpick').onchange = () => { page = 0; loadCalls(); };
   $('steppick').onchange = loadStep;
   $('prev').onclick = () => { if (page > 0) { page--; loadCalls(); } };
@@ -827,6 +875,9 @@ function showTab(name) {
     b.classList.toggle('on', b.dataset.tab === name);
   for (const t of ['output','results','calls','steps'])
     $('t-' + t).hidden = t !== name;
+  // a chart drawn while its tab was hidden measured a zero-width box and fell
+  // back to the minimum, so redraw it now that it has a real width
+  if (name === 'results' && view === 'chart' && RESULTS) paintChart();
   if (name === 'calls' && !$('calls').rows.length) loadCalls();
   if (name === 'steps' && !$('steplog').textContent) loadStep();
 }
@@ -881,12 +932,38 @@ function paintHeader(meta, status) {
 }
 
 // ------------------------------------------------------------------ results
+let RESULTS = null, view = 'table';
+const METRICS = [
+  {key: 'acc', label: 'Accuracy', slot: 1, pct: true},
+  {key: 'p',   label: 'Precision', slot: 2},
+  {key: 'r',   label: 'Recall',   slot: 3},
+  {key: 'f1',  label: 'F1',       slot: 4},
+];
+
 async function showResults() {
-  const r = (await api(`/api/results?id=${encodeURIComponent(current)}`)).results;
-  if (!r) { $('results').innerHTML = '<tr><td class="muted">no results parsed</td></tr>'; return; }
+  RESULTS = (await api(`/api/results?id=${encodeURIComponent(current)}`)).results;
+  if (!RESULTS) {
+    $('results').innerHTML = '<tr><td class="muted">no results parsed</td></tr>';
+    return;
+  }
+  paintTable();
+  showView(view);
+  $('spread').textContent = (RESULTS.bert_spread || []).join(' · ');
+}
+
+function showView(which) {
+  view = which;
+  $('v-table').classList.toggle('on', which === 'table');
+  $('v-chart').classList.toggle('on', which === 'chart');
+  $('r-table').hidden = which !== 'table';
+  $('r-chart').hidden = which === 'table';
+  if (which === 'chart') paintChart();
+}
+
+function paintTable() {
   const head = ['system','acc','P','R','F1','TP','FP','FN','TN'];
   let h = '<tr>' + head.map(x => `<th>${x}</th>`).join('') + '</tr>';
-  for (const s of r.systems) {
+  for (const s of RESULTS.systems) {
     if (!s.ran) {
       h += `<tr class="skipped"><td>${s.system}</td><td colspan="8">not run</td></tr>`;
       continue;
@@ -897,8 +974,96 @@ async function showResults() {
          `<td>${s.fn}</td><td>${s.tn}</td></tr>`;
   }
   $('results').innerHTML = h;
-  $('spread').textContent = (r.bert_spread || []).join(' · ');
 }
+
+// --------------------------------------------------------------- the graph
+// Grouped horizontal bars: one band per system that ran, four bars inside it.
+// All four measures live on one 0-100% axis - accuracy is already a
+// percentage and P/R/F1 are scaled to match, so there is never a second scale
+// to reconcile. Drawn as plain SVG; nothing is fetched from anywhere.
+const BAR = 12, BARGAP = 2, BANDPAD = 22, PADL = 104, PADR = 64, PADT = 6, PADB = 30;
+
+function paintChart() {
+  const rows = (RESULTS ? RESULTS.systems : []).filter(s => s.ran);
+  const box = $('chart');
+  if (!rows.length) {
+    $('chartkey').innerHTML = '';
+    box.innerHTML = '<div class="muted">nothing ran in this run, so there is ' +
+                    'nothing to plot</div>';
+    return;
+  }
+
+  $('chartkey').innerHTML = METRICS.map(m =>
+    `<span><i style="background:var(--series-${m.slot})"></i>${m.label}</span>`).join('');
+
+  const bandH = METRICS.length * BAR + (METRICS.length - 1) * BARGAP + BANDPAD;
+  const W = Math.max(box.clientWidth || 640, 460);
+  const H = PADT + rows.length * bandH + PADB;
+  const plotW = W - PADL - PADR;
+  const x = v => PADL + (v / 100) * plotW;
+
+  let g = '';
+
+  // recessive hairline grid, and the ticks that carry what the bar labels do not
+  for (const t of [0, 25, 50, 75, 100]) {
+    g += `<line x1="${x(t)}" y1="${PADT}" x2="${x(t)}" y2="${H - PADB + 4}"
+           stroke="var(--${t === 0 ? 'axis' : 'grid'})" stroke-width="1"/>`;
+    g += `<text class="tick" x="${x(t)}" y="${H - PADB + 18}"
+           text-anchor="${t === 0 ? 'start' : t === 100 ? 'end' : 'middle'}">${t}%</text>`;
+  }
+
+  rows.forEach((s, gi) => {
+    const top = PADT + gi * bandH;
+    // One hover band per system rather than per bar: the whole row is a big
+    // target, and the tooltip can then show all four measures at once.
+    g += `<rect class="band" data-i="${gi}" x="${PADL - 8}" y="${top - 4}"
+           width="${plotW + 8}" height="${bandH - BANDPAD + 12}"/>`;
+    g += `<text class="name" x="${PADL - 12}" y="${top + (bandH - BANDPAD) / 2}"
+           text-anchor="end" dominant-baseline="middle">${esc(s.system)}</text>`;
+
+    METRICS.forEach((m, si) => {
+      const v = m.pct ? s[m.key] : s[m.key] * 100;
+      const y = top + si * (BAR + BARGAP);
+      g += bar(PADL, y, x(v) - PADL, BAR, `var(--series-${m.slot})`);
+      g += `<text class="val" x="${x(v) + 7}" y="${y + BAR / 2}"
+             dominant-baseline="middle">${m.pct ? v.toFixed(1) + '%'
+                                                : (v / 100).toFixed(3)}</text>`;
+    });
+  });
+
+  box.innerHTML = `<svg class="viz" width="${W}" height="${H}" role="img"
+    aria-label="accuracy, precision, recall and F1 for each system that ran">${g}</svg>`;
+
+  for (const b of box.querySelectorAll('.band')) {
+    b.onmousemove = e => tip(e, rows[+b.dataset.i]);
+    b.onmouseleave = hideTip;
+  }
+}
+
+// A bar with a 4px rounded data-end and a square foot on the baseline.
+function bar(x0, y, len, h, fill) {
+  if (len <= 0.5) return '';
+  const r = Math.min(4, len);
+  return `<path d="M${x0},${y} H${x0 + len - r} a${r},${r} 0 0 1 ${r},${r}
+           V${y + h - r} a${r},${r} 0 0 1 ${-r},${r} H${x0} Z" fill="${fill}"/>`;
+}
+
+let TIP = null;
+function tip(e, s) {
+  if (!TIP) { TIP = document.createElement('div'); TIP.className = 'tip';
+              document.body.appendChild(TIP); }
+  TIP.innerHTML = `<b>${esc(s.system)}</b><table>` +
+    METRICS.map(m => `<tr><td>${m.label}</td><td>${m.pct ? s[m.key].toFixed(1) + '%'
+                        : s[m.key].toFixed(3)}</td></tr>`).join('') +
+    `<tr><td>TP / FP</td><td>${s.tp} / ${s.fp}</td></tr>` +
+    `<tr><td>FN / TN</td><td>${s.fn} / ${s.tn}</td></tr></table>`;
+  TIP.style.left = Math.min(e.clientX + 16, innerWidth - 300) + 'px';
+  TIP.style.top = Math.min(e.clientY + 16, innerHeight - 170) + 'px';
+  TIP.hidden = false;
+}
+function hideTip() { if (TIP) TIP.hidden = true; }
+
+addEventListener('resize', () => { if (view === 'chart' && RESULTS) paintChart(); });
 
 // ---------------------------------------------------------------- artifacts
 async function loadArtifacts() {
