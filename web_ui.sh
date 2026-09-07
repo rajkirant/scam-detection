@@ -25,14 +25,21 @@
 # transcript, with no password in front of it.
 #
 # localhost.run does not hold a connection forever, so the tunnel is
-# supervised: when it drops, a new one is opened and the link is printed
-# again. If this machine has an SSH key the address stays the same across
+# supervised: when it drops, a new one is opened and the link is printed here
+# again. An anonymous tunnel can also expire without the connection closing -
+# the address stops serving while ssh sits there looking healthy - so the
+# supervisor asks the public URL itself once a minute and reconnects when the
+# answer stops coming, which prints the new link too.
+# If this machine has an SSH key the address stays the same across
 # those reconnects; without one every reconnect gets a fresh address, and the
 # previous link stops working - so on a box you will share a link from,
 #
-#   ssh-keygen -t ed25519      (once, no passphrase needed for this)
+#   ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr      (once)
 #
-# is worth doing. The whole history is in results/logs/tunnel.log.
+# is worth doing - ~/.ssh/id_lhr is used for the tunnel in preference to the
+# box's own key, which on a shared machine is often passphrase-protected or
+# otherwise not one localhost.run will take. Any default key is still used if
+# that file is absent. The whole history is in results/logs/tunnel.log.
 #
 # Benchmark runs started from the page are detached from this server, so
 # stopping it does not stop a run that is already going.
@@ -98,6 +105,16 @@ TUNNEL_TARGETFILE="$PROJECT_DIR/results/logs/.tunnel.target"
 # printed at startup goes stale. This file always holds the live one.
 PUBLIC_URL_FILE="$PROJECT_DIR/results/logs/public_url.txt"
 TUNNEL_TARGET="nokey@localhost.run"
+# How often the live link is asked whether it still answers, and how many
+# misses in a row mean it is gone rather than a blip.
+TUNNEL_CHECK_EVERY=60
+TUNNEL_CHECK_FAILS=2
+LAST_CODE=""        # what the last url_answers call got back
+# A key kept for this tunnel alone. Optional, and the reason it exists is that
+# the default key on a shared box is often the one localhost.run will not take
+# - a passphrase with no agent looks identical to a refusal from here - and
+# regenerating that key is not a thing to do to fix a demo link.
+TUNNEL_KEY="$HOME/.ssh/id_lhr"
 
 # localhost.run gives a keyed connection the same subdomain every time, and the
 # "nokey" user a fresh random one on every reconnect. A stable link matters
@@ -106,6 +123,12 @@ TUNNEL_TARGET="nokey@localhost.run"
 # falls back to nokey.
 pick_target() {
   local k
+  # a key set aside for this tunnel, or an entry for localhost.run in ssh's own
+  # config, each mean a keyed connection is wanted even with no default key
+  [[ -f "$TUNNEL_KEY" ]] && { echo "${USER:-ui}@localhost.run"; return; }
+  if grep -qiE "^[[:space:]]*Host[[:space:]].*localhost[.]run" ~/.ssh/config 2>/dev/null; then
+    echo "${USER:-ui}@localhost.run"; return
+  fi
   for k in ~/.ssh/id_ed25519 ~/.ssh/id_ecdsa ~/.ssh/id_rsa; do
     [[ -f "$k" ]] && { echo "${USER:-ui}@localhost.run"; return; }
   done
@@ -139,19 +162,57 @@ await_url() {
   return 1
 }
 
+# Sits on one connection until it is no longer serving the link. ssh exiting
+# is the easy case; the one worth this code is an anonymous tunnel expiring
+# while the ssh session stays up, where nothing local notices and the link
+# simply stops working. Killing the ssh here is what makes tunnel_loop open the
+# next one and print its address.
+supervise() {
+  local sshpid="$1" prev="$2" url="${3:-}" miss=0 i
+  if [[ -z "$url" ]]; then
+    url="$(await_url "$prev" 45 "$sshpid")"
+    # a keyed tunnel comes back on the address it had, so nothing new is
+    # announced and the one already in the log is the one to watch
+    [[ -z "$url" ]] && url="$(latest_url)"
+  fi
+  while kill -0 "$sshpid" 2>/dev/null; do
+    for (( i = 0; i < TUNNEL_CHECK_EVERY; i++ )); do
+      kill -0 "$sshpid" 2>/dev/null || return 0
+      sleep 1
+    done
+    [[ -z "$url" ]] && { url="$(latest_url)"; continue; }
+    if url_answers "$url"; then
+      miss=0
+      continue
+    fi
+    miss=$(( miss + 1 ))
+    echo "[$(date "+%F %T")] $url answered ${LAST_CODE:-nothing} ($miss of $TUNNEL_CHECK_FAILS)" >> "$TUNNEL_LOG"
+    (( miss < TUNNEL_CHECK_FAILS )) && continue
+    echo
+    warn "the public link stopped answering (HTTP ${LAST_CODE:-no reply}) - opening a new one"
+    kill "$sshpid" 2>/dev/null
+    return 0
+  done
+}
+
 # Keeps one ssh alive. A connection that dies without ever announcing a URL is
 # a failure rather than a drop, so those back off instead of hammering
 # localhost.run, and two of them in a row mean the key is not welcome - at
 # which point it switches to the anonymous user rather than retrying forever.
 tunnel_loop() {
-  local sshpid prev url t0 el fails=0 pause had=0
+  local sshpid prev url t0 el fails=0 pause had=0 keyopt=()
+  # IdentitiesOnly, or ssh offers the box's other keys first and localhost.run
+  # answers whichever one it is handed - which is how you end up on a different
+  # subdomain than the one you shared
+  [[ -f "$TUNNEL_KEY" ]] && keyopt=(-i "$TUNNEL_KEY" -o IdentitiesOnly=yes)
   while true; do
     prev="$(latest_url)"
+    url=""
     t0=$(date +%s)
     ssh -n -T -o StrictHostKeyChecking=accept-new \
            -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
            -o ExitOnForwardFailure=yes \
-           -R 80:localhost:"$PORT" "$TUNNEL_TARGET" \
+           ${keyopt[@]+"${keyopt[@]}"} -R 80:localhost:"$PORT" "$TUNNEL_TARGET" \
         >> "$TUNNEL_LOG" 2>&1 &
     sshpid=$!
     echo "$sshpid" > "$TUNNEL_PIDFILE"
@@ -171,6 +232,8 @@ tunnel_loop() {
       fi
     fi
 
+    # ssh does not always end when the tunnel does, so watch the link itself
+    supervise "$sshpid" "$prev" "$url"
     wait "$sshpid" 2>/dev/null
     [[ -n "$(latest_url)" ]] && had=1
     el=$(( $(date +%s) - t0 ))
@@ -232,18 +295,26 @@ start_tunnel() {
   fi
 }
 
-# Fetch the public URL and see whether it reaches this machine. Printing a
-# link and leaving you to discover in a browser that it does not answer is the
-# one thing worth spending three seconds to avoid.
+# Does the public URL still reach this machine? With no curl there is nothing
+# to ask with, so say yes rather than tearing down a tunnel that is probably
+# fine. Both the startup check and the watchdog ask through here.
+url_answers() {
+  LAST_CODE=""
+  command -v curl >/dev/null || return 0
+  LAST_CODE="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "$1" 2>/dev/null)"
+  [[ "$LAST_CODE" == "200" ]]
+}
+
+# The same question at startup, said out loud. Printing a link and leaving you
+# to discover in a browser that it does not answer is the one thing worth
+# spending a few seconds to avoid.
 check_public() {
   command -v curl >/dev/null || return 0
-  local code
-  code="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "$1" 2>/dev/null)"
-  if [[ "$code" == "200" ]]; then
+  if url_answers "$1"; then
     ok "checked   that link reaches this server"
     return 0
   fi
-  warn "that link did NOT answer (HTTP ${code:-no reply})"
+  warn "that link did NOT answer (HTTP ${LAST_CODE:-no reply})"
   warn "the tunnel log is $TUNNEL_LOG"
   return 1
 }
