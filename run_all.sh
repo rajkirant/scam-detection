@@ -616,20 +616,35 @@ hms() {
 # has hung. Comparing the log size against last time says which it is.
 HEARTBEAT_SECS="${HEARTBEAT_SECS:-30}"
 heartbeat() {
-  local log="$1" t0="$2" last=0 size el
+  local log="$1" t0="$2" last=0 size now el quiet last_out
+  last_out=$(date +%s)
   while true; do
     sleep "$HEARTBEAT_SECS"
     size=$(wc -c < "$log" 2>/dev/null || echo 0)
-    el=$(( $(date +%s) - t0 ))
+    now=$(date +%s); el=$(( now - t0 ))
+
+    # Output arriving is itself proof of life, so say nothing on top of it.
+    # The heartbeat is only there to fill a silence.
     if (( size > last )); then
-      echo -e "    ${CYN}...${NC} $(hms "$el") elapsed, output still coming"
-    elif (( el > 600 )); then
-      # ten minutes of complete silence is worth a second look
-      echo -e "    ${YLW}...${NC} $(hms "$el") elapsed, still no output - check nvidia-smi / ollama ps"
-    else
-      echo -e "    ${CYN}...${NC} $(hms "$el") elapsed, running (nothing printed yet)"
+      last="$size"; last_out="$now"
+      continue
     fi
-    last="$size"
+
+    # A gap of one interval is normal between two progress lines - only a
+    # gap long enough to look like a stall is worth a line.
+    quiet=$(( now - last_out ))
+    (( quiet < 2 * HEARTBEAT_SECS )) && continue
+
+    if (( quiet > 600 )); then
+      # ten minutes without a word, measured from the last output rather than
+      # from the start of the step, which is the difference between "stalled"
+      # and "has simply been running a long time"
+      echo -e "    ${YLW}...${NC} $(hms "$el") into this step, nothing printed for" \
+              "$(hms "$quiet") - check nvidia-smi / ollama ps"
+    else
+      echo -e "    ${CYN}...${NC} $(hms "$el") into this step, still working" \
+              "(last output $(hms "$quiet") ago)"
+    fi
   done
 }
 

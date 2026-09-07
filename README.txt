@@ -82,9 +82,11 @@ cd ~/scam-detection && source venv/bin/activate
 #            id:<value> = one row by its id column,
 #            idx:<n> = the n-th call of a --limit 40 style run
 #
-# Each step streams its progress as it goes, plus a heartbeat every 30s so a
-# quiet LLM step is distinguishable from a hung one. HEARTBEAT_SECS=10
-# ./run_all.sh makes that more frequent.
+# Each step streams its progress as it goes. While that output is flowing
+# nothing else is printed - it is its own proof of life. Only a silence of
+# a minute or more draws a heartbeat line, and only ten minutes of actual
+# silence turns it into a warning. HEARTBEAT_SECS=10 ./run_all.sh checks
+# more often.
 #
 # Results land in results/logs/run_<stamp>/ (one log per baseline) and
 # results/*.csv (one row per call).
