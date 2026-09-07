@@ -47,8 +47,13 @@ def build_index(patterns):
     except Exception:
         pass
 
+    # Cosine space, so a distance converts to a similarity as plain 1 - d.
+    # Chroma's default is squared L2, which needs the unit-vector assumption to
+    # be interpretable - and webrag_system's relevance gate thresholds on
+    # similarity, so the metric has to be unambiguous.
     collection = client.create_collection(
-        name=COLLECTION_NAME, embedding_function=ef)
+        name=COLLECTION_NAME, embedding_function=ef,
+        metadata={"hnsw:space": "cosine"})
 
     documents, metadatas, ids = [], [], []
     for p in patterns:
@@ -70,17 +75,28 @@ def build_index(patterns):
 
 
 def test_queries(collection):
-    """Sanity queries: known categories should hit, novel ones should miss."""
+    """
+    Sanity queries: known categories should hit, novel ones and ordinary
+    legitimate calls should miss. PASS/drop shows what webrag_system's
+    similarity floor would do with each hit - this is how you calibrate it.
+    """
+    from webrag_system import (MIN_KB_SIMILARITY, collection_space,
+                               similarity_from_distance)
+
     checks = [
         ("caller demands full card number and CVV, threatens account freeze",
-         "known - bank_impersonation should be top, low distance"),
+         "known - bank_impersonation should be top and PASS"),
         ("caller says my computer has a virus, asks to install remote software",
-         "known - tech_support should be top"),
+         "known - tech_support should be top and PASS"),
         ("caller used an AI clone of my grandson's voice asking for bail money",
-         "NOVEL (ai_voice_cloning) - expect a POOR match, high distance"),
+         "NOVEL (ai_voice_cloning) - expect a POOR match"),
         ("caller says I must pay to release a parcel held at customs",
          "NOVEL (parcel_delivery_fee) - expect a POOR match"),
+        ("caller confirms a dentist appointment and offers to reschedule it",
+         "LEGITIMATE - every hit should be dropped, or the KB biases the prompt"),
     ]
+    space = collection_space(collection)
+    print(f"    (space={space}, similarity floor={MIN_KB_SIMILARITY:.2f})")
     for query, note in checks:
         res = collection.query(query_texts=[query], n_results=3)
         print(f"\n  query: \"{query[:60]}\"")
@@ -88,9 +104,11 @@ def test_queries(collection):
         for i in range(len(res["ids"][0])):
             md = res["metadatas"][0][i]
             dist = res["distances"][0][i]
+            sim = similarity_from_distance(dist, space)
+            verdict = "PASS" if sim >= MIN_KB_SIMILARITY else "drop"
             print(f"      {i+1}. {md['scam_type']:<26} "
-                  f"dist {dist:.3f}  cred {md['credibility']:.2f}  "
-                  f"[{md['domain']}]")
+                  f"sim {sim:.3f} [{verdict}]  dist {dist:.3f}  "
+                  f"cred {md['credibility']:.2f}  [{md['domain']}]")
 
 
 def main():
@@ -124,9 +142,10 @@ def main():
     if do_test:
         print("\n  Running sanity queries...")
         test_queries(collection)
-        print("\n  Interpretation: known categories should return low distances;")
-        print("  the two NOVEL queries should return noticeably higher distances.")
-        print("  That gap is what live web retrieval is meant to close (RQ1).")
+        print("\n  Interpretation: known categories should PASS the floor; the two")
+        print("  NOVEL queries and the legitimate call should be dropped. That gap")
+        print("  is what live web retrieval is meant to close (RQ1), and the floor")
+        print("  is what stops an unmatched call being handed scam patterns anyway.")
 
     print("\n" + "=" * 70)
     print("Index built. Source of truth remains knowledge/scam_patterns.json.")

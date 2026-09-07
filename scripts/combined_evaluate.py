@@ -378,13 +378,35 @@ def run_webrag(data, debug=False):
     """
     import webrag_system as W
     coll = W.get_kb_collection()
+    print("    gate: min similarity %.2f, LLM relevance check %s"
+          % (W.MIN_KB_SIMILARITY, "on" if W.USE_LLM_GATE else "off"))
+
+    gate = Counter()
     out, raws = [], []
     for i, (text, true) in enumerate(data, 1):
         res = W.detect(text, coll, use_web=False, threshold=50)
         out.append((res["predicted"], true))
         raws.append(json.dumps(res, default=str)[:500])
+        gate["with_evidence" if res["evidence_used"] else "no_evidence"] += 1
+        gate["kept"] += res["n_kb_kept"]
+        gate["dropped"] += res["n_kb_dropped"]
+        if res["gate_note"] == "unreadable":
+            gate["judge_unreadable"] += 1
         if i % 20 == 0:
             print("    WebRAG: %d/%d" % (i, len(data)))
+
+    # How often retrieval actually contributed. If with_evidence is ~100% the
+    # gate is not biting and the Fraud prior is back; if it is ~0% this is the
+    # LLM-only control wearing a different name. Either extreme is a finding.
+    n = max(len(data), 1)
+    print("    retrieval gate: %d/%d transcripts got evidence (%.0f%%), "
+          "%d chunks kept / %d discarded as irrelevant"
+          % (gate["with_evidence"], n, 100.0 * gate["with_evidence"] / n,
+             gate["kept"], gate["dropped"]))
+    if gate["judge_unreadable"]:
+        print("    WARNING: relevance judge unreadable on %d transcripts "
+              "(kept their candidates rather than guessing)"
+              % gate["judge_unreadable"])
     return out, raws
 
 

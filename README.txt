@@ -131,6 +131,20 @@ python scripts/harvest_patterns.py --stats      # what is in there now
 python scripts/harvest_patterns.py --dry-run    # the plan, no network
 python scripts/harvest_patterns.py              # harvest (--no-cache to refetch)
 python scripts/build_index.py                   # re-embed into chroma_db
+python scripts/build_index.py --test            # + show which hits pass the gate
+
+# 7. Web-RAG relevance gate.
+#    The KB holds scam patterns only, so a vector search hands back three of
+#    them for EVERY call, legitimate ones included. Retrieved chunks now have
+#    to prove they match the transcript before reaching the prompt: a cheap
+#    similarity floor, then a yes/no LLM relevance check. When nothing
+#    survives, the model is told so and judges the transcript alone.
+#      WEBRAG_MIN_SIMILARITY=0.35   cosine floor (pre-filter only - measured
+#                                   Fraud/Normal distributions overlap almost
+#                                   exactly, so this cannot separate on its own)
+#      WEBRAG_LLM_GATE=1            the check that actually decides; =0 to
+#                                   ablate it, at one fewer Ollama call each
+python scripts/test_relevance_gate.py           # gate logic, offline, no Ollama
 
 
 
