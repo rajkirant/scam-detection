@@ -217,7 +217,14 @@ def load_run(run_id):
             meta = json.load(f)
     except Exception:
         return None
-    meta["status"] = run_status(meta)
+    # a file caught mid-write, or one edited by hand into something odd,
+    # drops out of the listing rather than failing the whole endpoint
+    if not isinstance(meta, dict) or "id" not in meta:
+        return None
+    try:
+        meta["status"] = run_status(meta)
+    except Exception:
+        meta["status"] = "failed"
     return meta
 
 
@@ -989,15 +996,35 @@ async function api(path, body) {
   }
 }
 
-// Put a problem where it can be seen, rather than returning quietly.
+// Put a problem where it can be seen, rather than returning quietly. A poll
+// that keeps failing would otherwise paper the log with the same line every
+// tick, so an immediate repeat is dropped.
+let lastFail = '';
 function fail(msg) {
+  $('runsub').textContent = msg;
+  if (msg === lastFail) return;
+  lastFail = msg;
   const log = $('log');
   const span = document.createElement('span');
   span.className = 'l-fail';
   span.textContent = msg + '\n';
   log.appendChild(span);
   log.scrollTop = log.scrollHeight;
-  $('runsub').textContent = msg;
+}
+
+// /api/runs as an array, or null if the call did not come back with one.
+// api() never rejects, so a dropped fetch or a proxy's error page arrives as
+// {error} - and reading .runs off that gave "Cannot read properties of
+// undefined (reading 'find')", a TypeError naming neither the request nor the
+// reason, which took down whatever the caller was in the middle of.
+async function runList() {
+  const r = await api('/api/runs');
+  if (r.error || !Array.isArray(r.runs)) {
+    fail(r.error || 'unexpected reply from /api/runs');
+    return null;
+  }
+  lastFail = '';
+  return r.runs;
 }
 
 addEventListener('unhandledrejection', e => fail('script error: ' + (e.reason && e.reason.message || e.reason)));
@@ -1006,6 +1033,10 @@ addEventListener('error', e => fail('script error: ' + e.message));
 // ------------------------------------------------------------------ setup
 async function boot() {
   CFG = await api('/api/config');
+  if (CFG.error || !CFG.baselines) {
+    fail(CFG.error || 'unexpected reply from /api/config');
+    return;
+  }
 
   $('dataset').innerHTML = CFG.datasets.map(d =>
     `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
@@ -1056,7 +1087,7 @@ async function boot() {
   $('next').onclick = () => { page++; loadCalls(); };
 
   await refreshHistory();
-  const running = (await api('/api/runs')).runs.find(r => r.status === 'running');
+  const running = (await runList() || []).find(r => r.status === 'running');
   if (running) select(running.id);
 }
 
@@ -1205,7 +1236,10 @@ async function poll() {
   offset = r.offset;
   if (r.text) append(r.text);
 
-  const meta = (await api('/api/runs')).runs.find(x => x.id === current);
+  // missing this costs one header repaint - the run's own status came from
+  // /api/output above, so the finish handling below still happens
+  const runs = await runList();
+  const meta = runs && runs.find(x => x.id === current);
   if (meta) { RUNS[meta.id] = meta; paintHeader(meta, r.status); }
 
   if (r.status !== 'running') {
@@ -1522,7 +1556,9 @@ async function loadStep() {
 
 // ------------------------------------------------------------------ history
 async function refreshHistory() {
-  const runs = (await api('/api/runs')).runs.slice(0, 15);
+  const all = await runList();
+  if (!all) return;                 // leave the list showing what it had
+  const runs = all.slice(0, 15);
   for (const r of runs) RUNS[r.id] = r;
   if (!runs.length) { $('hist').innerHTML = '<div class="muted">nothing yet</div>'; return; }
   $('hist').innerHTML = runs.map(r => `
