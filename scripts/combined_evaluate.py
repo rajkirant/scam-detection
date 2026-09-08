@@ -11,8 +11,11 @@ Systems (escalation ladder):
     3. LLM-only        the model decides alone, NO retrieval  (the control)
     4. Singh           policy-compliance vs bank_policies collection
     5. Web-RAG         this project's system, KB-only (use_web=False)
-    6. Qwen-KB         Qwen generalises training scams into a temporary KB,
-                      then judges held-out calls against those patterns
+    6. Qwen-KB         the LLM generalises a TRAINING SPLIT of this dataset
+                      into scam patterns, indexes them as a knowledge base,
+                      and judges held-out calls against what it retrieves
+                      from it. Stratified k-fold like BERT and bag-of-words,
+                      so every call is scored exactly once while held out.
 
 CHANGES IN THIS VERSION
 -----------------------
@@ -38,6 +41,20 @@ CHANGES IN THIS VERSION
    NOTE: this changes results relative to earlier runs. Re-run any baseline
    you intend to compare against.
 
+4. QWEN-KB MADE COMPARABLE, AND MADE TO RUN AT ALL. It used to take one
+   80/20 split, so it was scored on a fifth of the calls while every other
+   system was scored on all of them, and its row was not comparable with
+   theirs. It is now stratified k-fold with pooled out-of-fold predictions,
+   the same protocol BERT and bag-of-words already used.
+   It also used to put forty whole transcripts in one KB-building prompt.
+   Ollama truncates an over-long prompt from the FRONT, so the instructions
+   and the JSON schema were the first thing dropped, no JSON came back, and
+   the step died on "Qwen returned no usable training patterns" - taking the
+   four baselines that had already finished down with it. The KB is now built
+   in small batches with an explicit num_ctx, the learned patterns are indexed
+   and retrieved per call rather than pasted in whole, and a failure here is
+   reported and skipped instead of ending the run.
+
 Usage:
     python scripts/combined_evaluate.py --csv datasets/zhi_scam_vs_legit_794.csv
     python scripts/combined_evaluate.py --csv datasets/... --limit 40
@@ -46,6 +63,7 @@ Usage:
     python scripts/combined_evaluate.py --csv datasets/... --trivial-only
     python scripts/combined_evaluate.py --csv datasets/... --skip singh
     python scripts/combined_evaluate.py --csv datasets/... --skip qwen_kb
+    python scripts/combined_evaluate.py --csv one_row.csv \n        --skip length,bow --qwen-train-csv datasets/zhi_english_646.csv
 """
 
 import argparse
@@ -421,6 +439,10 @@ def _qwen_json(raw):
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text,
                        re.IGNORECASE | re.DOTALL)
     candidates = [fenced.group(1)] if fenced else []
+    # a bare object inside a chattier answer ("Here is the JSON: {...}")
+    brace = re.search(r"\{.*\}", text, re.DOTALL)
+    if brace:
+        candidates.append(brace.group(0))
     candidates.append(text)
     for candidate in candidates:
         try:
@@ -432,86 +454,350 @@ def _qwen_json(raw):
     return None
 
 
-def build_qwen_training_kb(train_data, max_examples=40, max_patterns=8):
-    """Ask Qwen to generalise training scams into reusable KB patterns."""
+# --------------------------------------------------------------- Qwen-KB
+# The learning baseline: the LLM is shown a TRAINING SPLIT of this dataset,
+# generalises the scams in it into reusable patterns, those patterns are
+# indexed as a knowledge base, and held-out calls are then judged against what
+# is retrieved from it. Same protocol as BERT and bag-of-words - stratified
+# k-fold, every row predicted exactly once while it was held out - so its row
+# in the results table is comparable with theirs rather than being scored on a
+# different, smaller set of calls.
+#
+# WHY THE KB IS BUILT IN BATCHES
+# One prompt holding forty transcripts is tens of thousands of tokens. Ollama
+# does not refuse an over-long prompt, it truncates it FROM THE FRONT, which
+# deletes the instructions and the JSON schema and leaves the model staring at
+# half a transcript. It then answers in prose, no JSON parses, and the step
+# died on "Qwen returned no usable training patterns". Small batches with an
+# explicit num_ctx keep every prompt inside the window.
+
+QWEN_BATCH_SIZE = 6           # training transcripts per KB-building call
+QWEN_EXAMPLE_CHARS = 1500     # per transcript, inside a batch
+QWEN_NUM_CTX = 8192           # context window asked of Ollama for those calls
+QWEN_N_RETRIEVE = 3           # learned patterns put in front of the judge
+QWEN_MIN_SIMILARITY = 0.20    # below this a retrieved pattern is dropped
+
+_KB_SCHEMA = (
+    'Return JSON only, no prose, in exactly this shape:\n'
+    '{"patterns":[{"category":"short name","behaviours":"what the scammer '
+    'does","signals":"what distinguishes it from a legitimate call"}]}'
+)
+
+
+def _kb_patterns_from_batch(batch, max_patterns, num_ctx, debug=False):
+    """One KB-building call over a handful of training scams."""
     import credibility as C
 
-    scam_texts = [text for text, label in train_data if label == "Fraud"]
-    if not scam_texts:
-        return []
-    random.seed(SEED)
-    sample = random.sample(scam_texts, min(max_examples, len(scam_texts)))
     examples = "\n\n".join(
-        "TRAINING SCAM %d:\n%s" % (i, text[:1800])
-        for i, text in enumerate(sample, 1))
+        "TRAINING SCAM %d:\n%s" % (i, text[:QWEN_EXAMPLE_CHARS])
+        for i, text in enumerate(batch, 1))
     prompt = (
         "You are building a scam-detection knowledge base from labelled scam "
-        "phone transcripts. Generalise recurring scam tactics; do not copy "
-        "names, phone numbers, URLs, or exact wording. Return JSON only in "
-        "this shape: {\"patterns\":[{\"category\":\"short name\", "
-        "\"behaviours\":\"what the scammer does\", "
-        "\"signals\":\"what distinguishes it from a legitimate call\"}]}. "
-        "Create at most %d distinct, concise patterns.\n\n%s" %
-        (max_patterns, examples))
-    parsed = _qwen_json(C.call_ollama(prompt, max_tokens=900)) or {}
-    patterns = []
-    for i, item in enumerate(parsed.get("patterns", []), 1):
+        "phone transcripts.\n\n%s\n\nGeneralise the recurring tactics in the "
+        "transcripts above into at most %d distinct patterns. Describe the "
+        "tactic, never the specific call: no names, phone numbers, amounts, "
+        "URLs, or copied wording.\n\n%s"
+        % (examples, max_patterns, _KB_SCHEMA))
+    raw = C.call_ollama(prompt, max_tokens=800, num_ctx=num_ctx)
+    parsed = _qwen_json(raw)
+    if parsed is None:
+        if debug:
+            print("      KB batch unreadable: %r" % ((raw or "")[:200],))
+        return []
+    out = []
+    for item in parsed.get("patterns", []):
         if not isinstance(item, dict):
             continue
-        category = str(item.get("category", "training_scam")).strip()
-        behaviours = str(item.get("behaviours", "")).strip()
-        signals = str(item.get("signals", "")).strip()
+        category = str(item.get("category", "") or "training_scam").strip()
+        behaviours = str(item.get("behaviours", "") or "").strip()
+        signals = str(item.get("signals", "") or "").strip()
         if behaviours and signals:
-            patterns.append({
-                "id": "qwen_training_%04d" % i,
-                "category": category,
-                "behaviours": behaviours,
-                "signals": signals,
-                "text": ("Scam category: %s\n\nTypical behaviours: %s\n\n"
-                          "Distinguishing signals: %s" %
-                          (category, behaviours, signals)),
-                "source": "dataset training split",
-            })
-    return patterns
+            out.append({"category": category, "behaviours": behaviours,
+                        "signals": signals})
+    return out
 
 
-def run_qwen_kb(data, train_fraction=0.8, max_examples=40, max_patterns=8,
-                max_tokens=300, debug=False):
-    """Train a temporary Qwen-generated KB, then score only held-out rows."""
-    from sklearn.model_selection import train_test_split
+def _merge_patterns(raw_patterns, max_patterns):
+    """Fold duplicate categories together and keep the best-supported ones.
 
-    indices = list(range(len(data)))
-    labels = [label for _, label in data]
-    train_idx, test_idx = train_test_split(
-        indices, test_size=1.0 - train_fraction, random_state=SEED,
-        stratify=labels)
-    train_data = [data[i] for i in train_idx]
-    patterns = build_qwen_training_kb(train_data, max_examples, max_patterns)
-    if not patterns:
-        raise RuntimeError("Qwen returned no usable training patterns")
+    Batching means the same tactic comes back from several batches. Merging on
+    the category name and ranking by how many batches produced it is a cheap
+    consensus: a tactic four batches agreed on is a real regularity of the
+    training split, one batch's one-off is probably one transcript's detail.
+    """
+    merged = {}
+    for p in raw_patterns:
+        key = re.sub(r"[^a-z0-9]+", "_", p["category"].lower()).strip("_")
+        if not key:
+            key = "training_scam"
+        slot = merged.setdefault(key, {"category": p["category"], "support": 0,
+                                       "behaviours": [], "signals": []})
+        slot["support"] += 1
+        if p["behaviours"] not in slot["behaviours"]:
+            slot["behaviours"].append(p["behaviours"])
+        if p["signals"] not in slot["signals"]:
+            slot["signals"].append(p["signals"])
 
-    evidence = "\n\n".join(p["text"] for p in patterns)
-    stats = VerdictStats("qwen_kb")
-    out = [("Not evaluated", true) for _, true in data]
-    raws = [None] * len(data)
-    for n, i in enumerate(test_idx, 1):
+    ordered = sorted(merged.items(), key=lambda kv: -kv[1]["support"])
+    out = []
+    for i, (_key, slot) in enumerate(ordered[:max_patterns], 1):
+        behaviours = " ".join(slot["behaviours"][:3])
+        signals = " ".join(slot["signals"][:3])
+        out.append({
+            "id": "qwen_training_%04d" % i,
+            "category": slot["category"],
+            "support": slot["support"],
+            "behaviours": behaviours,
+            "signals": signals,
+            "text": ("Scam category: %s\n\nTypical behaviours: %s\n\n"
+                     "Distinguishing signals: %s"
+                     % (slot["category"], behaviours, signals)),
+            "source": "dataset training split",
+        })
+    return out
+
+
+def build_qwen_training_kb(train_data, max_examples=40, max_patterns=8,
+                           num_ctx=QWEN_NUM_CTX, debug=False, label=""):
+    """Generalise the scams in a training split into KB patterns.
+
+    Returns [] rather than raising, so the caller decides whether an empty
+    result is fatal.
+    """
+    scam_texts = [text for text, lab in train_data if lab == "Fraud"]
+    if not scam_texts:
+        print("    %sno scam calls in the training split - nothing to "
+              "generalise" % label)
+        return []
+
+    random.seed(SEED)
+    sample = random.sample(scam_texts, min(max_examples, len(scam_texts)))
+    batches = [sample[i:i + QWEN_BATCH_SIZE]
+               for i in range(0, len(sample), QWEN_BATCH_SIZE)]
+    # a single batch only has a few tactics in it; the real cap is applied
+    # after merging, across all of them
+    per_batch = max(2, min(4, max_patterns))
+
+    raw, unreadable = [], 0
+    for i, batch in enumerate(batches, 1):
+        got = _kb_patterns_from_batch(batch, per_batch, num_ctx, debug)
+        if not got:
+            unreadable += 1
+        raw.extend(got)
+        print("    %sKB build: batch %d/%d, %d raw patterns so far"
+              % (label, i, len(batches), len(raw)), flush=True)
+
+    if unreadable:
+        print("    %sWARNING: %d/%d KB batches returned no readable JSON"
+              % (label, unreadable, len(batches)))
+    return _merge_patterns(raw, max_patterns)
+
+
+class QwenPatternKB:
+    """The learned patterns, indexed so they can be retrieved per transcript.
+
+    This is the knowledge-base half of the baseline. It uses an IN-MEMORY
+    Chroma client with the same embedding model as the real KB, so it can
+    never write into chroma_db/ and disturb the scam_patterns collection the
+    Web-RAG baseline reads from.
+    """
+
+    def __init__(self, patterns, tag="fold"):
+        self.patterns = patterns
+        self.collection = None
+        self.retrieval = True
+        if not patterns:
+            return
+        try:
+            import chromadb
+            from chromadb.utils import embedding_functions
+            client = chromadb.EphemeralClient()
+            ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+                model_name="all-MiniLM-L6-v2")
+            name = "qwen_training_kb_%s" % tag
+            # Chroma hands back the same in-memory instance for identical
+            # settings, so a second run in one process would collide on the
+            # fold names. Start each fold from an empty collection.
+            try:
+                client.delete_collection(name=name)
+            except Exception:
+                pass
+            self.collection = client.create_collection(
+                name=name, embedding_function=ef,
+                metadata={"hnsw:space": "cosine"})
+            self.collection.add(
+                documents=[p["text"] for p in patterns],
+                metadatas=[{"category": p["category"]} for p in patterns],
+                ids=[p["id"] for p in patterns])
+        except Exception as exc:
+            # Without an index the baseline still runs, it just shows the judge
+            # every learned pattern instead of the nearest few. Say so rather
+            # than silently changing what is being measured.
+            print("    could not index the learned patterns (%s) - falling "
+                  "back to showing all %d in the prompt" % (exc, len(patterns)))
+            self.collection = None
+            self.retrieval = False
+
+    def evidence_for(self, transcript, n=QWEN_N_RETRIEVE,
+                     min_similarity=QWEN_MIN_SIMILARITY):
+        """Nearest learned patterns for this call: (evidence, kept, dropped)."""
+        if not self.patterns:
+            return "", 0, 0
+        if self.collection is None:
+            return ("\n\n".join(p["text"] for p in self.patterns),
+                    len(self.patterns), 0)
+
+        n = min(n, len(self.patterns))
+        res = self.collection.query(query_texts=[transcript], n_results=n)
+        kept, dropped = [], 0
+        for i in range(len(res["ids"][0])):
+            dist = res["distances"][0][i]
+            # the collection is built in cosine space, so similarity is 1 - d
+            sim = 1.0 - dist if dist is not None else 0.0
+            if sim >= min_similarity:
+                kept.append(res["documents"][0][i])
+            else:
+                dropped += 1
+        return "\n\n".join(kept), len(kept), dropped
+
+
+def _qwen_prompt(evidence, text):
+    if evidence:
+        return (
+            "You are a scam detection analyst. The knowledge base below was "
+            "generalised from SEPARATE labelled scam calls, not from this one. "
+            "Use it as evidence, but require the behaviour to actually match - "
+            "an ordinary legitimate call must still be called Normal.\n\n"
+            "LEARNED KNOWLEDGE BASE:\n%s\n\nTRANSCRIPT:\n%s\n\n"
+            "Answer 'Fraud' or 'Normal' on the first line, starting with "
+            "'Answer:'." % (evidence, text))
+    # Nothing retrieved: judge the call alone rather than hand it scam patterns
+    # that did not match. Same footing as the LLM-only control, never worse -
+    # the reasoning webrag_system.py gives for its own gate.
+    return (
+        "You are a scam detection analyst. No learned scam pattern matched "
+        "this call, so judge it on its own content.\n\nTRANSCRIPT:\n%s\n\n"
+        "Answer 'Fraud' or 'Normal' on the first line, starting with 'Answer:'."
+        % text)
+
+
+def _qwen_judge(indices, data, kb, stats, out, raws, gate, max_tokens, debug,
+                label=""):
+    indices = list(indices)
+    for n, i in enumerate(indices, 1):
         text, true = data[i]
-        prompt = (
-            "You are a scam detection analyst. The following knowledge base "
-            "was generalised from separate labelled scam training calls. Use it "
-            "as evidence, but require matching behaviour and do not assume every "
-            "call is a scam.\n\nLEARNED KNOWLEDGE BASE:\n%s\n\n"
-            "TRANSCRIPT:\n%s\n\nAnswer 'Fraud' or 'Normal' on the first line, "
-            "starting with 'Answer:'." % (evidence, text))
-        pred, raw = ask_verdict(prompt, stats, max_tokens, debug, n)
+        evidence, kept, dropped = kb.evidence_for(text)
+        gate["with_evidence" if kept else "no_evidence"] += 1
+        gate["kept"] += kept
+        gate["dropped"] += dropped
+        pred, raw = ask_verdict(_qwen_prompt(evidence, text), stats,
+                                max_tokens, debug, n)
         out[i] = (pred, true)
         raws[i] = raw
         if n % 20 == 0:
-            print("    Qwen-KB: %d/%d held-out calls" % (n, len(test_idx)))
+            print("    %sQwen-KB: %d/%d held-out calls"
+                  % (label, n, len(indices)), flush=True)
+
+
+def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
+                max_tokens=300, debug=False, train_csv=None,
+                num_ctx=QWEN_NUM_CTX):
+    """Learn a KB from a training split, judge held-out calls against it.
+
+    Two shapes, because the runner has two:
+      * normal run - stratified k-fold over `data`. Every call is predicted
+        exactly once, while it was held out, so the metrics line up with
+        BERT's pooled out-of-fold row and with cross-validated bag-of-words.
+      * train_csv given - patterns are learned from a separate file and every
+        row of `data` is scored against them. This is what makes the single
+        transcript mode work: one row cannot be split into train and test, but
+        it can be judged against a KB learned from the dataset it came from.
+    """
+    stats = VerdictStats("qwen_kb")
+    gate = Counter()
+    out = [(None, true) for _, true in data]
+    raws = [None] * len(data)
+
+    if train_csv:
+        train_data = load_combined(train_csv)
+        held_out = {text for text, _ in data}
+        train_data = [(t, l) for t, l in train_data if t not in held_out]
+        if not train_data:
+            raise RuntimeError(
+                "--qwen-train-csv %s has no rows left once the evaluated calls "
+                "are removed from it" % train_csv)
+        print("    learning from %s (%d calls, none of them scored below)"
+              % (train_csv, len(train_data)), flush=True)
+        patterns = build_qwen_training_kb(train_data, max_examples,
+                                          max_patterns, num_ctx, debug)
+        if not patterns:
+            raise RuntimeError("Qwen produced no usable training patterns")
+        kb = QwenPatternKB(patterns, "single")
+        _qwen_judge(range(len(data)), data, kb, stats, out, raws, gate,
+                    max_tokens, debug)
+        all_patterns = patterns
+    else:
+        from sklearn.model_selection import StratifiedKFold
+        import numpy as np
+
+        y = np.array([1 if lab == "Fraud" else 0 for _, lab in data])
+        smallest = int(min(y.sum(), len(y) - y.sum()))
+        if smallest < 2:
+            raise RuntimeError(
+                "need at least 2 scam and 2 non-scam calls to hold any out "
+                "(the smaller class here has %d). Pass --qwen-train-csv to "
+                "learn the patterns from a separate file instead." % smallest)
+        n_splits = max(2, min(folds, smallest))
+        if n_splits < folds:
+            print("    (only %d calls in the smaller class, using %d folds)"
+                  % (smallest, n_splits))
+
+        skf = StratifiedKFold(n_splits=n_splits, shuffle=True,
+                              random_state=SEED)
+        all_patterns = []
+        for fold, (train_idx, test_idx) in enumerate(
+                skf.split(np.zeros(len(data)), y), 1):
+            label = "fold %d/%d " % (fold, n_splits)
+            print("    %strain %d, held out %d"
+                  % (label, len(train_idx), len(test_idx)), flush=True)
+            train_data = [data[i] for i in train_idx]
+            patterns = build_qwen_training_kb(
+                train_data, max_examples, max_patterns, num_ctx, debug, label)
+            if not patterns:
+                raise RuntimeError(
+                    "Qwen produced no usable training patterns on fold %d - "
+                    "every KB-building prompt came back unreadable. Re-run "
+                    "with --debug to see them." % fold)
+            kb = QwenPatternKB(patterns, "f%d" % fold)
+            for p in patterns:
+                p = dict(p)
+                p["fold"] = fold
+                p["id"] = "f%d_%s" % (fold, p["id"])
+                all_patterns.append(p)
+            _qwen_judge(test_idx, data, kb, stats, out, raws, gate,
+                        max_tokens, debug, label)
+
+    unscored = sum(1 for pred, _ in out if pred is None)
+    if unscored:
+        raise RuntimeError("Qwen-KB left %d calls unscored" % unscored)
+
     stats.report()
-    print("    learned %d patterns from %d training calls; evaluated %d held-out calls"
-          % (len(patterns), len(train_idx), len(test_idx)))
-    return out, raws, patterns
+    n = max(len(data), 1)
+    # How often the learned KB actually contributed. 0% means this is the
+    # LLM-only control under another name; 100% means the similarity floor is
+    # not biting and every call is being shown scam patterns. Either extreme
+    # is a finding about the KB, not about the calls.
+    print("    retrieval: %d/%d calls got a learned pattern (%.0f%%), "
+          "%d kept / %d below the similarity floor"
+          % (gate["with_evidence"], n, 100.0 * gate["with_evidence"] / n,
+             gate["kept"], gate["dropped"]))
+    if train_csv:
+        print("    learned %d patterns from %s; all %d calls scored against "
+              "them" % (len(all_patterns), train_csv, len(data)))
+    else:
+        print("    learned %d patterns across %d folds; all %d calls scored "
+              "while held out" % (len(all_patterns), n_splits, len(data)))
+    return out, raws, all_patterns
 
 
 # ------------------------------------------------------------------ main
@@ -530,11 +816,25 @@ def main():
                     help="print raw model responses and save them to results/")
     ap.add_argument("--bow-features", action="store_true",
                     help="show which words BoW is keying on")
-    ap.add_argument("--folds", type=int, default=5)
-    ap.add_argument("--qwen-train-fraction", type=float, default=0.8,
-                    help="fraction used to generate the Qwen training KB (default: 0.8)")
-    ap.add_argument("--qwen-max-examples", type=int, default=40)
-    ap.add_argument("--qwen-patterns", type=int, default=8)
+    ap.add_argument("--folds", type=int, default=5,
+                    help="cross-validation folds for bag-of-words and Qwen-KB")
+    ap.add_argument("--qwen-folds", type=int, default=None,
+                    help="folds for Qwen-KB alone (default: --folds). Each fold "
+                         "costs one set of KB-building calls; the verdict calls "
+                         "are one per transcript either way")
+    ap.add_argument("--qwen-max-examples", type=int, default=40,
+                    help="training scams sampled per fold to generalise from")
+    ap.add_argument("--qwen-patterns", type=int, default=8,
+                    help="patterns kept in the learned KB per fold")
+    ap.add_argument("--qwen-train-csv", default=None,
+                    help="learn the Qwen KB from this file instead of holding "
+                         "folds out of --csv. Rows that also appear in --csv are "
+                         "dropped from it first. This is how a single-transcript "
+                         "run can still use the baseline")
+    ap.add_argument("--qwen-num-ctx", type=int, default=QWEN_NUM_CTX,
+                    help="context window for the KB-building prompts. Ollama "
+                         "truncates an over-long prompt from the front, which "
+                         "silently removes the instructions")
     args = ap.parse_args()
 
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
@@ -603,18 +903,27 @@ def main():
         print("    (%.0fs)" % (time.time() - t0))
 
     if "qwen_kb" not in skip:
-        print("\nQwen-KB baseline (training-derived patterns):")
-        if not 0.0 < args.qwen_train_fraction < 1.0:
-            ap.error("--qwen-train-fraction must be between 0 and 1")
+        print("\nQwen-KB baseline (patterns learned from a training split):")
         t0 = time.time()
-        results["qwen_kb"], raw_log["qwen_kb"], qwen_patterns = run_qwen_kb(
-            data, args.qwen_train_fraction, args.qwen_max_examples,
-            args.qwen_patterns, args.max_tokens, args.debug)
-        show("Qwen-KB (held-out)", metrics(results["qwen_kb"]))
-        pattern_out = RESULTS_DIR / ("qwen_training_patterns_%d.json" % len(data))
-        with open(pattern_out, "w", encoding="utf-8") as f:
-            json.dump(qwen_patterns, f, indent=2)
-        print("    learned KB: %s" % pattern_out)
+        try:
+            results["qwen_kb"], raw_log["qwen_kb"], qwen_patterns = run_qwen_kb(
+                data, args.qwen_folds or args.folds, args.qwen_max_examples,
+                args.qwen_patterns, args.max_tokens, args.debug,
+                args.qwen_train_csv, args.qwen_num_ctx)
+        except RuntimeError as exc:
+            # One baseline failing must not throw away the four that already
+            # ran: the whole step used to exit here, so a run that included
+            # qwen_kb finished with no results table at all.
+            print("    SKIPPED: %s" % exc)
+            results.pop("qwen_kb", None)
+            raw_log.pop("qwen_kb", None)
+        else:
+            show("Qwen-KB (held-out)", metrics(results["qwen_kb"]))
+            pattern_out = RESULTS_DIR / ("qwen_training_patterns_%d.json"
+                                         % len(data))
+            with open(pattern_out, "w", encoding="utf-8") as f:
+                json.dump(qwen_patterns, f, indent=2)
+            print("    learned KB: %s" % pattern_out)
         print("    (%.0fs)" % (time.time() - t0))
 
     print("\n" + "=" * 74)

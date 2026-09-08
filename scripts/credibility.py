@@ -166,12 +166,23 @@ RECENCY_HALFLIFE_DAYS = 45.0
 W_TRUST, W_RECENCY, W_CORROB = 0.5, 0.3, 0.2
 
 
-def call_ollama(prompt, max_tokens=300, temperature=0.0):
+def call_ollama(prompt, max_tokens=300, temperature=0.0, num_ctx=None):
+    """Call the local model.
+
+    num_ctx is opt-in and left unset by default so every existing caller
+    keeps whatever context window Ollama defaults to for the model. Pass it
+    when a prompt is long: Ollama silently truncates from the FRONT once the
+    prompt exceeds the window, which drops the instructions and leaves the
+    model answering an unlabelled wall of text.
+    """
+    options = {"temperature": temperature, "num_predict": max_tokens}
+    if num_ctx:
+        options["num_ctx"] = int(num_ctx)
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "options": options,
     }
     try:
         r = requests.post(OLLAMA_URL, json=payload, timeout=180)

@@ -66,7 +66,7 @@ BL_LABELS=(
   "LLM-only                  the model decides alone, no retrieval"
   "Singh                     policy-compliance baseline"
   "Web-RAG                   KB-only retrieval"
-  "Qwen-KB                   training-derived generalized patterns"
+  "Qwen-KB                   learns a KB from a held-out split, k-fold"
   "Ontology RAG              scam_ontology.json"
   "MCQ ontology              mcq_ontology.json, 2 calls per transcript"
   "BERT                      fine-tuned classifier, no LLM"
@@ -520,6 +520,11 @@ fi
 # script - everything after this block behaves exactly as it always did,
 # just against a dataset that happens to have one row in it.
 TMP_ROW_CSV=""
+# The full dataset, kept before DATASET is swapped for the 1-row temp file
+# below. Qwen-KB learns its patterns from a training split, and one row
+# cannot be split - so in single-transcript mode it is pointed at the
+# dataset the row came from instead, with that row removed from it.
+FULL_DATASET="$DATASET"
 IDX_LIMIT_USED=40   # must match the --limit you used when you read the idx off a prior run
 if [[ -n "$ONE_ID" ]]; then
   say "Extracting transcript id=$ONE_ID"
@@ -694,10 +699,17 @@ run_step() {
 # ------------------------------------------------- 1. combined_evaluate.py
 # length and bag-of-words are instant, so they come along with any of the
 # three LLM baselines that live in this script
+# Single-transcript mode has no training split to hold out, so Qwen-KB is
+# told to learn from the dataset the row was carved out of instead.
+QWEN_ARGS=""
+if [[ "$SINGLE_MODE" -eq 1 ]] && has_bl qwen_kb; then
+  QWEN_ARGS="--qwen-train-csv $FULL_DATASET"
+fi
+
 if [[ "$RUN_COMBINED" -eq 1 ]]; then
   # shellcheck disable=SC2086
   run_step "combined" python -u scripts/combined_evaluate.py \
-    --csv "$DATASET" $LIMIT_ARG $COMBINED_EXTRA
+    --csv "$DATASET" $LIMIT_ARG $COMBINED_EXTRA $QWEN_ARGS
 fi
 
 # ---------------------------------------------------------- 2. ontology RAG

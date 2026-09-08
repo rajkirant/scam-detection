@@ -76,7 +76,7 @@ cd ~/scam-detection && source venv/bin/activate
 ./run_all.sh --dataset datasets/paired_scam_legit_198.csv \
              --baseline llm_only,mcq,bert --limit 40 --model qwen2.5:14b
 
-# baselines: all trivial llm_only singh webrag ontology mcq bert
+# baselines: all trivial llm_only singh webrag qwen_kb ontology mcq bert
 #   comma-separate for several - "-b 3,7,8" works too (menu numbers)
 # limit:     0 = whole dataset, N = first N calls,
 #            id:<value> = one row by its id column,
@@ -96,10 +96,22 @@ cd ~/scam-detection && source venv/bin/activate
 #  C. The individual scripts, if you want one on its own
 # =====================================================================
 
-# 1. Five baselines: length, BoW, LLM-only, Singh, Web-RAG
+# 1. Six baselines: length, BoW, LLM-only, Singh, Web-RAG, Qwen-KB
 export SCAM_MODEL=qwen2.5:14b
 python scripts/combined_evaluate.py --csv datasets/paired_scam_legit_198.csv --limit 20
-#   --skip length,bow,singh,webrag   run just one of the five
+#   --skip length,bow,singh,webrag,qwen_kb   run just one of the six
+#
+# Qwen-KB is the learning baseline. Like BERT and bag-of-words it is
+# cross-validated: on each fold the model generalises that fold's TRAINING
+# scams into patterns, those patterns are indexed as a knowledge base, and
+# the held-out calls are judged against what is retrieved from it. Every
+# call is scored exactly once, while it was held out, so its row in the
+# results table is comparable with the rest.
+#   --qwen-folds 3            fewer folds = fewer KB-building calls
+#   --qwen-patterns 8         size of the learned KB per fold
+#   --qwen-max-examples 40    training scams sampled per fold
+#   --qwen-train-csv FILE     learn from a separate file instead of folds
+#                             (what a single-transcript run uses)
 
 # 2. Ontology RAG
 python scripts/evaluate_ontology.py \
