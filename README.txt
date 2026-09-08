@@ -89,7 +89,10 @@ cd ~/scam-detection && source venv/bin/activate
 # more often.
 #
 # Results land in results/logs/run_<stamp>/ (one log per baseline) and
-# results/*.csv (one row per call).
+# results/*.csv (one row per call). Every LLM system also records the
+# reason it gave for each call, in a <system>_why column next to its
+# verdict - the Per-call tab shows them, and the checkbox above the
+# table hides them again when the width gets in the way.
 
 
 # =====================================================================

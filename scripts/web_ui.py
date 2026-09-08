@@ -946,6 +946,12 @@ PAGE = r"""<!doctype html>
                         max-width:640px; color:var(--dim); }
   table.calls td.hit  { color:var(--accent); }
   table.calls td.miss { color:var(--bad); font-weight:600; }
+  /* The model's own account of the call. Prose, so it wraps and is never
+     coloured right/wrong - it is not a prediction to score. */
+  table.calls td.why { text-align:left; white-space:normal; color:var(--dim);
+                       font-size:12px; min-width:190px; max-width:300px;
+                       font-style:italic; }
+  table.calls th.why { color:var(--dim); font-style:italic; }
 
   .pill { font-size:12px; padding:2px 9px; border-radius:99px; border:1px solid var(--line);
           color:var(--dim); }
@@ -977,6 +983,9 @@ PAGE = r"""<!doctype html>
   .filepick { display:flex; align-items:center; gap:10px; margin-bottom:12px;
               flex-wrap:wrap; }
   .filepick select { width:auto; min-width:260px; }
+  label.inline { display:flex; align-items:center; gap:6px; margin:0;
+                 font-weight:400; font-size:13px; cursor:pointer; }
+  label.inline input { margin:0; }
 
   /* ---- knowledge base: a maintenance job, not part of configuring a run,
      so it folds away. The state line stays in the summary, because "index
@@ -1121,6 +1130,9 @@ results table, and the prediction it made for every single call.</pre>
     <div id="t-calls" hidden>
       <div class="filepick">
         <select id="csvpick"></select>
+        <label class="inline" id="whybox" hidden>
+          <input type="checkbox" id="showwhy" checked> show reasons
+        </label>
         <span class="hint" id="csvinfo"></span>
       </div>
       <div class="scroll"><table class="calls" id="calls"></table></div>
@@ -1269,6 +1281,7 @@ async function boot() {
   $('v-table').onclick = () => showView('table');
   $('v-chart').onclick = () => showView('chart');
   $('csvpick').onchange = () => { page = 0; loadCalls(); };
+  $('showwhy').onchange = loadCalls;
   $('steppick').onchange = loadStep;
   $('prev').onclick = () => { if (page > 0) { page--; loadCalls(); } };
   $('next').onclick = () => { page++; loadCalls(); };
@@ -1766,15 +1779,31 @@ async function loadCalls() {
   if (r.error) { $('calls').innerHTML = `<tr><td class="muted">${r.error}</td></tr>`; return; }
 
   // "true" is the gold label; every other non-text column is a system's call,
-  // so it can be marked as agreeing with the label or not.
+  // so it can be marked as agreeing with the label or not. A <system>_why
+  // column is the exception: it is the model's reasoning, not a verdict, so it
+  // is never scored against the label.
   const cols = r.columns;
   const truthAt = cols.indexOf('true');
-  let h = '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
+  const why = cols.map(c => c.endsWith('_why'));
+  // hiding them is worth having: seven systems means seven extra prose
+  // columns, and the table is already wide
+  $('whybox').hidden = !why.some(Boolean);
+  const show = $('showwhy').checked;
+  const keep = i => show || !why[i];
+
+  let h = '<tr>' + cols.map((c, i) => keep(i)
+      ? `<th class="${why[i] ? 'why' : ''}">${esc(why[i]
+          ? c.slice(0, -4) + ' · why' : c)}</th>`
+      : '').join('') + '</tr>';
   for (const row of r.rows) {
     h += '<tr>' + row.map((v, i) => {
+      if (!keep(i)) return '';
       const c = cols[i];
       if (c === 'text' || c === 'transcript')
         return `<td class="text">${esc(v.length > 260 ? v.slice(0, 260) + '…' : v)}</td>`;
+      // the cell is clipped by CSS, so the full sentence goes in the tooltip
+      if (why[i])
+        return `<td class="why" title="${esc(v)}">${esc(v)}</td>`;
       if (truthAt >= 0 && i > truthAt && v)
         return `<td class="${v === row[truthAt] ? 'hit' : 'miss'}">${esc(v)}</td>`;
       return `<td>${esc(v)}</td>`;

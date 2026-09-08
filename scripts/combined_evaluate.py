@@ -48,7 +48,16 @@ CHANGES IN THIS VERSION
    NOTE: this changes results relative to earlier runs. Re-run any baseline
    you intend to compare against.
 
-4. QWEN-KB MADE COMPARABLE, AND MADE TO RUN AT ALL. It used to take one
+4. EVERY LLM SYSTEM NOW RECORDS WHY. Each verdict prompt asks for a
+   "Reason:" line under the "Answer:" line, and the per-call CSV gains a
+   <system>_why column beside each <system> column. Web-RAG and the hybrid
+   already had a reason inside detect() - it just never left the function -
+   so theirs costs no extra tokens and comes with the confidence score.
+   NOTE: asking for a reason changes the llm_only, singh and qwen_kb prompts,
+   so their numbers are not directly comparable with runs made before this.
+   Re-run any baseline you intend to compare against.
+
+5. QWEN-KB MADE COMPARABLE, AND MADE TO RUN AT ALL. It used to take one
    80/20 split, so it was scored on a fifth of the calls while every other
    system was scored on all of them, and its row was not comparable with
    theirs. It is now stratified k-fold with pooled out-of-fold predictions,
@@ -196,6 +205,40 @@ def parse_verdict(raw):
     return None
 
 
+# Every LLM system asks for its verdict in the same shape, so one constant
+# keeps them in step. The Reason line is what fills the *_why columns of the
+# per-call CSV: without asking for it, all that can be shown is whatever prose
+# the model happened to volunteer, which is often nothing.
+VERDICT_FORMAT = (
+    "Answer 'Fraud' or 'Normal' on the first line, starting with 'Answer:'.\n"
+    "On the second line give one short sentence starting with 'Reason:', "
+    "naming what in the call decided it.")
+
+# Tolerant of markdown the way parse_verdict is: qwen2.5 likes to answer
+# "**Reason:** ..." and the asterisks are not part of the reason.
+REASON_RE = re.compile(r"reason[*_`\s]*[:\-]\s*[*_`\"'\s]*(.+)",
+                       re.IGNORECASE | re.DOTALL)
+ANSWER_LINE_RE = re.compile(r"^[*_`\s]*answer\s*[:\-]", re.IGNORECASE)
+
+
+def parse_reason(raw, limit=300):
+    """The model's own account of why, as one line.
+
+    Falls back to whatever it said either side of the verdict, so a model that
+    ignores the format still contributes something rather than an empty cell.
+    """
+    if not raw:
+        return ""
+    m = REASON_RE.search(raw)
+    if m:
+        text = m.group(1)
+    else:
+        text = " ".join(ln for ln in raw.splitlines()
+                        if ln.strip() and not ANSWER_LINE_RE.match(ln))
+    text = " ".join(text.split()).strip("*_` ")
+    return text[:limit].rstrip()
+
+
 def looks_truncated(raw):
     """Heuristic: response ended mid-thought rather than concluding."""
     if not raw:
@@ -242,18 +285,27 @@ class VerdictStats:
 
 
 def ask_verdict(prompt, stats, max_tokens=300, debug=False, idx=None):
-    """Call the model, parse a verdict, retry once if unreadable."""
+    """Call the model, parse a verdict and its reason, retry once if unreadable.
+
+    Returns (verdict, raw, reason). The reason always comes from the FIRST
+    reply: the retry deliberately asks for one word and no explanation, so it
+    has none to give.
+    """
     import credibility as C
 
     raw = C.call_ollama(prompt, max_tokens=max_tokens)
     truncated = looks_truncated(raw)
     verdict = parse_verdict(raw)
+    # A model that answers with the bare word and nothing else leaves nothing
+    # to quote. Say that, rather than leave a blank cell that reads as though
+    # the column failed to fill.
+    reason = parse_reason(raw) or "(no reason given)"
 
     if verdict is not None:
         stats.record("ok", raw, truncated)
         if debug and idx is not None and idx <= 5:
             print("      [%d] %s <- %r" % (idx, verdict, (raw or "")[:160]))
-        return verdict, raw
+        return verdict, raw, reason
 
     # retry, forcing a one-word answer
     retry_prompt = prompt + "\n\nReply with exactly one word, either Fraud or Normal. No explanation."
@@ -264,12 +316,12 @@ def ask_verdict(prompt, stats, max_tokens=300, debug=False, idx=None):
         if debug:
             print("      [%s] retry rescued -> %s (first reply: %r)"
                   % (idx, verdict2, (raw or "")[:120]))
-        return verdict2, raw
+        return verdict2, raw, reason or "(verdict came from a one-word retry)"
 
     stats.record("failed", raw, truncated)
     if debug:
         print("      [%s] UNREADABLE -> defaulting Normal: %r" % (idx, (raw or "")[:160]))
-    return "Normal", raw
+    return "Normal", raw, "(unreadable answer, scored Normal)"
 
 
 # ------------------------------------------ trivial baselines (no LLM, instant)
@@ -352,21 +404,20 @@ def _bow_top_features(texts, y, k=15):
 def run_llm_only(data, max_tokens=300, debug=False):
     """Control: model decides alone, no retrieval."""
     stats = VerdictStats("llm_only")
-    out, raws = [], []
+    out, raws, reasons = [], [], []
     for i, (text, true) in enumerate(data, 1):
         prompt = (
             "You are a scam detection analyst. Read this phone call transcript and "
             "decide whether the caller is attempting a scam.\n\n"
-            "Transcript:\n%s\n\n"
-            "Answer 'Fraud' or 'Normal' on the first line, starting with 'Answer:'."
-            % text)
-        pred, raw = ask_verdict(prompt, stats, max_tokens, debug, i)
+            "Transcript:\n%s\n\n%s" % (text, VERDICT_FORMAT))
+        pred, raw, why = ask_verdict(prompt, stats, max_tokens, debug, i)
         out.append((pred, true))
         raws.append(raw)
+        reasons.append(why)
         if i % 20 == 0:
             print("    LLM-only: %d/%d" % (i, len(data)))
     stats.report()
-    return out, raws
+    return out, raws, reasons
 
 
 def run_singh(data, max_tokens=300, debug=False):
@@ -380,21 +431,22 @@ def run_singh(data, max_tokens=300, debug=False):
     coll = client.get_collection(name="bank_policies", embedding_function=ef)
 
     stats = VerdictStats("singh")
-    out, raws = [], []
+    out, raws, reasons = [], [], []
     for i, (text, true) in enumerate(data, 1):
         res = coll.query(query_texts=[text], n_results=3)
         policy = "\n\n".join(res["documents"][0])
         prompt = ("You are a policy inspector. Using ONLY these policies:\n%s\n\n"
                   "Conversation: %s\n\n"
-                  "Does the conversation break any policy? Answer 'Fraud' or 'Normal' "
-                  "on the first line starting with 'Answer:'." % (policy, text))
-        pred, raw = ask_verdict(prompt, stats, max_tokens, debug, i)
+                  "Does the conversation break any policy?\n%s"
+                  % (policy, text, VERDICT_FORMAT))
+        pred, raw, why = ask_verdict(prompt, stats, max_tokens, debug, i)
         out.append((pred, true))
         raws.append(raw)
+        reasons.append(why)
         if i % 20 == 0:
             print("    Singh: %d/%d" % (i, len(data)))
     stats.report()
-    return out, raws
+    return out, raws, reasons
 
 
 def run_webrag(data, debug=False):
@@ -411,11 +463,12 @@ def run_webrag(data, debug=False):
           % (W.MIN_KB_SIMILARITY, "on" if W.USE_LLM_GATE else "off"))
 
     gate = Counter()
-    out, raws = [], []
+    out, raws, reasons = [], [], []
     for i, (text, true) in enumerate(data, 1):
         res = W.detect(text, coll, use_web=False, threshold=50)
         out.append((res["predicted"], true))
         raws.append(json.dumps(res, default=str)[:500])
+        reasons.append(webrag_reason(res))
         gate["with_evidence" if res["evidence_used"] else "no_evidence"] += 1
         gate["kept"] += res["n_kb_kept"]
         gate["dropped"] += res["n_kb_dropped"]
@@ -436,7 +489,22 @@ def run_webrag(data, debug=False):
         print("    WARNING: relevance judge unreadable on %d transcripts "
               "(kept their candidates rather than guessing)"
               % gate["judge_unreadable"])
-    return out, raws
+    return out, raws, reasons
+
+
+def webrag_reason(res):
+    """The graded verdict as one line: score, then detect()'s own sentence."""
+    why = (res.get("reason") or "").strip()
+    why = " ".join(why.split())[:300]
+    conf = res.get("confidence")
+    evid = "no matching evidence" if not res.get("evidence_used") else None
+    bits = []
+    if conf is not None:
+        bits.append("confidence %s/100" % conf)
+    if evid:
+        bits.append(evid)
+    head = "[%s] " % ", ".join(bits) if bits else ""
+    return head + why
 
 
 def _qwen_json(raw):
@@ -676,21 +744,19 @@ def _qwen_prompt(evidence, text):
             "generalised from SEPARATE labelled scam calls, not from this one. "
             "Use it as evidence, but require the behaviour to actually match - "
             "an ordinary legitimate call must still be called Normal.\n\n"
-            "LEARNED KNOWLEDGE BASE:\n%s\n\nTRANSCRIPT:\n%s\n\n"
-            "Answer 'Fraud' or 'Normal' on the first line, starting with "
-            "'Answer:'." % (evidence, text))
+            "LEARNED KNOWLEDGE BASE:\n%s\n\nTRANSCRIPT:\n%s\n\n%s"
+            % (evidence, text, VERDICT_FORMAT))
     # Nothing retrieved: judge the call alone rather than hand it scam patterns
     # that did not match. Same footing as the LLM-only control, never worse -
     # the reasoning webrag_system.py gives for its own gate.
     return (
         "You are a scam detection analyst. No learned scam pattern matched "
-        "this call, so judge it on its own content.\n\nTRANSCRIPT:\n%s\n\n"
-        "Answer 'Fraud' or 'Normal' on the first line, starting with 'Answer:'."
-        % text)
+        "this call, so judge it on its own content.\n\nTRANSCRIPT:\n%s\n\n%s"
+        % (text, VERDICT_FORMAT))
 
 
-def _qwen_judge(indices, data, kb, stats, out, raws, gate, max_tokens, debug,
-                label=""):
+def _qwen_judge(indices, data, kb, stats, out, raws, reasons, gate, max_tokens,
+                debug, label=""):
     indices = list(indices)
     for n, i in enumerate(indices, 1):
         text, true = data[i]
@@ -698,10 +764,12 @@ def _qwen_judge(indices, data, kb, stats, out, raws, gate, max_tokens, debug,
         gate["with_evidence" if kept else "no_evidence"] += 1
         gate["kept"] += kept
         gate["dropped"] += dropped
-        pred, raw = ask_verdict(_qwen_prompt(evidence, text), stats,
-                                max_tokens, debug, n)
+        pred, raw, why = ask_verdict(_qwen_prompt(evidence, text), stats,
+                                     max_tokens, debug, n)
         out[i] = (pred, true)
         raws[i] = raw
+        reasons[i] = ("%s learned pattern%s matched. %s"
+                      % (kept, "" if kept == 1 else "s", why)) if kept else why
         if n % 20 == 0:
             print("    %sQwen-KB: %d/%d held-out calls"
                   % (label, n, len(indices)), flush=True)
@@ -813,12 +881,13 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
     gate = Counter()
     out = [(None, true) for _, true in data]
     raws = [None] * len(data)
+    reasons = [""] * len(data)
 
     if train_csv:
         patterns = _patterns_from_train_csv(train_csv, data, max_examples,
                                             max_patterns, num_ctx, debug)
         kb = QwenPatternKB(patterns, "single")
-        _qwen_judge(range(len(data)), data, kb, stats, out, raws, gate,
+        _qwen_judge(range(len(data)), data, kb, stats, out, raws, reasons, gate,
                     max_tokens, debug)
         all_patterns = patterns
     else:
@@ -833,7 +902,7 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
                 num_ctx, debug, label)
             all_patterns.extend(_tag_fold(patterns, fold))
             kb = QwenPatternKB(patterns, "f%d" % fold)
-            _qwen_judge(test_idx, data, kb, stats, out, raws, gate,
+            _qwen_judge(test_idx, data, kb, stats, out, raws, reasons, gate,
                         max_tokens, debug, label)
 
     unscored = sum(1 for pred, _ in out if pred is None)
@@ -856,7 +925,7 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
     else:
         print("    learned %d patterns across %d folds; all %d calls scored "
               "while held out" % (len(all_patterns), n_splits, len(data)))
-    return out, raws, all_patterns
+    return out, raws, reasons, all_patterns
 
 
 # ----------------------------------------------------------------- hybrid
@@ -931,7 +1000,8 @@ def build_merged_kb(learned_patterns, tag="hyb", include_web=True):
     return coll, n_web, len(learned_patterns)
 
 
-def _hybrid_judge(indices, data, coll, out, raws, gate, threshold, label=""):
+def _hybrid_judge(indices, data, coll, out, raws, reasons, gate, threshold,
+                  label=""):
     import webrag_system as W
 
     indices = list(indices)
@@ -940,6 +1010,14 @@ def _hybrid_judge(indices, data, coll, out, raws, gate, threshold, label=""):
         res = W.detect(text, coll, use_web=False, threshold=threshold)
         out[i] = (res["predicted"], true)
         raws[i] = json.dumps(res, default=str)[:500]
+        # which half of the shared KB was actually in front of the judge is
+        # part of why it said what it said, so it goes in the reason
+        mix = []
+        if res.get("n_kb_harvested"):
+            mix.append("%d web" % res["n_kb_harvested"])
+        if res.get("n_kb_learned"):
+            mix.append("%d learned" % res["n_kb_learned"])
+        reasons[i] = (("[%s] " % " + ".join(mix)) if mix else "") + webrag_reason(res)
         gate["with_evidence" if res["evidence_used"] else "no_evidence"] += 1
         gate["kept"] += res["n_kb_kept"]
         gate["dropped"] += res["n_kb_dropped"]
@@ -963,6 +1041,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
     gate = Counter()
     out = [(None, true) for _, true in data]
     raws = [None] * len(data)
+    reasons = [""] * len(data)
 
     if train_csv:
         patterns = _patterns_from_train_csv(train_csv, data, max_examples,
@@ -970,7 +1049,8 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
         coll, n_web, n_learned = build_merged_kb(patterns, "single")
         print("    merged KB: %d web-harvested + %d learned patterns"
               % (n_web, n_learned), flush=True)
-        _hybrid_judge(range(len(data)), data, coll, out, raws, gate, threshold)
+        _hybrid_judge(range(len(data)), data, coll, out, raws, reasons, gate,
+                      threshold)
         all_patterns = patterns
     else:
         n_splits, splits = _stratified_folds(data, folds)
@@ -986,8 +1066,8 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
             coll, n_web, n_learned = build_merged_kb(patterns, "f%d" % fold)
             print("    %smerged KB: %d web-harvested + %d learned patterns"
                   % (label, n_web, n_learned), flush=True)
-            _hybrid_judge(test_idx, data, coll, out, raws, gate, threshold,
-                          label)
+            _hybrid_judge(test_idx, data, coll, out, raws, reasons, gate,
+                          threshold, label)
 
     unscored = sum(1 for pred, _ in out if pred is None)
     if unscored:
@@ -1008,7 +1088,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
         print("    WARNING: relevance judge unreadable on %d transcripts "
               "(kept their candidates rather than guessing)"
               % gate["judge_unreadable"])
-    return out, raws, all_patterns
+    return out, raws, reasons, all_patterns
 
 
 # ------------------------------------------------------------------ main
@@ -1067,6 +1147,9 @@ def main():
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     results = {}
     raw_log = {}
+    # system -> one sentence per call saying why. Only the LLM systems have
+    # one; length and bag-of-words have no account to give of themselves.
+    reasons = {}
 
     if {"length", "bow"} - skip:
         print("\nTrivial reference classifiers (no LLM):")
@@ -1084,15 +1167,15 @@ def main():
 
     if args.trivial_only:
         print("\n--trivial-only: stopping before the LLM systems.")
-        _save(results, data, raw_log, args.debug)
+        _save(results, data, reasons, raw_log, args.debug)
         return
 
     if "llm_only" not in skip:
         print("\nLLM-only (no retrieval):")
         t0 = time.time()
         print("    %s calls to go, one per transcript" % len(data), flush=True)
-        results["llm_only"], raw_log["llm_only"] = run_llm_only(
-            data, args.max_tokens, args.debug)
+        (results["llm_only"], raw_log["llm_only"],
+         reasons["llm_only"]) = run_llm_only(data, args.max_tokens, args.debug)
         show("LLM-only", metrics(results["llm_only"]))
         print("    (%.0fs)" % (time.time() - t0))
 
@@ -1100,8 +1183,8 @@ def main():
         print("\nSingh baseline (policy compliance):")
         t0 = time.time()
         print("    %s calls to go, one per transcript" % len(data), flush=True)
-        results["singh"], raw_log["singh"] = run_singh(
-            data, args.max_tokens, args.debug)
+        (results["singh"], raw_log["singh"],
+         reasons["singh"]) = run_singh(data, args.max_tokens, args.debug)
         show("Singh baseline", metrics(results["singh"]))
         print("    (%.0fs)" % (time.time() - t0))
 
@@ -1109,7 +1192,8 @@ def main():
         print("\nWeb-RAG system (KB-only):")
         t0 = time.time()
         print("    %s calls to go, one per transcript" % len(data), flush=True)
-        results["webrag"], raw_log["webrag"] = run_webrag(data, args.debug)
+        (results["webrag"], raw_log["webrag"],
+         reasons["webrag"]) = run_webrag(data, args.debug)
         show("Web-RAG (KB-only)", metrics(results["webrag"]))
         print("    (%.0fs)" % (time.time() - t0))
 
@@ -1117,7 +1201,8 @@ def main():
         print("\nQwen-KB baseline (patterns learned from a training split):")
         t0 = time.time()
         try:
-            results["qwen_kb"], raw_log["qwen_kb"], qwen_patterns = run_qwen_kb(
+            (results["qwen_kb"], raw_log["qwen_kb"], reasons["qwen_kb"],
+             qwen_patterns) = run_qwen_kb(
                 data, args.qwen_folds or args.folds, args.qwen_max_examples,
                 args.qwen_patterns, args.max_tokens, args.debug,
                 args.qwen_train_csv, args.qwen_num_ctx)
@@ -1128,6 +1213,7 @@ def main():
             print("    SKIPPED: %s" % exc)
             results.pop("qwen_kb", None)
             raw_log.pop("qwen_kb", None)
+            reasons.pop("qwen_kb", None)
         else:
             show("Qwen-KB (held-out)", metrics(results["qwen_kb"]))
             pattern_out = RESULTS_DIR / ("qwen_training_patterns_%d.json"
@@ -1141,7 +1227,8 @@ def main():
         print("\nHybrid baseline (Web-RAG pipeline over web + learned KB):")
         t0 = time.time()
         try:
-            results["hybrid"], raw_log["hybrid"], hybrid_patterns = run_hybrid(
+            (results["hybrid"], raw_log["hybrid"], reasons["hybrid"],
+             hybrid_patterns) = run_hybrid(
                 data, args.qwen_folds or args.folds, args.qwen_max_examples,
                 args.qwen_patterns, args.debug, args.qwen_train_csv,
                 args.qwen_num_ctx)
@@ -1149,6 +1236,7 @@ def main():
             print("    SKIPPED: %s" % exc)
             results.pop("hybrid", None)
             raw_log.pop("hybrid", None)
+            reasons.pop("hybrid", None)
         else:
             show("Hybrid (web + learned KB)", metrics(results["hybrid"]))
             pattern_out = RESULTS_DIR / ("hybrid_learned_patterns_%d.json"
@@ -1163,22 +1251,39 @@ def main():
     print("=" * 74)
     for k in results:
         show(k, metrics(results[k]))
-    _save(results, data, raw_log, args.debug)
+    _save(results, data, reasons, raw_log, args.debug)
 
 
-def _save(results, data, raw_log=None, debug=False):
+def _save(results, data, reasons=None, raw_log=None, debug=False):
     if not results:
         return
+    reasons = reasons or {}
     keys = list(results.keys())
+    # Each system's verdict, and directly after it the reason it gave, so the
+    # two read together. A system with nothing to say (length, bag-of-words)
+    # contributes no _why column rather than an empty one. The web UI keys off
+    # the _why suffix, so it is part of the interface, not just a name.
+    header = ["idx", "true", "text"]
+    for k in keys:
+        header.append(k)
+        if k in reasons:
+            header.append(k + "_why")
     out_csv = RESULTS_DIR / ("combined_results_%d.csv" % len(data))
     with open(out_csv, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["idx", "true", "text"] + keys)
+        w.writerow(header)
         for i in range(len(data)):
             true = results[keys[0]][i][1]
-            text = data[i][0].replace("\n", " ")[:400]
-            w.writerow([i, true, text] + [results[k][i][0] for k in keys])
+            row = [i, true, data[i][0].replace("\n", " ")[:400]]
+            for k in keys:
+                row.append(results[k][i][0])
+                if k in reasons:
+                    why = reasons[k][i] if i < len(reasons[k]) else ""
+                    row.append(" ".join((why or "").split()))
+            w.writerow(row)
     print("\n  per-call results: %s" % out_csv)
+    if reasons:
+        print("  with a reason column for: %s" % ", ".join(sorted(reasons)))
 
     if debug and raw_log:
         out_raw = RESULTS_DIR / ("combined_raw_%d.json" % len(data))
