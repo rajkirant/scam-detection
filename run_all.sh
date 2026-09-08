@@ -59,13 +59,14 @@ ONTOLOGY="knowledge/scam_ontology.json"
 MCQ_ONTOLOGY="knowledge/mcq_ontology.json"
 MODELS=("qwen2.5:14b" "llama3.1:8b")
 
-BL_KEYS=(all trivial llm_only singh webrag ontology mcq bert)
+BL_KEYS=(all trivial llm_only singh webrag qwen_kb ontology mcq bert)
 BL_LABELS=(
   "all                       every system below, in one run"
   "length + bag-of-words     trivial references, no LLM"
   "LLM-only                  the model decides alone, no retrieval"
   "Singh                     policy-compliance baseline"
   "Web-RAG                   KB-only retrieval"
+  "Qwen-KB                   training-derived generalized patterns"
   "Ontology RAG              scam_ontology.json"
   "MCQ ontology              mcq_ontology.json, 2 calls per transcript"
   "BERT                      fine-tuned classifier, no LLM"
@@ -366,7 +367,8 @@ has_bl trivial  || COMBINED_SKIP+=(length bow)
 has_bl llm_only || COMBINED_SKIP+=(llm_only)
 has_bl singh    || COMBINED_SKIP+=(singh)
 has_bl webrag   || COMBINED_SKIP+=(webrag)
-if [[ ${#COMBINED_SKIP[@]} -lt 5 ]]; then     # fewer than all five skipped
+has_bl qwen_kb   || COMBINED_SKIP+=(qwen_kb)
+if [[ ${#COMBINED_SKIP[@]} -lt 6 ]]; then     # fewer than all six skipped
   RUN_COMBINED=1
   [[ ${#COMBINED_SKIP[@]} -gt 0 ]] \
     && COMBINED_EXTRA="--skip $(IFS=,; echo "${COMBINED_SKIP[*]}")"
@@ -375,7 +377,7 @@ fi
 # only the systems that actually call an LLM make the model question worth
 # asking - a trivial+bert selection needs no model at all
 NEEDS_MODEL=0
-for _k in llm_only singh webrag ontology mcq; do
+for _k in llm_only singh webrag qwen_kb ontology mcq; do
   has_bl "$_k" && NEEDS_MODEL=1
 done
 

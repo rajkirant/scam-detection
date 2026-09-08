@@ -21,6 +21,7 @@ WANT = [
     ("llm_only",     "combined.log", r"^\s*llm_only\b"),
     ("singh",        "combined.log", r"^\s*singh\b"),
     ("webrag",       "combined.log", r"^\s*webrag\b"),
+    ("qwen_kb",       "combined.log", r"^\s*qwen_kb\b"),
     ("ontology_rag", "ontology.log", None),          # last metric line
     ("mcq_ontology", "mcq.log",      r"^\s*mcq_ontology\b"),
     ("bert",         "bert.log",     r"pooled OOF"),

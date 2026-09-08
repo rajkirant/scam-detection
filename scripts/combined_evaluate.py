@@ -2,7 +2,7 @@
 """
 combined_evaluate.py
 
-Run all FIVE systems on a scam/non-scam transcript dataset and report
+Run all SIX systems on a scam/non-scam transcript dataset and report
 accuracy / precision / recall / F1 for each.
 
 Systems (escalation ladder):
@@ -11,6 +11,8 @@ Systems (escalation ladder):
     3. LLM-only        the model decides alone, NO retrieval  (the control)
     4. Singh           policy-compliance vs bank_policies collection
     5. Web-RAG         this project's system, KB-only (use_web=False)
+    6. Qwen-KB         Qwen generalises training scams into a temporary KB,
+                      then judges held-out calls against those patterns
 
 CHANGES IN THIS VERSION
 -----------------------
@@ -43,6 +45,7 @@ Usage:
     python scripts/combined_evaluate.py --csv datasets/... --bow-features
     python scripts/combined_evaluate.py --csv datasets/... --trivial-only
     python scripts/combined_evaluate.py --csv datasets/... --skip singh
+    python scripts/combined_evaluate.py --csv datasets/... --skip qwen_kb
 """
 
 import argparse
@@ -410,6 +413,107 @@ def run_webrag(data, debug=False):
     return out, raws
 
 
+def _qwen_json(raw):
+    """Extract the JSON object from a Qwen response, including fenced JSON."""
+    if not raw:
+        return None
+    text = raw.strip()
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text,
+                       re.IGNORECASE | re.DOTALL)
+    candidates = [fenced.group(1)] if fenced else []
+    candidates.append(text)
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+            if isinstance(value, dict):
+                return value
+        except json.JSONDecodeError:
+            pass
+    return None
+
+
+def build_qwen_training_kb(train_data, max_examples=40, max_patterns=8):
+    """Ask Qwen to generalise training scams into reusable KB patterns."""
+    import credibility as C
+
+    scam_texts = [text for text, label in train_data if label == "Fraud"]
+    if not scam_texts:
+        return []
+    random.seed(SEED)
+    sample = random.sample(scam_texts, min(max_examples, len(scam_texts)))
+    examples = "\n\n".join(
+        "TRAINING SCAM %d:\n%s" % (i, text[:1800])
+        for i, text in enumerate(sample, 1))
+    prompt = (
+        "You are building a scam-detection knowledge base from labelled scam "
+        "phone transcripts. Generalise recurring scam tactics; do not copy "
+        "names, phone numbers, URLs, or exact wording. Return JSON only in "
+        "this shape: {\"patterns\":[{\"category\":\"short name\", "
+        "\"behaviours\":\"what the scammer does\", "
+        "\"signals\":\"what distinguishes it from a legitimate call\"}]}. "
+        "Create at most %d distinct, concise patterns.\n\n%s" %
+        (max_patterns, examples))
+    parsed = _qwen_json(C.call_ollama(prompt, max_tokens=900)) or {}
+    patterns = []
+    for i, item in enumerate(parsed.get("patterns", []), 1):
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", "training_scam")).strip()
+        behaviours = str(item.get("behaviours", "")).strip()
+        signals = str(item.get("signals", "")).strip()
+        if behaviours and signals:
+            patterns.append({
+                "id": "qwen_training_%04d" % i,
+                "category": category,
+                "behaviours": behaviours,
+                "signals": signals,
+                "text": ("Scam category: %s\n\nTypical behaviours: %s\n\n"
+                          "Distinguishing signals: %s" %
+                          (category, behaviours, signals)),
+                "source": "dataset training split",
+            })
+    return patterns
+
+
+def run_qwen_kb(data, train_fraction=0.8, max_examples=40, max_patterns=8,
+                max_tokens=300, debug=False):
+    """Train a temporary Qwen-generated KB, then score only held-out rows."""
+    from sklearn.model_selection import train_test_split
+
+    indices = list(range(len(data)))
+    labels = [label for _, label in data]
+    train_idx, test_idx = train_test_split(
+        indices, test_size=1.0 - train_fraction, random_state=SEED,
+        stratify=labels)
+    train_data = [data[i] for i in train_idx]
+    patterns = build_qwen_training_kb(train_data, max_examples, max_patterns)
+    if not patterns:
+        raise RuntimeError("Qwen returned no usable training patterns")
+
+    evidence = "\n\n".join(p["text"] for p in patterns)
+    stats = VerdictStats("qwen_kb")
+    out = [("Not evaluated", true) for _, true in data]
+    raws = [None] * len(data)
+    for n, i in enumerate(test_idx, 1):
+        text, true = data[i]
+        prompt = (
+            "You are a scam detection analyst. The following knowledge base "
+            "was generalised from separate labelled scam training calls. Use it "
+            "as evidence, but require matching behaviour and do not assume every "
+            "call is a scam.\n\nLEARNED KNOWLEDGE BASE:\n%s\n\n"
+            "TRANSCRIPT:\n%s\n\nAnswer 'Fraud' or 'Normal' on the first line, "
+            "starting with 'Answer:'." % (evidence, text))
+        pred, raw = ask_verdict(prompt, stats, max_tokens, debug, n)
+        out[i] = (pred, true)
+        raws[i] = raw
+        if n % 20 == 0:
+            print("    Qwen-KB: %d/%d held-out calls" % (n, len(test_idx)))
+    stats.report()
+    print("    learned %d patterns from %d training calls; evaluated %d held-out calls"
+          % (len(patterns), len(train_idx), len(test_idx)))
+    return out, raws, patterns
+
+
 # ------------------------------------------------------------------ main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -418,7 +522,7 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--trivial-only", action="store_true")
     ap.add_argument("--skip", default="",
-                    help="comma list: length,bow,llm_only,singh,webrag")
+                    help="comma list: length,bow,llm_only,singh,webrag,qwen_kb")
     ap.add_argument("--max-tokens", type=int, default=300,
                     help="token budget for LLM verdicts (was 60, which truncated "
                          "verbose models mid-answer)")
@@ -427,6 +531,10 @@ def main():
     ap.add_argument("--bow-features", action="store_true",
                     help="show which words BoW is keying on")
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--qwen-train-fraction", type=float, default=0.8,
+                    help="fraction used to generate the Qwen training KB (default: 0.8)")
+    ap.add_argument("--qwen-max-examples", type=int, default=40)
+    ap.add_argument("--qwen-patterns", type=int, default=8)
     args = ap.parse_args()
 
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
@@ -492,6 +600,21 @@ def main():
         print("    %s calls to go, one per transcript" % len(data), flush=True)
         results["webrag"], raw_log["webrag"] = run_webrag(data, args.debug)
         show("Web-RAG (KB-only)", metrics(results["webrag"]))
+        print("    (%.0fs)" % (time.time() - t0))
+
+    if "qwen_kb" not in skip:
+        print("\nQwen-KB baseline (training-derived patterns):")
+        if not 0.0 < args.qwen_train_fraction < 1.0:
+            ap.error("--qwen-train-fraction must be between 0 and 1")
+        t0 = time.time()
+        results["qwen_kb"], raw_log["qwen_kb"], qwen_patterns = run_qwen_kb(
+            data, args.qwen_train_fraction, args.qwen_max_examples,
+            args.qwen_patterns, args.max_tokens, args.debug)
+        show("Qwen-KB (held-out)", metrics(results["qwen_kb"]))
+        pattern_out = RESULTS_DIR / ("qwen_training_patterns_%d.json" % len(data))
+        with open(pattern_out, "w", encoding="utf-8") as f:
+            json.dump(qwen_patterns, f, indent=2)
+        print("    learned KB: %s" % pattern_out)
         print("    (%.0fs)" % (time.time() - t0))
 
     print("\n" + "=" * 74)

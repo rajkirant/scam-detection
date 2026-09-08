@@ -48,6 +48,7 @@ BASELINES = [
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
+    ("qwen_kb",  "Qwen-KB",               "training-derived generalized patterns", True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
     ("mcq",      "MCQ ontology",          "mcq_ontology.json, 2 calls per transcript", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
