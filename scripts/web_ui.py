@@ -49,6 +49,7 @@ BASELINES = [
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
+    ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
     ("mcq",      "MCQ ontology",          "mcq_ontology.json, 2 calls per transcript", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),

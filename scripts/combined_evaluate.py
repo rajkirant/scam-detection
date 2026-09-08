@@ -2,7 +2,7 @@
 """
 combined_evaluate.py
 
-Run all SIX systems on a scam/non-scam transcript dataset and report
+Run all SEVEN systems on a scam/non-scam transcript dataset and report
 accuracy / precision / recall / F1 for each.
 
 Systems (escalation ladder):
@@ -16,6 +16,13 @@ Systems (escalation ladder):
                       and judges held-out calls against what it retrieves
                       from it. Stratified k-fold like BERT and bag-of-words,
                       so every call is scored exactly once while held out.
+    7. Hybrid          Web-RAG and Qwen-KB over ONE knowledge base: the
+                      web-harvested patterns and the patterns learned from the
+                      training split go into the same collection, and Web-RAG's
+                      pipeline (relevance gate, graded confidence, threshold)
+                      runs over the mix. Same folds and the same learned
+                      patterns as system 6, so the two differ only in whether
+                      the web KB is present.
 
 CHANGES IN THIS VERSION
 -----------------------
@@ -63,6 +70,7 @@ Usage:
     python scripts/combined_evaluate.py --csv datasets/... --trivial-only
     python scripts/combined_evaluate.py --csv datasets/... --skip singh
     python scripts/combined_evaluate.py --csv datasets/... --skip qwen_kb
+    python scripts/combined_evaluate.py --csv datasets/... --skip length,bow,llm_only,singh
     python scripts/combined_evaluate.py --csv one_row.csv \n        --skip length,bow --qwen-train-csv datasets/zhi_english_646.csv
 """
 
@@ -699,6 +707,94 @@ def _qwen_judge(indices, data, kb, stats, out, raws, gate, max_tokens, debug,
                   % (label, n, len(indices)), flush=True)
 
 
+# ------------------------------------------- the split the learners share
+# Qwen-KB and the hybrid must run over the SAME folds and learn from the SAME
+# training patterns, otherwise comparing them measures two different random
+# knowledge bases rather than the one thing that differs between them - which
+# is whether the web-harvested KB is in the mix.
+
+def _stratified_folds(data, folds):
+    """(n_splits, [(train_idx, test_idx), ...]) - deterministic for a dataset."""
+    from sklearn.model_selection import StratifiedKFold
+    import numpy as np
+
+    y = np.array([1 if lab == "Fraud" else 0 for _, lab in data])
+    smallest = int(min(y.sum(), len(y) - y.sum()))
+    if smallest < 2:
+        raise RuntimeError(
+            "need at least 2 scam and 2 non-scam calls to hold any out (the "
+            "smaller class here has %d). Pass --qwen-train-csv to learn the "
+            "patterns from a separate file instead." % smallest)
+    n_splits = max(2, min(folds, smallest))
+    if n_splits < folds:
+        print("    (only %d calls in the smaller class, using %d folds)"
+              % (smallest, n_splits))
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    return n_splits, list(skf.split(np.zeros(len(data)), y))
+
+
+# Fold -> learned patterns, so the second system to ask for a fold pays
+# nothing. Building a fold's KB is the expensive part of both baselines.
+_LEARNED_KB = {}
+
+
+def learned_patterns_for_fold(data, train_idx, fold, n_splits, max_examples,
+                              max_patterns, num_ctx, debug, label=""):
+    key = (id(data), fold, n_splits, max_examples, max_patterns, num_ctx)
+    if key in _LEARNED_KB:
+        patterns = _LEARNED_KB[key]
+        print("    %sreusing the %d patterns already learned from this fold"
+              % (label, len(patterns)), flush=True)
+        return patterns
+    train_data = [data[i] for i in train_idx]
+    patterns = build_qwen_training_kb(train_data, max_examples, max_patterns,
+                                      num_ctx, debug, label)
+    if not patterns:
+        raise RuntimeError(
+            "the LLM produced no usable training patterns on fold %d - every "
+            "KB-building prompt came back unreadable. Re-run with --debug to "
+            "see them." % fold)
+    _LEARNED_KB[key] = patterns
+    return patterns
+
+
+def _patterns_from_train_csv(train_csv, data, max_examples, max_patterns,
+                             num_ctx, debug):
+    """The no-folds path: learn from a separate file, score every row of data."""
+    key = (train_csv, id(data), max_examples, max_patterns, num_ctx)
+    if key in _LEARNED_KB:
+        patterns = _LEARNED_KB[key]
+        print("    reusing the %d patterns already learned from %s"
+              % (len(patterns), train_csv), flush=True)
+        return patterns
+    train_data = load_combined(train_csv)
+    held_out = {text for text, _ in data}
+    train_data = [(t, l) for t, l in train_data if t not in held_out]
+    if not train_data:
+        raise RuntimeError(
+            "--qwen-train-csv %s has no rows left once the evaluated calls are "
+            "removed from it" % train_csv)
+    print("    learning from %s (%d calls, none of them scored below)"
+          % (train_csv, len(train_data)), flush=True)
+    patterns = build_qwen_training_kb(train_data, max_examples, max_patterns,
+                                      num_ctx, debug)
+    if not patterns:
+        raise RuntimeError("the LLM produced no usable training patterns")
+    _LEARNED_KB[key] = patterns
+    return patterns
+
+
+def _tag_fold(patterns, fold):
+    """Copies of a fold's patterns with fold-unique ids, for the saved KB."""
+    out = []
+    for p in patterns:
+        q = dict(p)
+        q["fold"] = fold
+        q["id"] = "f%d_%s" % (fold, p["id"])
+        out.append(q)
+    return out
+
+
 def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
                 max_tokens=300, debug=False, train_csv=None,
                 num_ctx=QWEN_NUM_CTX):
@@ -719,61 +815,24 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
     raws = [None] * len(data)
 
     if train_csv:
-        train_data = load_combined(train_csv)
-        held_out = {text for text, _ in data}
-        train_data = [(t, l) for t, l in train_data if t not in held_out]
-        if not train_data:
-            raise RuntimeError(
-                "--qwen-train-csv %s has no rows left once the evaluated calls "
-                "are removed from it" % train_csv)
-        print("    learning from %s (%d calls, none of them scored below)"
-              % (train_csv, len(train_data)), flush=True)
-        patterns = build_qwen_training_kb(train_data, max_examples,
-                                          max_patterns, num_ctx, debug)
-        if not patterns:
-            raise RuntimeError("Qwen produced no usable training patterns")
+        patterns = _patterns_from_train_csv(train_csv, data, max_examples,
+                                            max_patterns, num_ctx, debug)
         kb = QwenPatternKB(patterns, "single")
         _qwen_judge(range(len(data)), data, kb, stats, out, raws, gate,
                     max_tokens, debug)
         all_patterns = patterns
     else:
-        from sklearn.model_selection import StratifiedKFold
-        import numpy as np
-
-        y = np.array([1 if lab == "Fraud" else 0 for _, lab in data])
-        smallest = int(min(y.sum(), len(y) - y.sum()))
-        if smallest < 2:
-            raise RuntimeError(
-                "need at least 2 scam and 2 non-scam calls to hold any out "
-                "(the smaller class here has %d). Pass --qwen-train-csv to "
-                "learn the patterns from a separate file instead." % smallest)
-        n_splits = max(2, min(folds, smallest))
-        if n_splits < folds:
-            print("    (only %d calls in the smaller class, using %d folds)"
-                  % (smallest, n_splits))
-
-        skf = StratifiedKFold(n_splits=n_splits, shuffle=True,
-                              random_state=SEED)
+        n_splits, splits = _stratified_folds(data, folds)
         all_patterns = []
-        for fold, (train_idx, test_idx) in enumerate(
-                skf.split(np.zeros(len(data)), y), 1):
+        for fold, (train_idx, test_idx) in enumerate(splits, 1):
             label = "fold %d/%d " % (fold, n_splits)
             print("    %strain %d, held out %d"
                   % (label, len(train_idx), len(test_idx)), flush=True)
-            train_data = [data[i] for i in train_idx]
-            patterns = build_qwen_training_kb(
-                train_data, max_examples, max_patterns, num_ctx, debug, label)
-            if not patterns:
-                raise RuntimeError(
-                    "Qwen produced no usable training patterns on fold %d - "
-                    "every KB-building prompt came back unreadable. Re-run "
-                    "with --debug to see them." % fold)
+            patterns = learned_patterns_for_fold(
+                data, train_idx, fold, n_splits, max_examples, max_patterns,
+                num_ctx, debug, label)
+            all_patterns.extend(_tag_fold(patterns, fold))
             kb = QwenPatternKB(patterns, "f%d" % fold)
-            for p in patterns:
-                p = dict(p)
-                p["fold"] = fold
-                p["id"] = "f%d_%s" % (fold, p["id"])
-                all_patterns.append(p)
             _qwen_judge(test_idx, data, kb, stats, out, raws, gate,
                         max_tokens, debug, label)
 
@@ -800,6 +859,158 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
     return out, raws, all_patterns
 
 
+# ----------------------------------------------------------------- hybrid
+# Web-RAG and Qwen-KB, over ONE knowledge base.
+#
+# The two systems differ in where their knowledge comes from, not in what they
+# do with it: Web-RAG retrieves from patterns harvested off the web, Qwen-KB
+# from patterns the model generalised out of a labelled training split. So the
+# hybrid puts both kinds of pattern in the same collection and runs the full
+# Web-RAG pipeline over it - the same signal extraction, the same two-stage
+# relevance gate, the same graded 0-100 confidence and threshold. Retrieval
+# decides per call which kind of knowledge is worth showing, and the prompt
+# says which is which (see build_evidence_block in webrag_system.py).
+#
+# It is scored on exactly the folds Qwen-KB was scored on, reusing exactly the
+# patterns Qwen-KB learned, so hybrid-vs-Qwen-KB isolates one variable: the
+# web KB. hybrid-vs-Web-RAG isolates the other: the learned patterns.
+
+def build_merged_kb(learned_patterns, tag="hyb", include_web=True):
+    """One in-memory collection holding the web KB and the learned patterns.
+
+    In-memory on purpose: the persistent chroma_db/ collection is what the
+    Web-RAG baseline reads, and a benchmark must not write into the thing it
+    is measuring.
+    """
+    import chromadb
+    from chromadb.utils import embedding_functions
+
+    client = chromadb.EphemeralClient()
+    ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name="all-MiniLM-L6-v2")
+    name = "hybrid_kb_%s" % tag
+    try:
+        client.delete_collection(name=name)
+    except Exception:
+        pass
+    coll = client.create_collection(name=name, embedding_function=ef,
+                                    metadata={"hnsw:space": "cosine"})
+
+    n_web = 0
+    if include_web:
+        import webrag_system as W
+        src = W.get_kb_collection()
+        got = src.get(include=["documents", "metadatas"])
+        docs = got.get("documents") or []
+        if docs:
+            metas = []
+            for md in (got.get("metadatas") or [{}] * len(docs)):
+                md = dict(md or {})
+                md["origin"] = "web"
+                metas.append(md)
+            coll.add(documents=docs, metadatas=metas,
+                     ids=["web_" + str(i) for i in got["ids"]])
+            n_web = len(docs)
+
+    coll.add(
+        documents=[p["text"] for p in learned_patterns],
+        metadatas=[{
+            "pattern_id": p["id"],
+            "scam_type": p["category"],
+            "domain": "dataset training split",
+            "url": "",
+            # No harvest-time credibility exists for a learned pattern and
+            # inventing one would put a fabricated number in the prompt. What
+            # it has instead is consensus across the KB-building batches.
+            "credibility": 0.0,
+            "support": int(p.get("support", 1)),
+            "origin": "training",
+        } for p in learned_patterns],
+        ids=["learned_" + p["id"] for p in learned_patterns])
+
+    return coll, n_web, len(learned_patterns)
+
+
+def _hybrid_judge(indices, data, coll, out, raws, gate, threshold, label=""):
+    import webrag_system as W
+
+    indices = list(indices)
+    for n, i in enumerate(indices, 1):
+        text, true = data[i]
+        res = W.detect(text, coll, use_web=False, threshold=threshold)
+        out[i] = (res["predicted"], true)
+        raws[i] = json.dumps(res, default=str)[:500]
+        gate["with_evidence" if res["evidence_used"] else "no_evidence"] += 1
+        gate["kept"] += res["n_kb_kept"]
+        gate["dropped"] += res["n_kb_dropped"]
+        gate["from_web"] += res.get("n_kb_harvested", 0)
+        gate["from_training"] += res.get("n_kb_learned", 0)
+        if res["gate_note"] == "unreadable":
+            gate["judge_unreadable"] += 1
+        if n % 20 == 0:
+            print("    %sHybrid: %d/%d held-out calls" % (label, n, len(indices)),
+                  flush=True)
+
+
+def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
+               train_csv=None, num_ctx=QWEN_NUM_CTX, threshold=50):
+    """Web-RAG's pipeline over a KB holding both web and learned patterns."""
+    import webrag_system as W
+
+    print("    gate: min similarity %.2f, LLM relevance check %s"
+          % (W.MIN_KB_SIMILARITY, "on" if W.USE_LLM_GATE else "off"))
+
+    gate = Counter()
+    out = [(None, true) for _, true in data]
+    raws = [None] * len(data)
+
+    if train_csv:
+        patterns = _patterns_from_train_csv(train_csv, data, max_examples,
+                                            max_patterns, num_ctx, debug)
+        coll, n_web, n_learned = build_merged_kb(patterns, "single")
+        print("    merged KB: %d web-harvested + %d learned patterns"
+              % (n_web, n_learned), flush=True)
+        _hybrid_judge(range(len(data)), data, coll, out, raws, gate, threshold)
+        all_patterns = patterns
+    else:
+        n_splits, splits = _stratified_folds(data, folds)
+        all_patterns = []
+        for fold, (train_idx, test_idx) in enumerate(splits, 1):
+            label = "fold %d/%d " % (fold, n_splits)
+            print("    %strain %d, held out %d"
+                  % (label, len(train_idx), len(test_idx)), flush=True)
+            patterns = learned_patterns_for_fold(
+                data, train_idx, fold, n_splits, max_examples, max_patterns,
+                num_ctx, debug, label)
+            all_patterns.extend(_tag_fold(patterns, fold))
+            coll, n_web, n_learned = build_merged_kb(patterns, "f%d" % fold)
+            print("    %smerged KB: %d web-harvested + %d learned patterns"
+                  % (label, n_web, n_learned), flush=True)
+            _hybrid_judge(test_idx, data, coll, out, raws, gate, threshold,
+                          label)
+
+    unscored = sum(1 for pred, _ in out if pred is None)
+    if unscored:
+        raise RuntimeError("Hybrid left %d calls unscored" % unscored)
+
+    n = max(len(data), 1)
+    print("    retrieval gate: %d/%d calls got evidence (%.0f%%), "
+          "%d chunks kept / %d discarded as irrelevant"
+          % (gate["with_evidence"], n, 100.0 * gate["with_evidence"] / n,
+             gate["kept"], gate["dropped"]))
+    # The number this baseline exists to produce. If the surviving evidence is
+    # nearly all web, the learned patterns are not earning their place and the
+    # hybrid is Web-RAG; if it is nearly all learned, it is Qwen-KB with a
+    # slower pipeline. A real mix is what would justify the combination.
+    print("    evidence mix: %d chunks from the web KB, %d from the learned "
+          "patterns" % (gate["from_web"], gate["from_training"]))
+    if gate["judge_unreadable"]:
+        print("    WARNING: relevance judge unreadable on %d transcripts "
+              "(kept their candidates rather than guessing)"
+              % gate["judge_unreadable"])
+    return out, raws, all_patterns
+
+
 # ------------------------------------------------------------------ main
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -808,7 +1019,7 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--trivial-only", action="store_true")
     ap.add_argument("--skip", default="",
-                    help="comma list: length,bow,llm_only,singh,webrag,qwen_kb")
+                    help="comma list: length,bow,llm_only,singh,webrag,qwen_kb,hybrid")
     ap.add_argument("--max-tokens", type=int, default=300,
                     help="token budget for LLM verdicts (was 60, which truncated "
                          "verbose models mid-answer)")
@@ -924,6 +1135,27 @@ def main():
             with open(pattern_out, "w", encoding="utf-8") as f:
                 json.dump(qwen_patterns, f, indent=2)
             print("    learned KB: %s" % pattern_out)
+        print("    (%.0fs)" % (time.time() - t0))
+
+    if "hybrid" not in skip:
+        print("\nHybrid baseline (Web-RAG pipeline over web + learned KB):")
+        t0 = time.time()
+        try:
+            results["hybrid"], raw_log["hybrid"], hybrid_patterns = run_hybrid(
+                data, args.qwen_folds or args.folds, args.qwen_max_examples,
+                args.qwen_patterns, args.debug, args.qwen_train_csv,
+                args.qwen_num_ctx)
+        except RuntimeError as exc:
+            print("    SKIPPED: %s" % exc)
+            results.pop("hybrid", None)
+            raw_log.pop("hybrid", None)
+        else:
+            show("Hybrid (web + learned KB)", metrics(results["hybrid"]))
+            pattern_out = RESULTS_DIR / ("hybrid_learned_patterns_%d.json"
+                                         % len(data))
+            with open(pattern_out, "w", encoding="utf-8") as f:
+                json.dump(hybrid_patterns, f, indent=2)
+            print("    learned half of the KB: %s" % pattern_out)
         print("    (%.0fs)" % (time.time() - t0))
 
     print("\n" + "=" * 74)

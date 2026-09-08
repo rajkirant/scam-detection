@@ -59,7 +59,7 @@ ONTOLOGY="knowledge/scam_ontology.json"
 MCQ_ONTOLOGY="knowledge/mcq_ontology.json"
 MODELS=("qwen2.5:14b" "llama3.1:8b")
 
-BL_KEYS=(all trivial llm_only singh webrag qwen_kb ontology mcq bert)
+BL_KEYS=(all trivial llm_only singh webrag qwen_kb hybrid ontology mcq bert)
 BL_LABELS=(
   "all                       every system below, in one run"
   "length + bag-of-words     trivial references, no LLM"
@@ -67,6 +67,7 @@ BL_LABELS=(
   "Singh                     policy-compliance baseline"
   "Web-RAG                   KB-only retrieval"
   "Qwen-KB                   learns a KB from a held-out split, k-fold"
+  "Hybrid                    Web-RAG + Qwen-KB over one shared KB"
   "Ontology RAG              scam_ontology.json"
   "MCQ ontology              mcq_ontology.json, 2 calls per transcript"
   "BERT                      fine-tuned classifier, no LLM"
@@ -368,7 +369,8 @@ has_bl llm_only || COMBINED_SKIP+=(llm_only)
 has_bl singh    || COMBINED_SKIP+=(singh)
 has_bl webrag   || COMBINED_SKIP+=(webrag)
 has_bl qwen_kb   || COMBINED_SKIP+=(qwen_kb)
-if [[ ${#COMBINED_SKIP[@]} -lt 6 ]]; then     # fewer than all six skipped
+has_bl hybrid   || COMBINED_SKIP+=(hybrid)
+if [[ ${#COMBINED_SKIP[@]} -lt 7 ]]; then     # fewer than all seven skipped
   RUN_COMBINED=1
   [[ ${#COMBINED_SKIP[@]} -gt 0 ]] \
     && COMBINED_EXTRA="--skip $(IFS=,; echo "${COMBINED_SKIP[*]}")"
@@ -377,7 +379,7 @@ fi
 # only the systems that actually call an LLM make the model question worth
 # asking - a trivial+bert selection needs no model at all
 NEEDS_MODEL=0
-for _k in llm_only singh webrag qwen_kb ontology mcq; do
+for _k in llm_only singh webrag qwen_kb hybrid ontology mcq; do
   has_bl "$_k" && NEEDS_MODEL=1
 done
 
@@ -699,10 +701,12 @@ run_step() {
 # ------------------------------------------------- 1. combined_evaluate.py
 # length and bag-of-words are instant, so they come along with any of the
 # three LLM baselines that live in this script
-# Single-transcript mode has no training split to hold out, so Qwen-KB is
-# told to learn from the dataset the row was carved out of instead.
+# Single-transcript mode has no training split to hold out, so the two
+# learning baselines - Qwen-KB and the hybrid - are told to learn from the
+# dataset the row was carved out of instead. They share the flag because they
+# share the patterns.
 QWEN_ARGS=""
-if [[ "$SINGLE_MODE" -eq 1 ]] && has_bl qwen_kb; then
+if [[ "$SINGLE_MODE" -eq 1 ]] && { has_bl qwen_kb || has_bl hybrid; }; then
   QWEN_ARGS="--qwen-train-csv $FULL_DATASET"
 fi
 

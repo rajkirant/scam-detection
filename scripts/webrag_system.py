@@ -211,6 +211,14 @@ def retrieve_kb(collection, query, n=N_KB_CANDIDATES):
             "url": md.get("url", ""),
             "credibility": md.get("credibility", 0.0),
             "retrieved_at": md.get("retrieved_at", ""),
+            # Where this pattern came from. The persistent KB is entirely
+            # web-harvested and says nothing, hence the default; the hybrid
+            # baseline in combined_evaluate.py mixes in patterns generalised
+            # from a labelled training split and marks those "training", so
+            # the prompt can tell the judge which is which instead of calling
+            # all of it "harvested from the web".
+            "origin": md.get("origin", "web"),
+            "support": md.get("support", 0),
             "distance": dist,
             "similarity": similarity_from_distance(dist, space),
         })
@@ -467,15 +475,30 @@ def build_evidence_block(kb_items, web_items, min_credibility=0.40):
     the caller's signal to use the no-evidence prompt.
     """
     parts = []
-    if kb_items:
+    harvested = [k for k in kb_items if k.get("origin", "web") != "training"]
+    learned = [k for k in kb_items if k.get("origin", "web") == "training"]
+    if harvested:
         parts.append("MATCHING SCAM PATTERNS (harvested from the web, kept only "
                      "because they match this call):")
-        for k in kb_items:
+        for k in harvested:
             src = k.get("domain") or "unknown source"
             cred = k.get("credibility", 0.0)
             sim = k.get("similarity", 0.0)
             parts.append(f"[match {sim:.2f} | credibility {cred:.2f} | source {src}]\n"
                          f"{k['text']}")
+    if learned:
+        # A different kind of evidence, so it is labelled as one. These carry
+        # no source domain and no harvest-time credibility - what they have
+        # instead is how many training batches independently produced them,
+        # which is the only support claim that can honestly be made for them.
+        parts.append("MATCHING SCAM PATTERNS (generalised from separate "
+                     "labelled training calls, kept only because they match "
+                     "this call):")
+        for k in learned:
+            sim = k.get("similarity", 0.0)
+            sup = k.get("support", 0)
+            parts.append(f"[match {sim:.2f} | generalised from {sup} training "
+                         f"batches]\n{k['text']}")
     kept = [w for w in web_items if w["credibility"] >= min_credibility]
     if kept:
         parts.append("\nRECENT WEB REPORTS (with credibility scores):")
@@ -584,6 +607,10 @@ def detect(transcript, collection, use_web=True, threshold=50,
         "kb_best_candidate_similarity": best,
         "n_kb_candidates": len(kb_candidates),
         "n_kb_kept": len(kb_items),
+        "n_kb_harvested": sum(1 for k in kb_items
+                              if k.get("origin", "web") != "training"),
+        "n_kb_learned": sum(1 for k in kb_items
+                            if k.get("origin", "web") == "training"),
         "n_kb_dropped": len(kb_dropped),
         "gate_note": gate_note,
         "evidence_used": evidence is not None,

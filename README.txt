@@ -76,7 +76,7 @@ cd ~/scam-detection && source venv/bin/activate
 ./run_all.sh --dataset datasets/paired_scam_legit_198.csv \
              --baseline llm_only,mcq,bert --limit 40 --model qwen2.5:14b
 
-# baselines: all trivial llm_only singh webrag qwen_kb ontology mcq bert
+# baselines: all trivial llm_only singh webrag qwen_kb hybrid ontology mcq bert
 #   comma-separate for several - "-b 3,7,8" works too (menu numbers)
 # limit:     0 = whole dataset, N = first N calls,
 #            id:<value> = one row by its id column,
@@ -96,10 +96,10 @@ cd ~/scam-detection && source venv/bin/activate
 #  C. The individual scripts, if you want one on its own
 # =====================================================================
 
-# 1. Six baselines: length, BoW, LLM-only, Singh, Web-RAG, Qwen-KB
+# 1. Seven baselines: length, BoW, LLM-only, Singh, Web-RAG, Qwen-KB, Hybrid
 export SCAM_MODEL=qwen2.5:14b
 python scripts/combined_evaluate.py --csv datasets/paired_scam_legit_198.csv --limit 20
-#   --skip length,bow,singh,webrag,qwen_kb   run just one of the six
+#   --skip length,bow,singh,webrag,qwen_kb,hybrid   run just one of the seven
 #
 # Qwen-KB is the learning baseline. Like BERT and bag-of-words it is
 # cross-validated: on each fold the model generalises that fold's TRAINING
@@ -112,6 +112,20 @@ python scripts/combined_evaluate.py --csv datasets/paired_scam_legit_198.csv --l
 #   --qwen-max-examples 40    training scams sampled per fold
 #   --qwen-train-csv FILE     learn from a separate file instead of folds
 #                             (what a single-transcript run uses)
+#
+# Hybrid is Web-RAG and Qwen-KB sharing ONE knowledge base: the web-harvested
+# patterns in chroma_db and the patterns learned from the training split go
+# into the same collection, and Web-RAG's pipeline - signal extraction, the
+# two-stage relevance gate, graded 0-100 confidence, threshold - runs over the
+# mix. Retrieval decides per call which kind of knowledge is worth showing,
+# and the prompt labels which is which. It runs on the same folds as Qwen-KB
+# and reuses the patterns Qwen-KB already learned (the fold KB is built once
+# and shared), so hybrid vs qwen_kb isolates the web KB and hybrid vs webrag
+# isolates the learned patterns. Watch the "evidence mix" line it prints: all
+# web means the learned patterns are not earning their place, all learned
+# means it is Qwen-KB with a slower pipeline.
+#   --skip hybrid             the merged run costs 3 LLM calls per transcript,
+#                             the same as webrag
 
 # 2. Ontology RAG
 python scripts/evaluate_ontology.py \
