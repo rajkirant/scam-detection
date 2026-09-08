@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -224,8 +225,27 @@ def kb_state():
 LIVE = {}
 
 
+# A run id is generated here (a timestamp and the baseline keys), never typed,
+# so anything outside this shape came from a crafted request. It matters for
+# delete: run_path() is string concatenation, and "../../x" would resolve
+# outside RUNS_DIR. Reads were already safe by accident - they only ever open
+# a file that has to exist - but unlink is not something to leave to luck.
+RUN_ID_RE = re.compile(r"^[A-Za-z0-9_+.-]{1,120}$")
+
+
 def run_path(run_id, ext):
     return RUNS_DIR / ("%s.%s" % (run_id, ext))
+
+
+def checked_run_id(run_id):
+    """The id, or a ValueError. Shape first, then the resolved path."""
+    run_id = (run_id or "").strip()
+    if not RUN_ID_RE.match(run_id):
+        raise ValueError("bad run id")
+    target = run_path(run_id, "json").resolve()
+    if target.parent != RUNS_DIR.resolve():
+        raise ValueError("bad run id")
+    return run_id
 
 
 def load_run(run_id):
@@ -494,6 +514,66 @@ def stop_run(run_id):
     return {"stopped": True}
 
 
+def delete_run(run_id):
+    """Drop one run from the history.
+
+    Removes the three things that run owns outright: its metadata, the output
+    this server captured, and the results/logs/run_<stamp>/ directory the run
+    itself wrote its per-baseline logs into.
+
+    It deliberately does NOT touch results/*.csv. Those are named after the
+    dataset and the limit, not after the run - two runs over the same dataset
+    write the same combined_results_646.csv - so deleting one run's history
+    would silently take another run's numbers with it.
+    """
+    run_id = checked_run_id(run_id)
+    meta = load_run(run_id)
+    log = run_path(run_id, "log")
+    if meta is None and not log.exists():
+        raise ValueError("no such run")
+    if meta and meta.get("status") == "running":
+        raise ValueError("that run is still going - stop it first")
+
+    # Resolve the step-log directory before the log that names it is deleted.
+    logdir = logdir_of(run_id)
+
+    removed = []
+    for f in (run_path(run_id, "json"), log):
+        try:
+            f.unlink()
+            removed.append(f.name)
+        except FileNotFoundError:
+            pass
+
+    # Belt and braces on a path that came out of a log file: it has to sit
+    # directly under results/logs/ and be one of run_all.sh's own run_<stamp>
+    # directories before anything is removed recursively.
+    if logdir is not None:
+        d = logdir.resolve()
+        parent = (PROJECT_DIR / "results" / "logs").resolve()
+        if d.parent == parent and re.fullmatch(r"run_\d{8}_\d{6}", d.name):
+            shutil.rmtree(d, ignore_errors=True)
+            removed.append(d.name)
+
+    LIVE.pop(run_id, None)
+    return {"deleted": True, "id": run_id, "removed": removed}
+
+
+def delete_finished():
+    """Every run that is not currently going. Returns what went."""
+    gone, kept = [], 0
+    for meta in all_runs():
+        if meta.get("status") == "running":
+            kept += 1
+            continue
+        try:
+            delete_run(meta["id"])
+            gone.append(meta["id"])
+        except ValueError:
+            kept += 1
+    return {"deleted": len(gone), "ids": gone, "still_running": kept}
+
+
 def read_log(run_id, offset):
     log = run_path(run_id, "log")
     if not log.exists():
@@ -707,6 +787,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, meta)
             if u.path == "/api/stop":
                 return self._send(200, stop_run(form.get("id", "")))
+            if u.path == "/api/delete":
+                out = (delete_finished() if form.get("scope") == "finished"
+                       else delete_run(form.get("id", "")))
+                sys.stderr.write("deleted %s\n" % json.dumps(out))
+                return self._send(200, out)
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -850,11 +935,22 @@ PAGE = r"""<!doctype html>
   .pill.running { color:var(--accent); border-color:var(--accent); }
   .pill.failed  { color:var(--bad); border-color:var(--bad); }
   .hist { font-size:13px; }
-  .hist a { display:block; padding:7px 0; border-bottom:1px solid var(--line);
+  .hist a { display:block; position:relative; padding:7px 24px 7px 0;
+            border-bottom:1px solid var(--line);
             color:inherit; text-decoration:none; cursor:pointer; }
   .hist a:hover { color:var(--accent); }
   .hist a.on { color:var(--accent); font-weight:600; }
   .hist .meta { color:var(--dim); font-size:12px; font-weight:400; }
+  /* Hidden until the row is hovered or the button is tabbed to, so a list of
+     fifteen runs is not fifteen delete buttons competing with the names. It
+     stays reachable from the keyboard either way. */
+  .hist .del { position:absolute; top:4px; right:0; width:20px; height:20px;
+               padding:0; line-height:18px; text-align:center; font-size:15px;
+               font-weight:400; border:1px solid transparent; border-radius:4px;
+               background:none; color:var(--dim); opacity:0; cursor:pointer; }
+  .hist a:hover .del, .hist .del:focus { opacity:1; }
+  .hist .del:hover { color:var(--bad); border-color:var(--bad); }
+  .hist .del[disabled] { opacity:0; cursor:not-allowed; }
   .muted { color:var(--dim); }
   .pager { display:flex; align-items:center; gap:12px; margin-top:12px; }
   .pager button { border-color:var(--line); background:var(--panel); color:var(--ink); }
@@ -910,8 +1006,13 @@ PAGE = r"""<!doctype html>
     <div class="hint" id="kberr" style="color:var(--bad)"></div>
 
     <label style="margin-top:26px">Recent runs</label>
-    <div class="hint" style="margin-top:-2px">pick one to read its output and results</div>
+    <div class="hint" style="margin-top:-2px">pick one to read its output and
+      results · hover a run to delete it</div>
     <div class="hist" id="hist"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="link" id="clearhist" hidden>clear finished runs</button>
+    </div>
+    <div class="hint" id="histerr" style="color:var(--bad)"></div>
   </div>
 
   <div class="main">
@@ -1090,6 +1191,7 @@ async function boot() {
   }
 
   for (const c of checks()) c.onchange = onBaselines;
+  $('clearhist').onclick = clearFinished;
   $('pickall').onclick = () => setAll(true);
   $('picknone').onclick = () => setAll(false);
   onBaselines();
@@ -1648,15 +1750,79 @@ async function refreshHistory() {
   if (!all) return;                 // leave the list showing what it had
   const runs = all.slice(0, 15);
   for (const r of runs) RUNS[r.id] = r;
-  if (!runs.length) { $('hist').innerHTML = '<div class="muted">nothing yet</div>'; return; }
+  $('clearhist').hidden = !runs.some(r => r.status !== 'running');
+  if (!runs.length) {
+    $('hist').innerHTML = '<div class="muted">nothing yet</div>';
+    $('clearhist').hidden = true;
+    return;
+  }
   $('hist').innerHTML = runs.map(r => `
     <a data-id="${r.id}">
+      <button class="del" data-del="${r.id}" ${r.status === 'running' ? 'disabled' : ''}
+              title="${r.status === 'running'
+                        ? 'still running - stop it first'
+                        : 'delete this run from the history'}"
+              aria-label="delete this run">×</button>
       ${r.label || (r.baseline + ' · ' + r.dataset.replace('datasets/',''))}
       <span class="pill ${r.status}">${r.status}</span>
       <div class="meta">${r.kind === 'kb' ? '' : limitText(r.limit) + ' · '}${
         r.model ? r.model + ' · ' : ''}${new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
+  // the button sits inside the row, so its click must not also select the run
+  for (const b of $('hist').querySelectorAll('[data-del]'))
+    b.onclick = e => { e.stopPropagation(); delRun(b.dataset.del); };
+  markHistory();
+}
+
+// Deleting takes files off disk, so both paths say exactly what goes and both
+// ask first. Neither touches results/*.csv - those are named after the dataset
+// and the limit, so they are shared between runs.
+async function delRun(id) {
+  const r = RUNS[id];
+  const name = (r && (r.label || r.baseline)) || id;
+  if (!confirm(`Delete "${name}" from the history?\n\nIts captured output and `
+             + `its per-baseline step logs are removed. The per-call CSVs in `
+             + `results/ are left alone - other runs share them.`)) return;
+  await sendDelete({id});
+}
+
+async function clearFinished() {
+  const n = Object.values(RUNS).filter(r => r.status !== 'running').length;
+  if (!confirm(`Delete every finished run from the history?\n\n`
+             + `${n} run${n === 1 ? '' : 's'} on the list, plus anything older `
+             + `than the fifteen shown. A run that is still going is kept. `
+             + `The per-call CSVs in results/ are left alone.`)) return;
+  await sendDelete({scope: 'finished'});
+}
+
+async function sendDelete(body) {
+  $('histerr').textContent = '';
+  const res = await api('/api/delete', body);
+  if (res.error) { $('histerr').textContent = res.error; return; }
+  // whatever went, it must not stay selected or the poll loop keeps asking
+  // for a run that is no longer there
+  const gone = body.scope === 'finished' ? (res.ids || []) : [body.id];
+  for (const id of gone) delete RUNS[id];
+  if (gone.includes(current)) deselect();
+  await refreshHistory();
+}
+
+// Back to the state the page boots in, with no run selected.
+function deselect() {
+  if (timer) { clearInterval(timer); timer = null; }
+  current = null; offset = 0; page = 0;
+  ART = {steps: [], csvs: []};
+  RESULTS = null;
+  $('log').textContent = '';
+  $('results').innerHTML = '';
+  $('calls').innerHTML = '';
+  $('steplog').textContent = '';
+  $('tabs').hidden = true;
+  $('runtitle').textContent = 'No run selected';
+  $('runsub').textContent = '';
+  $('runpill').hidden = true;
+  $('stopbtn').hidden = true;
   markHistory();
 }
 
