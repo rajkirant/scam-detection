@@ -823,9 +823,26 @@ PAGE = r"""<!doctype html>
   header h1 { margin:0; font-size:17px; font-weight:600; letter-spacing:-.01em; }
   header .sub { color:var(--dim); font-size:13px; }
   .wrap { display:grid; grid-template-columns:340px 1fr; gap:0; align-items:start; }
-  @media (max-width:900px){ .wrap { grid-template-columns:1fr; } }
-  .side { padding:22px; border-right:1px solid var(--line); }
+  /* The sidebar stays put while the output log scrolls. Reading a long log is
+     exactly when you want to reach another run, and before this the history
+     scrolled away with everything else. */
+  .side { padding:22px; border-right:1px solid var(--line);
+          position:sticky; top:0; max-height:100vh; overflow-y:auto; }
   .main { padding:22px; min-width:0; }
+  @media (max-width:900px){
+    .wrap { grid-template-columns:1fr; }
+    /* one column: the sidebar is above the content, so pinning it would put a
+       full-height scroll box in front of everything */
+    .side { position:static; max-height:none; overflow:visible;
+            border-right:none; border-bottom:1px solid var(--line); }
+  }
+
+  /* ---- the three blocks the sidebar is made of ---- */
+  .sect { padding-bottom:20px; margin-bottom:20px;
+          border-bottom:1px solid var(--line); }
+  .sect:last-child { padding-bottom:0; margin-bottom:0; border-bottom:none; }
+  .secthead { font-size:11px; font-weight:700; letter-spacing:.08em;
+              text-transform:uppercase; color:var(--dim); margin-bottom:10px; }
   label { display:block; font-weight:600; margin:16px 0 6px; font-size:13px; }
   label:first-of-type { margin-top:0; }
   select, input[type=text] {
@@ -934,7 +951,9 @@ PAGE = r"""<!doctype html>
           color:var(--dim); }
   .pill.running { color:var(--accent); border-color:var(--accent); }
   .pill.failed  { color:var(--bad); border-color:var(--bad); }
-  .hist { font-size:13px; }
+  /* Capped so fifteen runs cannot push the run form below the fold - the
+     whole point of moving the list up here. */
+  .hist { font-size:13px; max-height:34vh; overflow-y:auto; }
   .hist a { display:block; position:relative; padding:7px 24px 7px 0;
             border-bottom:1px solid var(--line);
             color:inherit; text-decoration:none; cursor:pointer; }
@@ -958,6 +977,24 @@ PAGE = r"""<!doctype html>
   .filepick { display:flex; align-items:center; gap:10px; margin-bottom:12px;
               flex-wrap:wrap; }
   .filepick select { width:auto; min-width:260px; }
+
+  /* ---- knowledge base: a maintenance job, not part of configuring a run,
+     so it folds away. The state line stays in the summary, because "index
+     out of step" is worth seeing without opening anything. ---- */
+  details.kb { border:1px solid var(--line); border-radius:8px; padding:0 12px; }
+  details.kb > summary { position:relative; cursor:pointer; list-style:none;
+                         padding:10px 22px 10px 0; font-size:13px;
+                         font-weight:600; }
+  details.kb > summary::-webkit-details-marker { display:none; }
+  /* absolute, not float: the state line under the title is a block, and a
+     float placed after it drops onto a line of its own */
+  details.kb > summary::after { content:"\25b8"; position:absolute; right:0;
+                                top:10px; color:var(--dim); font-weight:400; }
+  details.kb[open] > summary::after { content:"\25be"; }
+  details.kb > summary:hover { color:var(--accent); }
+  details.kb .kbbody { padding-bottom:14px; }
+  details.kb .kbbody .go { margin-top:14px; }
+  #kbstate { margin-top:3px; font-weight:400; }
 </style>
 </head>
 <body>
@@ -968,51 +1005,71 @@ PAGE = r"""<!doctype html>
 
 <div class="wrap">
   <div class="side">
-    <label for="dataset">Dataset</label>
-    <select id="dataset"></select>
-
-    <label>Baselines</label>
-    <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
-    <div class="checks" id="baselines"></div>
-    <div class="row">
-      <button class="link" id="pickall">select all</button>
-      <button class="link" id="picknone">clear</button>
+    <!-- First, because on a return visit the run you want to read is the
+         reason the page is open. It used to be below the form and the
+         knowledge base, which on a ten-baseline list meant scrolling. -->
+    <div class="sect">
+      <div class="secthead">Recent runs</div>
+      <div class="hint" style="margin-top:0">pick one to read its output and
+        results · hover a run to delete it</div>
+      <div class="hist" id="hist"></div>
+      <div class="row" style="margin-top:8px">
+        <button class="link" id="clearhist" hidden>clear finished runs</button>
+      </div>
+      <div class="hint" id="histerr" style="color:var(--bad)"></div>
     </div>
 
-    <label for="scope">How much to run</label>
-    <select id="scope">
-      <option value="count">A number of calls</option>
-      <option value="idx">One transcript, by index</option>
-      <option value="id">One transcript, by id</option>
-    </select>
+    <div class="sect">
+      <div class="secthead">New run</div>
+      <label for="dataset">Dataset</label>
+      <select id="dataset"></select>
 
-    <label for="limit" id="limitlabel">How many calls</label>
-    <input type="text" id="limit" value="0" spellcheck="false">
-    <div class="hint" id="limithint"></div>
+      <label>Baselines</label>
+      <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
+      <div class="checks" id="baselines"></div>
+      <div class="row">
+        <button class="link" id="pickall">select all</button>
+        <button class="link" id="picknone">clear</button>
+      </div>
 
-    <div id="modelbox">
-      <label for="model">Model</label>
-      <select id="model"></select>
+      <label for="scope">How much to run</label>
+      <select id="scope">
+        <option value="count">A number of calls</option>
+        <option value="idx">One transcript, by index</option>
+        <option value="id">One transcript, by id</option>
+      </select>
+
+      <label for="limit" id="limitlabel">How many calls</label>
+      <input type="text" id="limit" value="0" spellcheck="false">
+      <div class="hint" id="limithint"></div>
+
+      <div id="modelbox">
+        <label for="model">Model</label>
+        <select id="model"></select>
+      </div>
+
+      <button class="go" id="go">Run</button>
+      <div class="hint" id="formerr" style="color:var(--bad)"></div>
     </div>
 
-    <button class="go" id="go">Run</button>
-    <div class="hint" id="formerr" style="color:var(--bad)"></div>
-
-    <label style="margin-top:26px" for="kbmode">Web-RAG knowledge base</label>
-    <div class="hint" style="margin-top:-2px" id="kbstate">checking…</div>
-    <select id="kbmode" style="margin-top:8px"></select>
-    <div class="hint" id="kbnote"></div>
-    <button class="go" id="kbgo">Update knowledge base</button>
-    <div class="hint" id="kberr" style="color:var(--bad)"></div>
-
-    <label style="margin-top:26px">Recent runs</label>
-    <div class="hint" style="margin-top:-2px">pick one to read its output and
-      results · hover a run to delete it</div>
-    <div class="hist" id="hist"></div>
-    <div class="row" style="margin-top:8px">
-      <button class="link" id="clearhist" hidden>clear finished runs</button>
+    <!-- Updating the knowledge base is something you do occasionally, not
+         part of setting up a run, so it no longer sits between the Run
+         button and the history taking up room. Closed by default; it opens
+         itself when the index is missing or out of step with the JSON. -->
+    <div class="sect">
+      <details class="kb" id="kbpanel">
+        <summary>Web-RAG knowledge base
+          <div class="hint" id="kbstate">checking…</div>
+        </summary>
+        <div class="kbbody">
+          <label for="kbmode" style="margin-top:6px">What to do</label>
+          <select id="kbmode"></select>
+          <div class="hint" id="kbnote"></div>
+          <button class="go" id="kbgo">Update knowledge base</button>
+          <div class="hint" id="kberr" style="color:var(--bad)"></div>
+        </div>
+      </details>
     </div>
-    <div class="hint" id="histerr" style="color:var(--bad)"></div>
   </div>
 
   <div class="main">
@@ -1040,7 +1097,7 @@ PAGE = r"""<!doctype html>
 The run is detached from this page: closing the browser, or losing the SSH
 connection, does not stop it. Come back to this URL and it is still here.
 
-Past runs are on the left - selecting one brings back its output, its
+Past runs are top left - selecting one brings back its output, its
 results table, and the prediction it made for every single call.</pre>
     </div>
 
@@ -1325,7 +1382,7 @@ async function stop() {
 // harvest_patterns.py writes knowledge/scam_patterns.json, build_index.py
 // re-embeds it into chroma_db. The webrag baseline reads the second one, so
 // the two counts disagreeing is worth saying out loud.
-let KB = null;
+let KB = null, kbNudged = false;
 
 function paintKb(kb) {
   if (!kb) return;
@@ -1338,6 +1395,12 @@ function paintKb(kb) {
     bits.push('harvested ' + new Date(kb.last_refresh).toLocaleDateString());
   $('kbstate').textContent = bits.join(' · ');
   $('kbstate').style.color = kb.stale ? 'var(--warn)' : '';
+  // A stale or missing index is the one case where the panel has something to
+  // say, so it opens itself - once, so it never fights a user who closed it.
+  if (!kbNudged && (kb.stale || kb.patterns === null || kb.vectors === null)) {
+    kbNudged = true;
+    $('kbpanel').open = true;
+  }
   onKbMode();
 }
 
@@ -1353,6 +1416,7 @@ function onKbMode() {
 }
 
 async function updateKb() {
+  $('kbpanel').open = true;
   $('kberr').textContent = '';
   $('kbgo').disabled = true;
   const res = await api('/api/kb', {mode: $('kbmode').value});
