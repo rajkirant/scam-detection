@@ -354,7 +354,7 @@ def preflight(args):
         import torch
     except ImportError:
         raise SystemExit(
-            "torch is not installed. On cs25003ay:\n"
+            "torch is not installed. Install it with:\n"
             "  pip install torch transformers scikit-learn"
         )
     if args.cpu:

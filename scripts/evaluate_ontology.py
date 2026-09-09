@@ -6,7 +6,7 @@ comparable with the vector-RAG results.
 
 CSV needs columns: label (scam/nonscam) and text.
 
-Usage (on cs25003ay):
+Usage:
     python evaluate_ontology.py --csv datasets/scam_vs_bank_243x243.csv --limit 40
     python evaluate_ontology.py --csv datasets/scam_vs_bank_243x243.csv          # full run (tmux!)
 

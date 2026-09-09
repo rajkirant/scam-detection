@@ -238,7 +238,7 @@ directly — the startup banner prints the address to use:
 ```
 scam-detection UI
   here:           http://localhost:8000
-  other machines: http://10.196.217.243:8000
+  other machines: http://192.168.1.42:8000
 ```
 
 `--public` also opens an SSH reverse tunnel to localhost.run (no account

@@ -14,7 +14,7 @@ Pipeline per call:
   4. If no node matches well -> novel_flag=True (in the full system this
      would trigger web search; here we fall back to LLM-only judgement).
 
-Usage (on cs25003ay, Ollama running):
+Usage (with Ollama running):
     from ontology_rag import OntologyRAG
     d = OntologyRAG("knowledge/scam_ontology.json")
     out = d.detect(transcript)

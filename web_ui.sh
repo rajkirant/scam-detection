@@ -13,7 +13,7 @@
 # reach the port can start and stop runs on this box, so on an untrusted
 # network use --local and forward the port instead:
 #
-#   ssh -L 8000:localhost:8000 rkt29@cs25003ay
+#   ssh -L 8000:localhost:8000 user@your-gpu-host
 #
 # then open http://localhost:8000
 #

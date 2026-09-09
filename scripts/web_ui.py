@@ -13,7 +13,7 @@ how the results table is built.
 
 Over SSH, forward the port rather than binding to 0.0.0.0:
 
-    ssh -L 8000:localhost:8000 rkt29@cs25003ay
+    ssh -L 8000:localhost:8000 user@your-gpu-host
 
 Runs are detached from this server (their own session, output straight to a
 file), so a run survives closing the browser, and it survives restarting or
