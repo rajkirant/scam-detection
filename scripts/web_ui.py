@@ -11,6 +11,16 @@ run_all.sh itself - the shell script stays the single source of truth for
 what a baseline actually does, which model gets unloaded before BERT, and
 how the results table is built.
 
+Two pages:
+
+  Benchmark   the form above, the output of a run, its results table and its
+              prediction for every call.
+  BERT + MCQ  fine-tune a BERT on one of the datasets and keep the
+              checkpoint, then put knowledge/mcq_ontology.json to it one
+              transcript at a time - the same question set the mcq baseline
+              puts to the LLM, answered instead by a model trained on this
+              data. scripts/bert_mcq.py does the work; this is its front end.
+
 Over SSH, forward the port rather than binding to 0.0.0.0:
 
     ssh -L 8000:localhost:8000 user@your-gpu-host
@@ -24,12 +34,14 @@ Standard library only - nothing to install.
 import argparse
 import json
 import os
+import queue
 import re
 import shlex
 import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -691,6 +703,418 @@ def csv_page(run_id, name, offset, limit):
             "offset": offset, "total": total}
 
 
+# --------------------------------------------------------------- BERT + MCQ
+# The second page. Fine-tune a BERT on one of the datasets, keep the
+# checkpoint, then make that checkpoint answer knowledge/mcq_ontology.json for
+# a single transcript - the same question set the mcq baseline puts to the LLM,
+# put instead to a model trained on this data.
+#
+# bert_mcq is imported rather than shelled out to for the cheap questions -
+# listing checkpoints, reading the ontology. Its module level is standard
+# library only (torch and transformers are imported inside the functions that
+# need them), so this server still starts on a machine with neither installed.
+import bert_mcq
+
+MCQ_SCRIPT = PROJECT_DIR / "scripts" / "bert_mcq.py"
+MODELS_DIR = PROJECT_DIR / "models"
+MCQ_NAME_RE = bert_mcq.NAME_RE
+
+# What training can start from. Any model on the Hub works from the command
+# line; the menu offers the four worth comparing that fit on one GPU.
+BASE_MODELS = [
+    ("bert-base-uncased", "the thesis baseline, 110M parameters"),
+    ("distilbert-base-uncased", "40% smaller, about twice as fast, ~1 point behind"),
+    ("roberta-base", "better pre-training, same size as BERT"),
+    ("albert-base-v2", "12M parameters, but slower per epoch than DistilBERT"),
+]
+
+# Bounds on the training form. Each is (flag, cast, low, high, default) and the
+# defaults are bert_mcq.py's own, repeated here only so the form can show them.
+TRAIN_FIELDS = {
+    "epochs":     ("--epochs", int, 1, 20, 4),
+    "batch_size": ("--batch-size", int, 1, 64, 8),
+    "max_length": ("--max-length", int, 64, 512, 256),
+    "lr":         ("--lr", float, 1e-6, 1e-3, 2e-5),
+    "seed":       ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":      ("--limit", int, 0, 100000, 0),
+    "holdout":    ("--holdout", float, 0.0, 0.5, 0.2),
+}
+# The same idea for the answering side. These change how options are matched,
+# so changing one restarts the answerer.
+ANSWER_FIELDS = {
+    "window":         ("--window", int, 10, 400, 60),
+    "stride":         ("--stride", int, 5, 400, 30),
+    "max_length":     ("--max-length", int, 64, 512, 256),
+    "min_confidence": ("--min-confidence", float, 0.0, 0.95, 0.30),
+}
+
+# How long an answerer sits in memory with nothing asked of it before it is
+# let go. Loading is the slow part, so it is worth holding; half a gigabyte of
+# RAM for a page nobody is looking at any more is not.
+WORKER_IDLE = 600
+
+
+def venv_python():
+    """The interpreter that has torch.
+
+    run_all.sh activates venv/ if it is there; this server is deliberately
+    started with the system python, so it has to find that interpreter itself
+    rather than assume its own is the right one.
+    """
+    for rel in ("venv/bin/python", "venv/Scripts/python.exe",
+                ".venv/bin/python", ".venv/Scripts/python.exe"):
+        p = PROJECT_DIR / rel
+        if p.exists():
+            return str(p)
+    return sys.executable
+
+
+def numeric(form, fields, key):
+    """One number off the form, cast and range-checked, or None if it was
+    left blank. The server checks every one of these because the page is not
+    the only thing that can POST to it."""
+    raw = form.get(key)
+    if raw is None or str(raw).strip() == "":
+        return None
+    flag, cast, lo, hi, _ = fields[key]
+    try:
+        val = cast(str(raw).strip())
+    except (TypeError, ValueError):
+        raise ValueError("%s must be a number" % key.replace("_", " "))
+    if not lo <= val <= hi:
+        raise ValueError("%s must be between %s and %s"
+                         % (key.replace("_", " "), lo, hi))
+    return val
+
+
+class Answerer:
+    """One `bert_mcq.py serve` process, kept alive between questions.
+
+    Loading a checkpoint takes seconds and answering it takes a fraction of
+    one, so the model stays in memory between clicks rather than being loaded
+    per question. It answers on the CPU unless the page asks otherwise: a
+    benchmark run wants the whole GPU, and this page is meant to stay usable
+    while one is going.
+    """
+
+    def __init__(self, name, opts):
+        self.name, self.opts = name, opts
+        self.lock = threading.Lock()
+        self.last = time.time()
+        self.lines = queue.Queue()
+        RUNS_DIR.mkdir(parents=True, exist_ok=True)
+        # transformers writes progress bars and load reports to stderr; they
+        # go to a file so they neither fill the pipe nor reach the replies
+        self.errlog = open(RUNS_DIR / "mcq_worker.log", "ab", buffering=0)
+        argv = ([venv_python(), "-u", str(MCQ_SCRIPT), "serve", "--name", name]
+                + opts)
+        self.proc = subprocess.Popen(
+            argv, cwd=str(PROJECT_DIR), stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=self.errlog, text=True,
+            encoding="utf-8", errors="replace", bufsize=1)
+        threading.Thread(target=self._pump, daemon=True).start()
+        # a first load reads several hundred megabytes off disk, and on a cold
+        # page cache that is not quick
+        ready = self._take(300)
+        if not ready.get("ok"):
+            self.close()
+            raise ValueError(ready.get("error") or "the answerer would not start")
+        self.device = ready.get("device", "cpu")
+
+    def _pump(self):
+        """Replies are read by a thread of their own, so a worker that dies
+        mid-answer shows up as an empty line rather than as a wait with no
+        end to it."""
+        for line in self.proc.stdout:
+            self.lines.put(line)
+        self.lines.put("")
+
+    def _take(self, timeout):
+        try:
+            line = self.lines.get(timeout=timeout)
+        except queue.Empty:
+            raise ValueError("the answerer has not replied in %ds - see "
+                             "results/logs/web/mcq_worker.log" % timeout)
+        if not line.strip():
+            raise ValueError("the answerer stopped - see "
+                             "results/logs/web/mcq_worker.log")
+        try:
+            return json.loads(line)
+        except ValueError:
+            raise ValueError("the answerer said something that is not JSON: "
+                             + line[:200])
+
+    def ask(self, payload, timeout=300):
+        with self.lock:
+            # marked busy before the question as well as after the answer, so
+            # the idle reaper cannot close a worker that is mid-answer
+            self.last = time.time()
+            if self.proc.poll() is not None:
+                raise ValueError("the answerer has stopped - ask again to "
+                                 "start it back up")
+            try:
+                self.proc.stdin.write(json.dumps(payload) + "\n")
+                self.proc.stdin.flush()
+            except (BrokenPipeError, OSError):
+                raise ValueError("the answerer stopped before it could be asked")
+            out = self._take(timeout)
+            self.last = time.time()
+            return out
+
+    def close(self):
+        for shut in (lambda: (self.proc.stdin.write('{"quit":true}\n'),
+                              self.proc.stdin.flush()),
+                     lambda: self.proc.wait(timeout=5),
+                     self.proc.kill,
+                     self.errlog.close):
+            try:
+                shut()
+            except Exception:
+                pass
+
+
+# One answerer at a time. Two would be two copies of BERT in memory for no
+# gain: the page only ever asks about the model that is selected.
+WORKER = None
+WORKER_LOCK = threading.Lock()
+
+
+def answerer_for(name, opts):
+    """The live answerer for that checkpoint, started - or restarted - if the
+    model or the settings it was loaded with have changed."""
+    global WORKER
+    with WORKER_LOCK:
+        if WORKER is not None and (WORKER.name != name or WORKER.opts != opts
+                                   or WORKER.proc.poll() is not None):
+            WORKER.close()
+            WORKER = None
+        if WORKER is None:
+            WORKER = Answerer(name, opts)
+        return WORKER
+
+
+def unload_answerer():
+    global WORKER
+    with WORKER_LOCK:
+        if WORKER is None:
+            return {"unloaded": False, "note": "nothing was loaded"}
+        name = WORKER.name
+        WORKER.close()
+        WORKER = None
+        return {"unloaded": True, "model": name}
+
+
+def worker_state():
+    w = WORKER
+    if w is None or w.proc.poll() is not None:
+        return {"loaded": False}
+    return {"loaded": True, "model": w.name, "device": w.device,
+            "idle_s": int(time.time() - w.last), "idle_limit": WORKER_IDLE}
+
+
+def worker_reaper():
+    while True:
+        time.sleep(30)
+        w = WORKER
+        if w is not None and time.time() - w.last > WORKER_IDLE:
+            unload_answerer()
+
+
+def mcq_config():
+    """Everything the BERT + MCQ page needs to draw itself once."""
+    onto = bert_mcq.load_ontology()
+    return {
+        "datasets": datasets(),
+        "bases": [{"id": k, "note": n} for k, n in BASE_MODELS],
+        "models": bert_mcq.list_models(),
+        "branches": [{"id": o["id"], "text": o.get("text", ""),
+                      "questions": len(o.get("questions", []))}
+                     for o in onto["options"]],
+        "ontology": {"prompt": onto.get("prompt", ""),
+                     "bands": onto.get("bands"),
+                     "scoring": onto.get("scoring")},
+        "defaults": {k: v[4] for k, v in
+                     list(TRAIN_FIELDS.items()) + list(ANSWER_FIELDS.items())},
+        "worker": worker_state(),
+    }
+
+
+def dataset_row(path, idx):
+    """One transcript out of a dataset, to drop into the Ask box.
+
+    Read with the csv module rather than pandas: this server is standard
+    library only, and has to work whether or not the venv is there.
+    """
+    if path not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    import csv
+    csv.field_size_limit(sys.maxsize)
+    with open(PROJECT_DIR / path, newline="", encoding="utf-8",
+              errors="replace") as f:
+        reader = csv.reader(f)
+        try:
+            header = [c.lower() for c in next(reader)]
+        except StopIteration:
+            raise ValueError("that dataset is empty")
+        rows = list(reader)
+
+    def col(names):
+        for n in names:
+            if n in header:
+                return header.index(n)
+        return -1
+
+    # the same column names bert_baseline.py looks for, so the page shows the
+    # text that training would have used
+    ti = col(["transcript", "text", "call", "conversation", "dialogue",
+              "content", "body"])
+    li = col(["label", "is_scam", "scam", "target", "class", "y", "ground_truth"])
+    ii = col(["id", "call_id", "conv_id"])
+    if ti < 0:
+        raise ValueError("no transcript column in that dataset")
+    if not rows:
+        raise ValueError("that dataset has no rows")
+    idx = max(0, min(int(idx), len(rows) - 1))
+    row = rows[idx]
+    cell = lambda i: row[i] if 0 <= i < len(row) else ""
+    return {"idx": idx, "total": len(rows), "text": cell(ti),
+            "label": cell(li), "row_id": cell(ii),
+            "dataset": path}
+
+
+def mcq_answer(form):
+    """Put the ontology to one checkpoint for one transcript."""
+    name = str(form.get("model", "")).strip()
+    if not MCQ_NAME_RE.match(name):
+        raise ValueError("pick a trained model first")
+    if not (MODELS_DIR / name / "config.json").exists():
+        raise ValueError("models/%s is not a trained checkpoint" % name)
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("paste a transcript, or load one from a dataset")
+    if len(text) > 400_000:
+        raise ValueError("that is longer than any call in the datasets - "
+                         "paste one call, not a whole file")
+    branch = str(form.get("branch") or "auto")
+    try:
+        cutoff = float(form.get("cutoff") or 0.0)
+    except (TypeError, ValueError):
+        raise ValueError("the scam cut-off must be a number")
+
+    opts = []
+    for key in ANSWER_FIELDS:
+        val = numeric(form, ANSWER_FIELDS, key)
+        if val is not None:
+            opts += [ANSWER_FIELDS[key][0], str(val)]
+    if form.get("gpu"):
+        # the one thing that would actually fight a benchmark for VRAM
+        if any(r["status"] == "running" for r in all_runs()):
+            raise ValueError("a run is going, and answering on the GPU would "
+                             "fight it for VRAM. Untick \"answer on the GPU\", "
+                             "or stop the run first.")
+        opts.append("--gpu")
+
+    out = answerer_for(name, opts).ask(
+        {"transcript": text, "branch": branch, "cutoff": cutoff})
+    if not out.get("ok"):
+        raise ValueError(out.get("error") or "the answerer could not answer that")
+    return out
+
+
+def remove_model(name):
+    """Delete one checkpoint. Several hundred megabytes each, so the page asks
+    first and this says exactly what went."""
+    name = (name or "").strip()
+    if not MCQ_NAME_RE.match(name):
+        raise ValueError("bad model name")
+    d = MODELS_DIR / name
+    if not d.is_dir() or d.resolve().parent != MODELS_DIR.resolve():
+        raise ValueError("no such model: %s" % name)
+    if WORKER is not None and WORKER.name == name:
+        unload_answerer()           # cannot delete a checkpoint that is open
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_train_run(form):
+    """Fine-tune a checkpoint. Detached and logged like every other run, so it
+    appears in Recent runs and can be stopped with the same button."""
+    name = str(form.get("name", "")).strip()
+    if not MCQ_NAME_RE.match(name):
+        raise ValueError("the model needs a name: letters, digits, dot, dash "
+                         "or underscore, starting with a letter or digit")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    base = str(form.get("base", ""))
+    if base not in {b[0] for b in BASE_MODELS}:
+        raise ValueError("pick a model to start from")
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick \"replace it\"" % name)
+
+    running = [r for r in all_runs() if r["status"] == "running"]
+    if running:
+        raise ValueError("a run is already going (%s). Stop it first - the GPU "
+                         "cannot hold two." % running[0]["id"])
+
+    flags = ["train", "--csv", ds, "--name", name, "--model", base]
+    for key, (flag, _, _, _, _) in TRAIN_FIELDS.items():
+        val = numeric(form, TRAIN_FIELDS, key)
+        if val is None or (key == "limit" and val == 0):
+            continue            # limit 0 is "the whole dataset", i.e. no flag
+        flags += [flag, str(val)]
+    if form.get("cpu"):
+        flags.append("--cpu")
+    if overwrite:
+        flags.append("--overwrite")
+        # the checkpoint is about to be rewritten underneath anything holding it
+        if WORKER is not None and WORKER.name == name:
+            unload_answerer()
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_train_" + name
+    log = run_path(run_id, "log")
+
+    # run_all.sh is not involved, so its venv preamble is repeated here - the
+    # same shape start_kb_run uses, for the same reason.
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "train() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> train\\n"',
+        '  "$PY" -u scripts/bert_mcq.py ' + quoted
+        + ' || { printf "  fail train\\n"; return 1; }',
+        '  printf "  ok train\\n"',
+        "}", "train",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/bert_mcq.py " + quoted + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "train", "model_name": name,
+            "label": "train BERT · " + name, "dataset": ds,
+            "baseline": "train:" + name, "limit": "-", "model": base,
+            "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
 # ------------------------------------------------------------------ server
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -760,6 +1184,15 @@ class Handler(BaseHTTPRequestHandler):
                     q.get("id", [""])[0], q.get("name", [""])[0],
                     int(q.get("offset", ["0"])[0]),
                     min(200, int(q.get("limit", ["50"])[0]))))
+            # ---- the BERT + MCQ page
+            if u.path == "/api/mcq/config":
+                return self._send(200, mcq_config())
+            if u.path == "/api/mcq/models":
+                return self._send(200, {"models": bert_mcq.list_models(),
+                                        "worker": worker_state()})
+            if u.path == "/api/mcq/sample":
+                return self._send(200, dataset_row(
+                    q.get("dataset", [""])[0], int(q.get("idx", ["0"])[0])))
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -792,6 +1225,20 @@ class Handler(BaseHTTPRequestHandler):
                        else delete_run(form.get("id", "")))
                 sys.stderr.write("deleted %s\n" % json.dumps(out))
                 return self._send(200, out)
+            # ---- the BERT + MCQ page
+            if u.path == "/api/mcq/train":
+                meta = start_train_run(form)
+                sys.stderr.write("started %s  train %s on %s\n"
+                                 % (meta["id"], meta["model"], meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/mcq/answer":
+                return self._send(200, mcq_answer(form))
+            if u.path == "/api/mcq/unload":
+                return self._send(200, unload_answerer())
+            if u.path == "/api/mcq/delete_model":
+                out = remove_model(form.get("name", ""))
+                sys.stderr.write("deleted checkpoint %s\n" % out["id"])
+                return self._send(200, out)
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -816,6 +1263,9 @@ PAGE = r"""<!doctype html>
             --line:#32323a; --accent:#6bbf90; --warn:#d8b464; --bad:#e08272; }
   }
   * { box-sizing:border-box; }
+  /* .wrap is display:grid, and an explicit display beats the hidden
+     attribute - without this the two pages render one under the other */
+  [hidden] { display:none !important; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
   header { padding:18px 22px; border-bottom:1px solid var(--line);
@@ -1004,15 +1454,91 @@ PAGE = r"""<!doctype html>
   details.kb .kbbody { padding-bottom:14px; }
   details.kb .kbbody .go { margin-top:14px; }
   #kbstate { margin-top:3px; font-weight:400; }
+
+  /* ---- the two pages ---- */
+  nav.pages { display:flex; gap:5px; }
+  nav.pages button { background:none; border:1px solid var(--line); color:var(--dim);
+                     padding:5px 14px; border-radius:99px; font-size:13px; }
+  nav.pages button:hover { color:var(--ink); border-color:var(--dim); }
+  nav.pages button.on { background:var(--accent); border-color:var(--accent);
+                        color:#fff; }
+
+  /* ---- BERT + MCQ ---- */
+  textarea { width:100%; padding:10px 12px; border:1px solid var(--line);
+             border-radius:6px; background:var(--panel); color:var(--ink);
+             font:12.5px/1.6 var(--mono); resize:vertical; min-height:150px; }
+  /* seven hyperparameters one under another is a very long sidebar */
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; }
+  .grid2 label { margin-top:14px; }
+  details.adv { border:1px solid var(--line); border-radius:8px; padding:0 12px;
+                margin:12px 0; }
+  details.adv > summary { cursor:pointer; padding:9px 0; font-size:13px;
+                          font-weight:600; color:var(--dim); list-style:none; }
+  details.adv > summary::-webkit-details-marker { display:none; }
+  details.adv > summary:hover { color:var(--accent); }
+  details.adv > summary::before { content:"\25b8 "; color:var(--dim); }
+  details.adv[open] > summary::before { content:"\25be "; }
+  details.adv .advbody { padding-bottom:12px; }
+
+  /* the headline: what the ontology made of the call, and what the trained
+     head made of it, side by side - they are different claims and the page
+     should never let them be read as one number */
+  .verdict { display:flex; gap:30px; flex-wrap:wrap; align-items:flex-end; }
+  .big { font-size:30px; font-weight:700; line-height:1.05; letter-spacing:-.02em;
+         font-variant-numeric:tabular-nums; }
+  .big.scam { color:var(--bad); }
+  .big.legitimate { color:var(--accent); }
+  .big.uncertain { color:var(--warn); }
+  .cap { font-size:11px; font-weight:700; letter-spacing:.08em; margin-bottom:5px;
+         text-transform:uppercase; color:var(--dim); }
+
+  /* one answered question */
+  .q { border-top:1px solid var(--line); padding:14px 0; }
+  .q:first-child { border-top:none; padding-top:0; }
+  .q:last-child { padding-bottom:0; }
+  .qp { font-weight:600; margin-bottom:8px; }
+  .qa { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .qa .pick { flex:1; min-width:220px; }
+  .chip { font-size:12px; font-weight:700; padding:2px 9px; border-radius:99px;
+          border:1px solid var(--line); font-variant-numeric:tabular-nums;
+          white-space:nowrap; }
+  .chip.pos  { color:var(--bad); border-color:var(--bad); }
+  .chip.neg  { color:var(--accent); border-color:var(--accent); }
+  .chip.zero { color:var(--dim); }
+  .bar { height:5px; background:var(--line); border-radius:99px; margin-top:9px;
+         overflow:hidden; }
+  .bar i { display:block; height:100%; background:var(--accent); border-radius:99px; }
+  .bar.low i { background:var(--warn); }
+  /* the stretch of transcript the chosen option actually matched against -
+     without it an answer is a claim with nothing behind it */
+  .ev { margin-top:9px; color:var(--dim); font-size:12.5px; font-style:italic;
+        border-left:2px solid var(--line); padding-left:11px; }
+  table.opts td, table.opts th { font-size:12.5px; }
+  table.opts td.optname { text-align:left; white-space:normal; font-family:inherit; }
+  table.opts tr.chosen td { color:var(--ink); font-weight:700; }
+  .note { color:var(--dim); font-size:12.5px; }
+  .note p { margin:0 0 10px; }
+  .note p:last-child { margin-bottom:0; }
+  .note code { font-family:var(--mono); font-size:12px; }
+  #transcript { margin-bottom:12px; }
+  .askrow { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  .askrow label.inline { font-weight:600; }
+  .askrow select, .askrow input[type=text] { width:auto; padding:6px 9px; }
+  /* has to out-rank the "select, input[type=text]" width:100% above it */
+  input[type=text].num { width:74px; }
 </style>
 </head>
 <body>
 <header>
-  <h1>scam-detection benchmark</h1>
+  <h1>scam-detection</h1>
+  <nav class="pages" id="pages">
+    <button data-page="bench" class="on">Benchmark</button>
+    <button data-page="mcq">BERT + MCQ</button>
+  </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
 </header>
 
-<div class="wrap">
+<div class="wrap" id="page-bench">
   <div class="side">
     <!-- First, because on a return visit the run you want to read is the
          reason the page is open. It used to be below the form and the
@@ -1154,6 +1680,183 @@ results table, and the prediction it made for every single call.</pre>
   </div>
 </div>
 
+<!-- ==================== page two: BERT + MCQ ==================== -->
+<div class="wrap" id="page-mcq" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Trained models</div>
+      <div class="hint" style="margin-top:0">the checkpoint the questions are
+        put to · hover to delete one</div>
+      <div class="hist" id="mcqmodels"></div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" id="workerstate" style="flex:1"></span>
+        <button class="link" id="unload" hidden>unload it</button>
+      </div>
+      <div class="hint" id="modelerr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Train a model</div>
+
+      <label for="tname">Name</label>
+      <input type="text" id="tname" placeholder="e.g. zhi-bert" spellcheck="false">
+      <div class="hint">saved as models/&lt;name&gt;/ — a few hundred MB, and
+        gitignored</div>
+
+      <label for="tdataset">Dataset</label>
+      <select id="tdataset"></select>
+
+      <label for="tbase">Start from</label>
+      <select id="tbase"></select>
+      <div class="hint" id="tbasenote"></div>
+
+      <div class="grid2">
+        <div><label for="tepochs">Epochs</label>
+             <input type="text" id="tepochs" class="num" style="width:100%"></div>
+        <div><label for="tbatch">Batch size</label>
+             <input type="text" id="tbatch" class="num" style="width:100%"></div>
+        <div><label for="tmaxlen">Tokens per call</label>
+             <input type="text" id="tmaxlen" class="num" style="width:100%"></div>
+        <div><label for="tlr">Learning rate</label>
+             <input type="text" id="tlr" class="num" style="width:100%"></div>
+        <div><label for="tseed">Seed</label>
+             <input type="text" id="tseed" class="num" style="width:100%"></div>
+        <div><label for="tlimit">Calls (0 = all)</label>
+             <input type="text" id="tlimit" class="num" style="width:100%"></div>
+      </div>
+      <label for="tholdout">Held back to score it</label>
+      <input type="text" id="tholdout" class="num">
+      <div class="hint">a fraction, e.g. 0.2 — stratified, and only to put a
+        number on the checkpoint. The benchmark's BERT figure is the k-fold one
+        on the other page.</div>
+
+      <div class="checks" style="margin-top:14px">
+        <label><input type="checkbox" id="tcpu">
+          <span><span class="name">Train on the CPU</span>
+          <span class="note">much slower; leave off unless the GPU is busy</span></span></label>
+        <label><input type="checkbox" id="toverwrite">
+          <span><span class="name">Replace a model of that name</span>
+          <span class="note">the old checkpoint is overwritten, not kept</span></span></label>
+      </div>
+
+      <button class="go" id="traingo">Train</button>
+      <div class="hint" id="trainerr" style="color:var(--bad)"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="row">
+        <strong id="mcqtitle">No model selected</strong>
+        <span class="pill" id="mcqpill" hidden></span>
+        <span style="flex:1"></span>
+        <button class="stop" id="trainstop" hidden>Stop</button>
+      </div>
+      <div class="hint" id="mcqsub">Train one on the left, then put the
+        ontology's questions to it.</div>
+    </div>
+
+    <div class="tabs" id="mcqtabs">
+      <button data-mtab="ask" class="on">Ask</button>
+      <button data-mtab="train">Training output</button>
+      <button data-mtab="about">How it answers</button>
+    </div>
+
+    <!-- ask -->
+    <div id="m-ask">
+      <div class="card">
+        <div class="filepick">
+          <select id="sampleds"></select>
+          <input type="text" id="sampleidx" class="num" value="0" spellcheck="false">
+          <button class="link" id="sampleload">load that row</button>
+          <span class="hint" id="sampleinfo"></span>
+        </div>
+        <textarea id="transcript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
+        <div class="askrow">
+          <label class="inline" for="branch">Branch
+            <select id="branch"></select></label>
+          <label class="inline" for="cutoff">Scam cut-off
+            <input type="text" id="cutoff" class="num" value="0"></label>
+          <label class="inline"><input type="checkbox" id="agpu">
+            answer on the GPU</label>
+        </div>
+        <details class="adv">
+          <summary>How the options are matched</summary>
+          <div class="advbody">
+            <div class="grid2">
+              <div><label for="awindow">Window (words)</label>
+                   <input type="text" id="awindow" style="width:100%"></div>
+              <div><label for="astride">Stride (words)</label>
+                   <input type="text" id="astride" style="width:100%"></div>
+              <div><label for="amaxlen">Tokens per window</label>
+                   <input type="text" id="amaxlen" style="width:100%"></div>
+              <div><label for="aminconf">Abstain below</label>
+                   <input type="text" id="aminconf" style="width:100%"></div>
+            </div>
+            <div class="hint">The transcript is cut into overlapping windows and
+              an option scores its best match against any one of them. Changing
+              any of these reloads the model, so the next answer is slower.</div>
+          </div>
+        </details>
+        <button class="go" id="askgo">Answer the questions</button>
+        <div class="hint" id="askerr" style="color:var(--bad)"></div>
+      </div>
+      <div id="answer"></div>
+    </div>
+
+    <!-- training output -->
+    <div id="m-train" hidden>
+      <pre class="log" id="trainlog">No training run selected.
+
+Fill in the form on the left and press Train. The run is detached from this
+page exactly like a benchmark run, so it survives closing the browser, and it
+shows up in Recent runs on the Benchmark page too.</pre>
+    </div>
+
+    <!-- about -->
+    <div id="m-about" hidden>
+      <div class="card note">
+        <p><strong>Two different claims, kept apart.</strong> Training fits a
+        binary scam/legitimate classifier, and <code>prob_scam</code> is that
+        head speaking — it is the only number the model was directly trained to
+        produce. The MCQ score beside it is the ontology's: the sum of the
+        values of the options chosen below, banded by the cut-offs in
+        <code>knowledge/mcq_ontology.json</code>. They can disagree, and when
+        they do that is worth reading, not averaging.</p>
+
+        <p><strong>How a question gets answered without MCQ labels.</strong>
+        The fine-tuned encoder is used as an embedding model. The transcript is
+        cut into overlapping word windows; each window and each option text is
+        mean-pooled into a vector; an option scores the best cosine similarity
+        it reaches against any window. Those scores are centred per question —
+        the mean across that question's own options is subtracted, which strips
+        out the similarity every option shares just by being about the same
+        subject — and a softmax turns what is left into the confidences shown.</p>
+
+        <p><strong>What training changes</strong> is therefore the space the
+        options are matched in, not a set of MCQ answers. A checkpoint
+        fine-tuned on bank scams answers these questions differently from stock
+        <code>bert-base-uncased</code>, which is the comparison worth running:
+        train two and ask the same transcript twice.</p>
+
+        <p><strong>Where it is weak.</strong> Similarity reads subject matter,
+        not negation — "I will <em>not</em> ask for your PIN" sits close to the
+        option about asking for a PIN. That is the honest limit of matching
+        rather than reasoning, and it is the gap the LLM-driven
+        <code>mcq</code> baseline on the other page exists to close. When no
+        option clears the abstain threshold the question falls back to its "not
+        stated" answer rather than inventing one, and the answer is marked
+        <em>abstained</em>.</p>
+
+        <p><strong>The evidence line</strong> under each answer is the window
+        that scored highest for the chosen option — the stretch of the call the
+        answer actually came from. Open <em>all options</em> to see what every
+        other option scored, and what it would have contributed.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 let CFG = null, current = null, offset = 0, timer = null;
 let ART = {steps: [], csvs: []}, tab = 'output';
@@ -1285,6 +1988,10 @@ async function boot() {
   $('steppick').onchange = loadStep;
   $('prev').onclick = () => { if (page > 0) { page--; loadCalls(); } };
   $('next').onclick = () => { page++; loadCalls(); };
+  for (const b of $('pages').querySelectorAll('button'))
+    b.onclick = () => showPage(b.dataset.page);
+  addEventListener('hashchange', () => showPage(pageInUrl()));
+  showPage(pageInUrl());
 
   await refreshHistory();
   const running = (await runList() || []).find(r => r.status === 'running');
@@ -1452,24 +2159,27 @@ function select(id) {
   $('results').innerHTML = '';
   $('calls').innerHTML = '';
   $('steplog').textContent = '';
-  // a knowledge-base update produces no results table and no per-call CSV,
-  // so it gets the Output pane on its own
-  showKbTabs(isKb(id));
+  // a knowledge-base update and a BERT training run both produce no results
+  // table and no per-call CSV, so they get the Output pane on their own
+  showOnlyOutput(sideJob(id));
   showTab('output');
   markHistory();
   // load them now as well as on completion, so a run selected while it is
   // still going already offers the step logs of whatever has finished
-  if (!isKb(id)) loadArtifacts();
+  if (!sideJob(id)) loadArtifacts();
   if (timer) clearInterval(timer);
   poll();
   timer = setInterval(poll, 900);
 }
 
-const isKb = id => !!(RUNS[id] && RUNS[id].kind === 'kb');
+// A run with a "kind" is a side job - a knowledge-base update, or training a
+// checkpoint. Neither is scored against a dataset, so neither has a results
+// table, per-call CSVs, or per-baseline step logs to show.
+const sideJob = id => !!(RUNS[id] && RUNS[id].kind);
 
-function showKbTabs(kb) {
+function showOnlyOutput(only) {
   for (const b of $('tabs').querySelectorAll('button'))
-    b.hidden = kb && b.dataset.tab !== 'output';
+    b.hidden = only && b.dataset.tab !== 'output';
 }
 
 // ------------------------------------------------------------------ tabs
@@ -1512,9 +2222,12 @@ async function poll() {
   if (r.status !== 'running') {
     clearInterval(timer); timer = null;
     await refreshHistory();
-    if (isKb(current)) {
+    if (RUNS[current] && RUNS[current].kind === 'kb') {
       // the counts on the left are what just changed
       await refreshKb();
+    } else if (RUNS[current] && RUNS[current].kind === 'train') {
+      // a new checkpoint is what just changed, and it is on the other page
+      await refreshModels();
     } else {
       await loadArtifacts();
       await showResults();
@@ -1522,8 +2235,8 @@ async function poll() {
   }
 }
 
-function append(text) {
-  const log = $('log');
+function append(text, into) {
+  const log = $(into || 'log');
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   for (const line of text.split('\n')) {
     const span = document.createElement('span');
@@ -1540,12 +2253,13 @@ function append(text) {
 }
 
 function paintHeader(meta, status) {
-  const kb = meta.kind === 'kb';
-  showKbTabs(kb);
-  if (kb && tab !== 'output') showTab('output');
+  const side = !!meta.kind;
+  showOnlyOutput(side);
+  if (side && tab !== 'output') showTab('output');
   $('runtitle').textContent = meta.label ||
     (meta.baseline + ' · ' + meta.dataset.replace('datasets/', ''));
-  const bits = [kb ? meta.dataset : limitText(meta.limit)];
+  const bits = [side ? meta.dataset.replace('datasets/', '')
+                     : limitText(meta.limit)];
   if (meta.model) bits.push(meta.model);
   bits.push(new Date(meta.started * 1000).toLocaleString());
   $('runsub').textContent = bits.join(' · ');
@@ -1858,7 +2572,7 @@ async function refreshHistory() {
               aria-label="delete this run">×</button>
       ${r.label || (r.baseline + ' · ' + r.dataset.replace('datasets/',''))}
       <span class="pill ${r.status}">${r.status}</span>
-      <div class="meta">${r.kind === 'kb' ? '' : limitText(r.limit) + ' · '}${
+      <div class="meta">${r.kind ? '' : limitText(r.limit) + ' · '}${
         r.model ? r.model + ' · ' : ''}${new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
@@ -1924,6 +2638,368 @@ function markHistory() {
     a.classList.toggle('on', a.dataset.id === current);
 }
 
+// ============================================================ BERT + MCQ
+// The second page keeps its own state throughout - its own selected run, its
+// own poller - so switching pages never disturbs a benchmark streaming into
+// the first one. The only thing the two share is the run machinery on the
+// server: a training run is a detached run like any other, which is why it
+// also turns up under Recent runs.
+const pageInUrl = () => location.hash.slice(1) === 'mcq' ? 'mcq' : 'bench';
+
+let MCQ = null, model = null, MODELS = [];
+let trainRun = null, mtimer = null, moffset = 0;
+
+// form field -> the key /api/mcq/config sends its default under
+const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
+                 tlr: 'lr', tseed: 'seed', tlimit: 'limit', tholdout: 'holdout',
+                 awindow: 'window', astride: 'stride', amaxlen: 'max_length',
+                 aminconf: 'min_confidence'};
+
+// The page is in the URL, so #mcq can be bookmarked, reloaded, and sent to
+// someone - and reloading while reading an answer comes back to the answer
+// pane rather than to the benchmark form.
+function showPage(name) {
+  if (location.hash.slice(1) !== name)
+    history.replaceState(null, '', name === 'bench' ? location.pathname : '#' + name);
+  for (const b of $('pages').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.page === name);
+  $('page-bench').hidden = name !== 'bench';
+  $('page-mcq').hidden = name !== 'mcq';
+  // drawn on first visit rather than at boot: someone who only ever runs
+  // benchmarks should not be made to wait for a directory scan of models/
+  if (name === 'mcq' && !MCQ) mcqBoot();
+}
+
+async function mcqBoot() {
+  const cfg = await api('/api/mcq/config');
+  if (cfg.error || !cfg.branches) {
+    $('modelerr').textContent = cfg.error || 'unexpected reply from /api/mcq/config';
+    return;
+  }
+  MCQ = cfg;
+
+  $('tdataset').innerHTML = $('sampleds').innerHTML = MCQ.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  $('tbase').innerHTML = MCQ.bases.map(b =>
+    `<option value="${b.id}">${b.id}</option>`).join('');
+  // "auto" is the interesting setting - forcing a branch is for checking what
+  // the questions of another branch would have made of the same call
+  $('branch').innerHTML =
+    '<option value="auto">let the model route it</option>' +
+    MCQ.branches.map(b => `<option value="${b.id}">${esc(b.text)}` +
+      ` (${b.questions} question${b.questions === 1 ? '' : 's'})</option>`).join('');
+  for (const [id, key] of Object.entries(MFIELDS)) $(id).value = MCQ.defaults[key];
+
+  $('tbase').onchange = onBase;
+  onBase();
+  $('traingo').onclick = train;
+  $('trainstop').onclick = () => trainRun && api('/api/stop', {id: trainRun});
+  $('askgo').onclick = ask;
+  $('sampleload').onclick = loadSample;
+  $('sampleidx').onkeydown = e => { if (e.key === 'Enter') loadSample(); };
+  $('unload').onclick = unloadModel;
+  for (const b of $('mcqtabs').querySelectorAll('button'))
+    b.onclick = () => showMtab(b.dataset.mtab);
+
+  await refreshModels();
+  // a training run already going when the page opens - a reload mid-train, or
+  // one started before this server was restarted - is picked back up
+  const going = (await runList() || []).find(
+    r => r.kind === 'train' && r.status === 'running');
+  if (going) { RUNS[going.id] = going; watchTraining(going.id); showMtab('train'); }
+}
+
+function onBase() {
+  const b = MCQ.bases.find(x => x.id === $('tbase').value);
+  $('tbasenote').textContent = b ? b.note : '';
+}
+
+function showMtab(name) {
+  for (const b of $('mcqtabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.mtab === name);
+  for (const t of ['ask', 'train', 'about']) $('m-' + t).hidden = t !== name;
+}
+
+// ------------------------------------------------------- trained models
+async function refreshModels() {
+  const r = await api('/api/mcq/models');
+  if (r.error) { $('modelerr').textContent = r.error; return; }
+  $('modelerr').textContent = '';
+  paintModels(r.models || [], r.worker || {loaded: false});
+}
+
+function paintModels(models, worker) {
+  MODELS = models;
+  paintWorker(worker);
+  if (!models.length) {
+    $('mcqmodels').innerHTML = '<div class="muted">nothing trained yet</div>';
+    model = null;
+    paintMcqHeader();
+    return;
+  }
+  if (!models.some(m => m.name === model)) model = models[0].name;
+  $('mcqmodels').innerHTML = models.map(m => {
+    const acc = m.holdout && m.holdout.acc != null
+      ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%'
+      : 'not scored';
+    const live = worker.loaded && worker.model === m.name
+      ? ' <span class="pill running">in memory</span>' : '';
+    return `
+    <a data-model="${esc(m.name)}">
+      <button class="del" data-delmodel="${esc(m.name)}"
+              title="delete this checkpoint" aria-label="delete this checkpoint">×</button>
+      ${esc(m.name)}${live}
+      <div class="meta">${esc(m.base)} · ${acc}<br>
+        ${esc((m.dataset || 'dataset unrecorded').replace('datasets/', ''))} · ${kb(m.bytes)}</div>
+    </a>`;
+  }).join('');
+  for (const a of $('mcqmodels').querySelectorAll('a'))
+    a.onclick = () => { model = a.dataset.model; markModels(); paintMcqHeader(); };
+  for (const b of $('mcqmodels').querySelectorAll('[data-delmodel]'))
+    b.onclick = e => { e.stopPropagation(); delModel(b.dataset.delmodel); };
+  markModels();
+  paintMcqHeader();
+}
+
+function markModels() {
+  for (const a of $('mcqmodels').querySelectorAll('a'))
+    a.classList.toggle('on', a.dataset.model === model);
+}
+
+function paintWorker(w) {
+  $('unload').hidden = !w.loaded;
+  $('workerstate').textContent = w.loaded
+    ? `models/${w.model} is in memory on ${w.device}`
+      + (w.idle_s > 90 ? ` · idle ${Math.round(w.idle_s / 60)} min` : '')
+    : 'nothing in memory — the first question loads the checkpoint, which '
+      + 'takes a few seconds';
+}
+
+function paintMcqHeader(status) {
+  const m = MODELS.find(x => x.name === model);
+  if (m) {
+    $('mcqtitle').textContent = m.name;
+    const bits = [m.base];
+    if (m.dataset) bits.push(m.dataset.replace('datasets/', '')
+                             + (m.rows ? ' · ' + m.rows + ' calls' : ''));
+    if (m.holdout && m.holdout.acc != null)
+      bits.push('holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%'
+                + ' · F1 ' + m.holdout.f1.toFixed(3));
+    if (m.trained_at) bits.push(new Date(m.trained_at).toLocaleString());
+    $('mcqsub').textContent = bits.join(' · ');
+  } else {
+    $('mcqtitle').textContent = 'No model selected';
+    $('mcqsub').textContent = "Train one on the left, then put the ontology's "
+                            + 'questions to it.';
+  }
+  const st = status || (trainRun && RUNS[trainRun] && RUNS[trainRun].status);
+  const pill = $('mcqpill');
+  pill.hidden = !st;
+  if (st) { pill.textContent = 'training · ' + st; pill.className = 'pill ' + st; }
+  $('trainstop').hidden = st !== 'running';
+}
+
+async function delModel(name) {
+  const m = MODELS.find(x => x.name === name);
+  if (!confirm(`Delete the checkpoint models/${name}?\n\n`
+             + `${m ? kb(m.bytes) + ' on disk. ' : ''}It cannot be recovered - `
+             + `it would have to be trained again. Nothing else is touched.`)) return;
+  $('modelerr').textContent = '';
+  const r = await api('/api/mcq/delete_model', {name});
+  if (r.error) { $('modelerr').textContent = r.error; return; }
+  if (model === name) { model = null; $('answer').innerHTML = ''; }
+  await refreshModels();
+}
+
+async function unloadModel() {
+  const r = await api('/api/mcq/unload', {});
+  if (r.error) { $('modelerr').textContent = r.error; return; }
+  await refreshModels();
+}
+
+// ------------------------------------------------------------- training
+async function train() {
+  $('trainerr').textContent = '';
+  $('traingo').disabled = true;
+  const res = await api('/api/mcq/train', {
+    name: $('tname').value, dataset: $('tdataset').value, base: $('tbase').value,
+    epochs: $('tepochs').value, batch_size: $('tbatch').value,
+    max_length: $('tmaxlen').value, lr: $('tlr').value, seed: $('tseed').value,
+    limit: $('tlimit').value, holdout: $('tholdout').value,
+    cpu: $('tcpu').checked, overwrite: $('toverwrite').checked,
+  });
+  $('traingo').disabled = false;
+  if (res.error) { $('trainerr').textContent = res.error; return; }
+  RUNS[res.id] = res;
+  watchTraining(res.id);
+  showMtab('train');
+  await refreshHistory();
+}
+
+function watchTraining(id) {
+  trainRun = id;
+  moffset = 0;
+  $('trainlog').textContent = '';
+  if (mtimer) clearInterval(mtimer);
+  mpoll();
+  mtimer = setInterval(mpoll, 900);
+}
+
+async function mpoll() {
+  if (!trainRun) return;
+  const r = await api(`/api/output?id=${encodeURIComponent(trainRun)}`
+                    + `&offset=${moffset}`);
+  if (r.error) {
+    clearInterval(mtimer); mtimer = null;
+    append('\n' + r.error + '\n', 'trainlog');
+    return;
+  }
+  moffset = r.offset;
+  if (r.text) append(r.text, 'trainlog');
+  if (RUNS[trainRun]) RUNS[trainRun].status = r.status;
+  paintMcqHeader(r.status);
+  if (r.status !== 'running') {
+    clearInterval(mtimer); mtimer = null;
+    // the checkpoint that just appeared is the point of the whole run
+    await refreshModels();
+    await refreshHistory();
+  }
+}
+
+// ----------------------------------------------------------- asking it
+async function loadSample() {
+  $('sampleinfo').textContent = 'loading…';
+  const r = await api(`/api/mcq/sample?dataset=${encodeURIComponent($('sampleds').value)}`
+                    + `&idx=${encodeURIComponent($('sampleidx').value || 0)}`);
+  if (r.error) { $('sampleinfo').textContent = r.error; return; }
+  $('transcript').value = r.text;
+  $('sampleidx').value = r.idx;
+  $('sampleinfo').textContent = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + r.row_id : '')
+    + (r.label ? ' · labelled ' + r.label : '');
+}
+
+async function ask() {
+  $('askerr').textContent = '';
+  if (!model) { $('askerr').textContent = 'train a model first - there is '
+                                        + 'nothing to put the questions to'; return; }
+  const text = $('transcript').value.trim();
+  if (!text) { $('askerr').textContent = 'paste a transcript, or load one from '
+                                       + 'a dataset above'; return; }
+  $('askgo').disabled = true;
+  $('askgo').textContent = 'Answering…';
+  $('answer').innerHTML = '<div class="card muted">putting the questions to '
+    + esc(model) + '… the first one after a model or a setting changes also '
+    + 'loads the checkpoint, which takes a few seconds</div>';
+  const res = await api('/api/mcq/answer', {
+    model: model, transcript: text, branch: $('branch').value,
+    cutoff: $('cutoff').value, gpu: $('agpu').checked,
+    window: $('awindow').value, stride: $('astride').value,
+    max_length: $('amaxlen').value, min_confidence: $('aminconf').value,
+  });
+  $('askgo').disabled = false;
+  $('askgo').textContent = 'Answer the questions';
+  if (res.error) {
+    $('askerr').textContent = res.error;
+    $('answer').innerHTML = '';
+    return;
+  }
+  paintAnswer(res);
+  await refreshModels();        // the checkpoint is in memory now
+}
+
+function paintAnswer(a) {
+  const v = a.score.verdict;
+  const p = a.classifier.prob_scam;
+  const cls = p >= a.classifier.threshold ? 'scam' : 'legitimate';
+  const sum = (a.score.sum > 0 ? '+' : '') + a.score.sum.toFixed(2);
+
+  // The two numbers side by side and never combined: one is the sum of the
+  // options chosen below, the other is the head that was actually trained.
+  const head = `
+  <div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">MCQ score</div>
+        <div class="big ${v}">${sum}</div>
+        <div class="hint">${esc(v)}${a.score.cutoff
+            ? ' · cut-off ' + a.score.cutoff : ''}</div>
+      </div>
+      <div>
+        <div class="cap">Trained head</div>
+        <div class="big ${cls}">${(100 * p).toFixed(1)}%</div>
+        <div class="hint">prob_scam · ${cls} at ${a.classifier.threshold}</div>
+      </div>
+      <div style="flex:1; min-width:210px">
+        <div class="cap">Routed to</div>
+        <div style="font-weight:600">${esc(a.route.chosen_text)}</div>
+        <div class="hint">${a.route.forced ? 'the branch you chose'
+          : (100 * a.route.confidence).toFixed(0) + '% confident'} · ${
+          a.questions.length} question${a.questions.length === 1 ? '' : 's'}</div>
+      </div>
+    </div>
+    ${a.route.legit_contrast ? `<div class="ev" style="font-style:normal; margin-top:15px">
+      <strong>A real call of this kind:</strong> ${esc(a.route.legit_contrast)}</div>` : ''}
+  </div>`;
+
+  const body = a.questions.length
+    ? '<div class="card">' + a.questions.map(qBlock).join('') + '</div>'
+    : '<div class="card muted">that branch asks no questions, so there is '
+      + 'nothing to score - the call did not look like any of the kinds the '
+      + 'ontology covers</div>';
+
+  $('answer').innerHTML = head + body + `
+    <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
+      · ${a.windows} window${a.windows === 1 ? '' : 's'} · ${a.elapsed_ms} ms
+      on ${esc(a.device)}</div>`;
+}
+
+function qBlock(q) {
+  const pct = Math.round(100 * q.confidence);
+  const chip = q.recorded
+    ? '<span class="chip zero">recorded</span>'
+    : `<span class="chip ${q.contributes > 0 ? 'pos'
+        : q.contributes < 0 ? 'neg' : 'zero'}">${
+        q.contributes > 0 ? '+' : ''}${q.contributes.toFixed(1)}</span>`;
+  const val = o => (o.value === null || o.value === undefined) ? '—'
+    : (o.value > 0 ? '+' : '') + o.value.toFixed(1);
+  const rows = q.options.map(o => `
+    <tr class="${o.id === q.chosen ? 'chosen' : ''}">
+      <td class="optname">${esc(o.text)}</td>
+      <td>${val(o)}</td>
+      <td>${(100 * o.confidence).toFixed(0)}%</td>
+      <td>${o.similarity.toFixed(3)}</td>
+    </tr>`).join('');
+  const ev = q.evidence
+    ? `<div class="ev">…${esc(q.evidence.slice(0, 320))}${
+        q.evidence.length > 320 ? '…' : ''}</div>` : '';
+  return `
+  <div class="q">
+    <div class="qp">${esc(q.prompt)}</div>
+    <div class="qa">
+      <span class="pick">${esc(q.chosen_text)}${q.abstained
+        ? ' <span class="hint">— abstained: nothing in the call answered this</span>'
+        : ''}</span>
+      ${chip}<span class="hint">${pct}%</span>
+    </div>
+    <div class="bar ${q.abstained || q.confidence < 0.4 ? 'low' : ''}">
+      <i style="width:${Math.max(2, pct)}%"></i></div>
+    ${ev}
+    <details class="adv" style="margin-bottom:0">
+      <summary>all ${q.options.length} options${q.recorded
+        ? ' · recorded for the explanation, scores nothing' : ''}</summary>
+      <div class="advbody">
+        <div class="scroll"><table class="opts">
+          <tr><th>option</th><th>value</th><th>confidence</th><th>similarity</th></tr>
+          ${rows}
+        </table></div>
+        ${q.note ? `<div class="hint" style="margin-top:11px">${esc(q.note)}</div>` : ''}
+      </div>
+    </details>
+  </div>`;
+}
+
 boot();
 </script>
 </body>
@@ -1969,6 +3045,8 @@ def main():
 
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     srv.daemon_threads = True
+    # lets go of a BERT nobody is asking questions of any more
+    threading.Thread(target=worker_reaper, daemon=True).start()
 
     print("scam-detection UI")
     print("  here:           http://localhost:%d" % args.port)
