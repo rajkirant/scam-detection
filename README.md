@@ -326,17 +326,49 @@ Two numbers sit side by side at the top and are deliberately never combined:
 | **MCQ score** | the sum of the option values chosen below, banded by the cut-offs in `mcq_ontology.json` |
 | **prob_scam** | the binary classification head — the only thing training directly fits |
 
-The questions themselves have no labels to train on. The fine-tuned encoder is
-used as an embedding model instead: the transcript is cut into overlapping
-windows, each window and each option text is mean-pooled into a vector, and an
-option scores the best cosine similarity it reaches against any window. Scores
-are centred per question and softmaxed into the confidences shown; when nothing
-clears the threshold the question abstains to its "not stated" option rather
-than inventing an answer. So what training changes is the space the options are
-matched in — which makes "train two checkpoints and ask the same transcript
-twice" the comparison the page is for. The **How it answers** tab says all of
-this on the page, including where the method is weak (similarity reads subject
-matter, not negation).
+The questions themselves have no labels to train on, so they are answered by
+similarity: the transcript is cut into overlapping windows, each window and
+each option text is mean-pooled into a vector, and an option scores the best
+cosine similarity it reaches against any window.
+
+Four things about that matching decide whether the answers mean anything, and
+each of them was, at one point, the reason they did not:
+
+- **The encoder.** Options are matched in `all-MiniLM-L6-v2` — already this
+  project's embedding model — not in the fine-tuned checkpoint's own hidden
+  states. A binary scam/legitimate objective never asks an encoder to tell "a
+  courier" from "a customs agency", which is the distinction every question
+  here turns on. Matched in the checkpoint, every option of a question came
+  back within a few hundredths of every other and the winner was decided by
+  noise. `--encoder self` puts it back for comparison.
+- **The key.** An option is embedded as its own text. Prefixing the question
+  prompt, which is identical across that question's options, made the strings
+  being compared about 90% the same characters.
+- **Centring.** The mean direction of the whole option corpus is subtracted
+  from both sides before the cosine. BERT sentence vectors sit in a narrow
+  cone, so two unrelated phrases still score .85 against each other; removing
+  that shared direction is what gives the options room to differ.
+  `--no-center` disables it.
+- **The gate.** A question is answered only when its best option is clear of
+  the runner-up by `--min-margin` in raw cosine. A softmax over four
+  near-identical scores still has to hand its probability to somebody, so
+  confidence alone cannot tell a real answer from a coin flip. Below the
+  margin the question abstains and contributes **nothing** — not knowing
+  whether the caller asked for anything is not evidence that they asked for
+  nothing.
+
+Transcripts are repaired first: the tone tags (`[curious]`, `[long pause]`)
+come out, redacted entities keep their word (`[CARD]` → "card number"), and
+the apostrophes ASR dropped go back in, because "i m" and "don t" are not
+words any encoder was trained on. `--raw` disables it. Note that the tone tags
+also reach `bert_baseline.py`, which is worth knowing about: in
+`scamai_full_1000.csv`, `[satisfied]` appears on 54.8% of legitimate calls and
+31.0% of scams, so a classifier reading them can score off the labelling
+convention rather than off the call.
+
+What training changes is therefore `prob_scam`, and the MCQ answers are
+zero-shot. The **How it answers** tab says this on the page, including where
+the method is weak (similarity reads subject matter, not negation).
 
 Answering happens on the CPU unless *answer on the GPU* is ticked, so the page
 stays usable while a benchmark run has the VRAM. The checkpoint is held in
@@ -528,9 +560,23 @@ python scripts/bert_mcq.py answer --name zhi-bert --text "Hello, this is..."
 python scripts/bert_mcq.py answer --name zhi-bert \
     --csv datasets/zhi_english_646.csv --idx 3 --json
 
+# the numbers behind every pick, when the answers look arbitrary
+python scripts/bert_mcq.py diagnose --name zhi-bert \
+    --csv datasets/zhi_english_646.csv --idx 3 --control
+
 python scripts/bert_mcq.py models              # what is in models/
 python scripts/bert_mcq.py delete --name zhi-bert
 ```
+
+`diagnose` prints the raw cosine behind every option, the margin between the
+best two, and the spread across each question — read those before trusting a
+verdict. `--control` answers a word-shuffled copy of the same call as well.
+Shuffling keeps every word and destroys every phrase, so any answer that
+survives it was reading the vocabulary rather than the call; a low agreement
+count is the good result. The knobs worth moving are `--min-margin` (raise it
+until only the questions the call really answers come through), `--encoder`
+(`self` matches in the checkpoint, which is the old behaviour) and
+`--no-center`.
 
 `answer` prints the branch it routed to, the option it chose for each question
 with a confidence, the summed score and the verdict, and `prob_scam` from the
