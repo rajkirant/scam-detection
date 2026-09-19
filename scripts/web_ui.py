@@ -742,10 +742,11 @@ TRAIN_FIELDS = {
 # The same idea for the answering side. These change how options are matched,
 # so changing one restarts the answerer.
 ANSWER_FIELDS = {
-    "window":         ("--window", int, 10, 400, 60),
-    "stride":         ("--stride", int, 5, 400, 30),
+    "window":         ("--window", int, 10, 400, 45),
+    "stride":         ("--stride", int, 5, 400, 15),
     "max_length":     ("--max-length", int, 64, 512, 256),
     "min_confidence": ("--min-confidence", float, 0.0, 0.95, 0.30),
+    "min_margin":     ("--min-margin", float, 0.0, 0.95, 0.04),
 }
 
 # How long an answerer sits in memory with nothing asked of it before it is
@@ -1013,6 +1014,15 @@ def mcq_answer(form):
                              "fight it for VRAM. Untick \"answer on the GPU\", "
                              "or stop the run first.")
         opts.append("--gpu")
+    # The comparison the thesis wants: the same questions matched in the
+    # checkpoint's own hidden states rather than in a sentence-similarity
+    # space. Worth running once to see the difference; not the default,
+    # because a binary classification objective never built a space that can
+    # tell one option from another.
+    if form.get("self_encoder"):
+        opts += ["--encoder", "self"]
+    if form.get("raw_text"):
+        opts.append("--raw")
 
     out = answerer_for(name, opts).ask(
         {"transcript": text, "branch": branch, "cutoff": cutoff})
@@ -1792,10 +1802,32 @@ results table, and the prediction it made for every single call.</pre>
                    <input type="text" id="amaxlen" style="width:100%"></div>
               <div><label for="aminconf">Abstain below</label>
                    <input type="text" id="aminconf" style="width:100%"></div>
+              <div><label for="aminmargin">Least margin</label>
+                   <input type="text" id="aminmargin" style="width:100%"></div>
             </div>
             <div class="hint">The transcript is cut into overlapping windows and
-              an option scores its best match against any one of them. Changing
-              any of these reloads the model, so the next answer is slower.</div>
+              an option scores its best match against any one of them. The
+              margin is how far the best option is clear of the runner-up, in
+              raw cosine; under it the question abstains rather than picking
+              between scores that are the same number twice. Changing any of
+              these reloads the model, so the next answer is slower.</div>
+            <div style="margin-top:11px">
+              <label class="inline"><input type="checkbox" id="aself">
+                match in the checkpoint's own hidden states</label>
+              <div class="hint">Off by default. Fine-tuning fits a binary
+                scam/legitimate head and never asks the encoder to tell "a
+                courier" from "a customs agency", so matching there gives
+                every option nearly the same score and the winner is decided
+                by noise. Tick it to see that happen.</div>
+            </div>
+            <div style="margin-top:9px">
+              <label class="inline"><input type="checkbox" id="araw">
+                match against the raw transcript</label>
+              <div class="hint">Off by default. Normally the tone tags
+                ([curious], [long pause]) come out and the apostrophes ASR
+                dropped go back in, because "i m" and "don t" are not words
+                any encoder was trained on.</div>
+            </div>
           </div>
         </details>
         <button class="go" id="askgo">Answer the questions</button>
@@ -1825,28 +1857,42 @@ shows up in Recent runs on the Benchmark page too.</pre>
         they do that is worth reading, not averaging.</p>
 
         <p><strong>How a question gets answered without MCQ labels.</strong>
-        The fine-tuned encoder is used as an embedding model. The transcript is
-        cut into overlapping word windows; each window and each option text is
-        mean-pooled into a vector; an option scores the best cosine similarity
-        it reaches against any window. Those scores are centred per question —
-        the mean across that question's own options is subtracted, which strips
-        out the similarity every option shares just by being about the same
-        subject — and a softmax turns what is left into the confidences shown.</p>
+        By similarity. The transcript is cut into overlapping word windows;
+        each window and each option text is mean-pooled into a vector; an
+        option scores the best cosine similarity it reaches against any
+        window. The mean direction of the whole option corpus is subtracted
+        from both sides first — sentence vectors out of any BERT sit in a
+        narrow cone, so two unrelated phrases still score .85 against each
+        other, and taking that shared direction out is what gives the options
+        room to differ.</p>
 
-        <p><strong>What training changes</strong> is therefore the space the
-        options are matched in, not a set of MCQ answers. A checkpoint
-        fine-tuned on bank scams answers these questions differently from stock
-        <code>bert-base-uncased</code>, which is the comparison worth running:
-        train two and ask the same transcript twice.</p>
+        <p><strong>Why the options are not matched in the checkpoint.</strong>
+        They were, and it was the reason the answers looked arbitrary.
+        Fine-tuning fits a binary scam/legitimate head; nothing in that
+        objective asks the encoder to tell "a courier" from "a customs
+        agency", which is the distinction every question here turns on. Every
+        option came back within a few hundredths of every other, and a softmax
+        over noise still has to hand its probability to somebody. So the match
+        runs in <code>all-MiniLM-L6-v2</code> — the model that already indexes
+        the policy KB — and the checkpoint keeps the job it was trained for,
+        which is <code>prob_scam</code>. The tickbox under <em>How the options
+        are matched</em> puts it back the old way if you want to see the
+        difference.</p>
+
+        <p><strong>The margin is the number to read.</strong> A question is
+        only answered when its best option is clear of the runner-up by the
+        margin you set, in raw cosine. Confidence cannot carry that on its
+        own: four scores that are the same number twice still produce a
+        confident-looking softmax. Under the margin the question abstains to
+        its "not stated" answer and contributes nothing to the score —
+        not knowing whether the caller asked for anything is not evidence that
+        they asked for nothing.</p>
 
         <p><strong>Where it is weak.</strong> Similarity reads subject matter,
         not negation — "I will <em>not</em> ask for your PIN" sits close to the
         option about asking for a PIN. That is the honest limit of matching
         rather than reasoning, and it is the gap the LLM-driven
-        <code>mcq</code> baseline on the other page exists to close. When no
-        option clears the abstain threshold the question falls back to its "not
-        stated" answer rather than inventing one, and the answer is marked
-        <em>abstained</em>.</p>
+        <code>mcq</code> baseline on the other page exists to close.</p>
 
         <p><strong>The evidence line</strong> under each answer is the window
         that scored highest for the chosen option — the stretch of the call the
@@ -2653,7 +2699,7 @@ let trainRun = null, mtimer = null, moffset = 0;
 const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
                  tlr: 'lr', tseed: 'seed', tlimit: 'limit', tholdout: 'holdout',
                  awindow: 'window', astride: 'stride', amaxlen: 'max_length',
-                 aminconf: 'min_confidence'};
+                 aminconf: 'min_confidence', aminmargin: 'min_margin'};
 
 // The page is in the URL, so #mcq can be bookmarked, reloaded, and sent to
 // someone - and reloading while reading an answer comes back to the answer
@@ -2897,6 +2943,8 @@ async function ask() {
     cutoff: $('cutoff').value, gpu: $('agpu').checked,
     window: $('awindow').value, stride: $('astride').value,
     max_length: $('amaxlen').value, min_confidence: $('aminconf').value,
+    min_margin: $('aminmargin').value, self_encoder: $('aself').checked,
+    raw_text: $('araw').checked,
   });
   $('askgo').disabled = false;
   $('askgo').textContent = 'Answer the questions';
@@ -2949,10 +2997,15 @@ function paintAnswer(a) {
       + 'nothing to score - the call did not look like any of the kinds the '
       + 'ontology covers</div>';
 
+  const m = a.matching || {};
   $('answer').innerHTML = head + body + `
     <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
       · ${a.windows} window${a.windows === 1 ? '' : 's'} · ${a.elapsed_ms} ms
-      on ${esc(a.device)}</div>`;
+      on ${esc(a.device)}${m.encoder ? `<br>options matched in
+      ${esc(m.encoder === 'self' ? "the checkpoint's own hidden states"
+        : m.encoder)}${m.centred ? ', centred' : ', uncentred'}${
+        m.normalised ? '' : ', raw transcript'} · answered ${m.answered} of
+      ${m.asked} question${m.asked === 1 ? '' : 's'}` : ''}</div>`;
 }
 
 function qBlock(q) {
@@ -2979,10 +3032,12 @@ function qBlock(q) {
     <div class="qp">${esc(q.prompt)}</div>
     <div class="qa">
       <span class="pick">${esc(q.chosen_text)}${q.abstained
-        ? ' <span class="hint">— abstained: nothing in the call answered this</span>'
-        : ''}</span>
-      ${chip}<span class="hint">${pct}%</span>
+        ? ' <span class="hint">— abstained</span>' : ''}</span>
+      ${chip}<span class="hint">${pct}%${q.margin === undefined ? ''
+        : ' · margin ' + q.margin.toFixed(3)}</span>
     </div>
+    ${q.abstained && q.why_abstained ? `<div class="hint">${esc(q.why_abstained)}${
+      q.best_text ? ' — the best option was “' + esc(q.best_text) + '”' : ''}</div>` : ''}
     <div class="bar ${q.abstained || q.confidence < 0.4 ? 'low' : ''}">
       <i style="width:${Math.max(2, pct)}%"></i></div>
     ${ev}
