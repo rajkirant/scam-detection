@@ -375,6 +375,36 @@ stays usable while a benchmark run has the VRAM. The checkpoint is held in
 memory between questions and let go after ten idle minutes, or when you press
 *unload it*.
 
+### LLM judge page
+
+The third tab, and the simplest thing in the project. Paste a transcript (or
+load a row from a dataset with the picker at the top), press **Ask the
+model**, and the local LLM says whether it is a scam and gives its reason. No
+retrieval, no ontology, no fine-tuned anything.
+
+It is the `llm_only` control from the Benchmark page asked one call at a time,
+and it shares the benchmark's prompt and verdict parser — so the answer on
+this page is the answer that would have been recorded there for that call.
+`scripts/llm_judge.py` does the work
+([section C.10](#10-ask-the-llm-about-one-call)).
+
+The model menu lists whatever `ollama list` would: the model in `SCAM_MODEL`
+is put first, so the page opens on the one the rest of the project uses.
+Ollama holds the model, not the server, so there is nothing to load or unload
+here.
+
+Two things the page shows that the benchmark does not:
+
+- **The prompt size, before you ask.** Ollama drops the *front* of a prompt
+  that overflows the context window — the instructions go first — and what
+  comes back then reads like a bad model rather than a bad setting. The word
+  and token count sits under the box and turns red when a transcript is over
+  the window.
+- **Unreadable answers, as unreadable.** When neither the first reply nor the
+  one-word retry can be parsed, the benchmark has to score something and
+  settles for Normal. Here it says so, because on a single call "Normal"
+  should not sometimes mean "the model did not answer".
+
 ---
 
 ## B. The same thing in the terminal
@@ -591,6 +621,34 @@ benchmark for VRAM. `--branch <id>` forces a branch instead of routing to one,
 mode — one JSON request per line on stdin — which is how the web UI keeps a
 checkpoint loaded between questions.
 
+### 10. Ask the LLM about one call
+
+The command line behind the **LLM judge** page
+([section A](#llm-judge-page)): the `llm_only` baseline pointed at a single
+transcript instead of at a dataset.
+
+```bash
+python scripts/llm_judge.py --text "Hello, this is your bank's fraud team..."
+python scripts/llm_judge.py --csv datasets/scambait_bank_422.csv --idx 3
+python scripts/llm_judge.py --text "..." --model qwen2.5:14b --json
+
+python scripts/llm_judge.py models        # what ollama has pulled
+```
+
+It prints the verdict, the model's own reason, and a warning when the prompt
+is bigger than `--num-ctx` — Ollama truncates an overlong prompt from the
+front, so the instructions are the first thing lost and the reply that comes
+back is answering a headless transcript. `--max-tokens` raises the reply
+budget when an answer comes back cut off. Unlike the benchmark, a reply that
+cannot be parsed is reported as unreadable rather than scored Normal.
+
+The prompt and the verdict parser are imported from `combined_evaluate.py`
+rather than copied, so a verdict here is the verdict the benchmark would have
+recorded for that call. It talks to Ollama over plain HTTP with nothing but
+the standard library, so it runs outside the venv as well as in it.
+`OLLAMA_URL` (or `OLLAMA_HOST`) points it at another machine and `SCAM_MODEL`
+sets the default model.
+
 ---
 
 ## Datasets
@@ -616,7 +674,7 @@ the row count — the launcher parses them as CSV instead.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `SCAM_MODEL` | `llama3.1:8b` | Ollama model the LLM systems call. `run_all.sh -m` sets it for you. |
-| `OLLAMA_URL` | `http://localhost:11434` | where the web UI probes for Ollama |
+| `OLLAMA_URL` | `http://localhost:11434` | where the web UI probes for Ollama, and where the LLM judge page sends its transcripts (`OLLAMA_HOST` is read as a fallback, so ollama's own variable works too) |
 | `TAVILY_API_KEY` | — | read from `.env`; only `harvest_patterns.py` needs it |
 | `WEBRAG_MIN_SIMILARITY` | `0.35` | cosine floor before the LLM relevance gate |
 | `WEBRAG_LLM_GATE` | `1` | `0` ablates the LLM relevance check |

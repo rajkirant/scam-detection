@@ -1031,6 +1031,76 @@ def mcq_answer(form):
     return out
 
 
+# ---------------------------------------------------------------- LLM judge
+# The third page, and the simplest thing in the project: no retrieval, no
+# ontology, no fine-tuned anything. The transcript goes to the local model,
+# which says Fraud or Normal and gives its reason. It is the llm_only control
+# from the Benchmark page asked one call at a time, using the same prompt and
+# the same verdict parser, so what it says here is what the benchmark would
+# have recorded for that call.
+#
+# llm_judge's module level is standard library only and it speaks to ollama
+# over plain HTTP, so this page works from the system python like the rest of
+# the server - no venv, no subprocess, nothing to keep alive between clicks.
+import llm_judge
+
+# (kwarg, cast, low, high, default) - the same shape numeric() reads for the
+# other two pages.
+LLM_FIELDS = {
+    "max_tokens":  ("max_tokens", int, 32, 4000, llm_judge.DEFAULT_MAX_TOKENS),
+    "num_ctx":     ("num_ctx", int, 512, 131072, llm_judge.DEFAULT_NUM_CTX),
+    "temperature": ("temperature", float, 0.0, 2.0, 0.0),
+}
+LLM_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]{0,120}$")
+LLM_TIMEOUT = 600
+# One generation at a time. Ollama will queue a second, but a 14B model is
+# most of the VRAM and two people clicking at once should be told so rather
+# than both sitting on a spinner.
+LLM_LOCK = threading.Lock()
+
+
+def llm_config():
+    """Everything the LLM judge page needs to draw itself once."""
+    cfg = {
+        "datasets": datasets(),
+        "host": llm_judge.OLLAMA_HOST,
+        "default_model": llm_judge.DEFAULT_MODEL,
+        "defaults": {k: v[4] for k, v in LLM_FIELDS.items()},
+        "models": [],
+    }
+    # ollama being down is a normal state for this page to be in - the box may
+    # not have it running yet - so it is reported, not raised
+    try:
+        cfg["models"] = llm_judge.list_models()
+    except RuntimeError as e:
+        cfg["ollama_error"] = str(e)
+    return cfg
+
+
+def llm_verdict(form):
+    """Put one transcript to the local model."""
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("paste a transcript, or load one from a dataset")
+    model = str(form.get("model") or llm_judge.DEFAULT_MODEL).strip()
+    if not LLM_MODEL_RE.match(model):
+        raise ValueError("%r is not a name ollama would accept" % model[:60])
+    kw = {}
+    for key in LLM_FIELDS:
+        val = numeric(form, LLM_FIELDS, key)
+        if val is not None:
+            kw[LLM_FIELDS[key][0]] = val
+    if not LLM_LOCK.acquire(blocking=False):
+        raise ValueError("the model is already answering something - one call "
+                         "at a time, or they fight for the VRAM")
+    try:
+        return llm_judge.judge(text, model=model, timeout=LLM_TIMEOUT, **kw)
+    except RuntimeError as e:
+        raise ValueError(str(e))
+    finally:
+        LLM_LOCK.release()
+
+
 def remove_model(name):
     """Delete one checkpoint. Several hundred megabytes each, so the page asks
     first and this says exactly what went."""
@@ -1203,6 +1273,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/mcq/sample":
                 return self._send(200, dataset_row(
                     q.get("dataset", [""])[0], int(q.get("idx", ["0"])[0])))
+            # ---- the LLM judge page
+            if u.path == "/api/llm/config":
+                return self._send(200, llm_config())
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -1249,6 +1322,9 @@ class Handler(BaseHTTPRequestHandler):
                 out = remove_model(form.get("name", ""))
                 sys.stderr.write("deleted checkpoint %s\n" % out["id"])
                 return self._send(200, out)
+            # ---- the LLM judge page
+            if u.path == "/api/llm/judge":
+                return self._send(200, llm_verdict(form))
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -1544,6 +1620,7 @@ PAGE = r"""<!doctype html>
   <nav class="pages" id="pages">
     <button data-page="bench" class="on">Benchmark</button>
     <button data-page="mcq">BERT + MCQ</button>
+    <button data-page="llm">LLM judge</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
 </header>
@@ -1900,6 +1977,63 @@ shows up in Recent runs on the Benchmark page too.</pre>
         other option scored, and what it would have contributed.</p>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="wrap" id="page-llm" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Model</div>
+      <div class="hint" style="margin-top:0">what ollama has pulled on this
+        machine</div>
+      <select id="llmmodel" style="width:100%; margin-top:8px"></select>
+      <div class="hint" id="llmhost"></div>
+      <div class="hint" id="llmerr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Settings</div>
+      <div class="grid2">
+        <div><label for="llmmaxtok">Reply tokens</label>
+             <input type="text" id="llmmaxtok" style="width:100%"></div>
+        <div><label for="llmctx">Context window</label>
+             <input type="text" id="llmctx" style="width:100%"></div>
+        <div><label for="llmtemp">Temperature</label>
+             <input type="text" id="llmtemp" style="width:100%"></div>
+      </div>
+      <div class="hint">The context window is the one worth watching. Ollama
+        drops the <em>front</em> of a prompt that overflows it — the
+        instructions first — and what comes back then reads like a bad model
+        rather than a bad setting. The page warns you when a transcript is
+        close to the edge.</div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">What this is</div>
+      <div class="hint" style="margin-top:0">The <code>llm_only</code> control
+        from the Benchmark page, asked one call at a time. No retrieval, no
+        ontology, no fine-tuning — just the transcript and the question. It
+        uses the same prompt and the same verdict parser as the benchmark, so
+        the answer here is the answer that would have been recorded there.</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="filepick">
+        <select id="llmds"></select>
+        <input type="text" id="llmidx" class="num" value="0" spellcheck="false">
+        <button class="link" id="llmload">load that row</button>
+        <span class="hint" id="llminfo"></span>
+      </div>
+      <textarea id="llmtranscript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
+      <div class="askrow">
+        <span class="hint" id="llmsize"></span>
+      </div>
+      <button class="go" id="llmgo">Ask the model</button>
+      <div class="hint" id="llmasker" style="color:var(--bad)"></div>
+    </div>
+    <div id="llmanswer"></div>
   </div>
 </div>
 
@@ -2690,7 +2824,9 @@ function markHistory() {
 // the first one. The only thing the two share is the run machinery on the
 // server: a training run is a detached run like any other, which is why it
 // also turns up under Recent runs.
-const pageInUrl = () => location.hash.slice(1) === 'mcq' ? 'mcq' : 'bench';
+const PAGES = ['bench', 'mcq', 'llm'];
+const pageInUrl = () => PAGES.includes(location.hash.slice(1))
+  ? location.hash.slice(1) : 'bench';
 
 let MCQ = null, model = null, MODELS = [];
 let trainRun = null, mtimer = null, moffset = 0;
@@ -2711,9 +2847,12 @@ function showPage(name) {
     b.classList.toggle('on', b.dataset.page === name);
   $('page-bench').hidden = name !== 'bench';
   $('page-mcq').hidden = name !== 'mcq';
+  $('page-llm').hidden = name !== 'llm';
   // drawn on first visit rather than at boot: someone who only ever runs
-  // benchmarks should not be made to wait for a directory scan of models/
+  // benchmarks should not be made to wait for a directory scan of models/,
+  // nor for ollama to be asked what it has pulled
   if (name === 'mcq' && !MCQ) mcqBoot();
+  if (name === 'llm' && !LLM) llmBoot();
 }
 
 async function mcqBoot() {
@@ -3053,6 +3192,143 @@ function qBlock(q) {
       </div>
     </details>
   </div>`;
+}
+
+// ============================================================== LLM judge
+// The third page. One transcript, one question, one verdict with a reason.
+// It holds nothing between clicks - there is no worker to keep alive, since
+// ollama is the thing holding the model.
+let LLM = null;
+const LFIELDS = {llmmaxtok: 'max_tokens', llmctx: 'num_ctx', llmtemp: 'temperature'};
+
+async function llmBoot() {
+  const cfg = await api('/api/llm/config');
+  if (cfg.error) { $('llmerr').textContent = cfg.error; return; }
+  LLM = cfg;
+
+  $('llmhost').textContent = 'ollama at ' + cfg.host;
+  for (const [id, key] of Object.entries(LFIELDS))
+    if (cfg.defaults[key] !== undefined) $(id).value = cfg.defaults[key];
+
+  if (cfg.ollama_error) {
+    $('llmerr').textContent = cfg.ollama_error;
+    $('llmmodel').innerHTML = '<option value="">nothing to choose from</option>';
+  } else if (!cfg.models.length) {
+    $('llmerr').textContent = 'ollama is running but has no models pulled — '
+      + 'try: ollama pull qwen2.5:14b';
+    $('llmmodel').innerHTML = '<option value="">nothing pulled</option>';
+  } else {
+    // the configured model first if it is there, so the page opens on the one
+    // the rest of the project uses
+    const names = cfg.models.map(m => m.name);
+    if (names.includes(cfg.default_model))
+      names.splice(names.indexOf(cfg.default_model), 1),
+      names.unshift(cfg.default_model);
+    $('llmmodel').innerHTML = names.map(n =>
+      `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  }
+
+  $('llmds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
+  $('llmload').onclick = llmLoadRow;
+  $('llmgo').onclick = llmAsk;
+  $('llmtranscript').addEventListener('input', llmSize);
+  llmSize();
+}
+
+// The context window is the failure people cannot see: over it, ollama cuts
+// the front of the prompt off and the instructions go with it. So the size is
+// on screen before the model is asked, not explained afterwards.
+function llmSize() {
+  const words = $('llmtranscript').value.trim().split(/\s+/).filter(Boolean).length;
+  const est = Math.round(words * 1.4) + 60;
+  const ctx = parseInt($('llmctx').value, 10) || 0;
+  const over = ctx && est > ctx;
+  $('llmsize').innerHTML = words
+    ? `${words} words · about ${est} tokens${ctx ? ' of ' + ctx : ''}`
+      + (over ? ' — <strong style="color:var(--bad)">over the window, raise it'
+              + ' or the instructions get cut off</strong>' : '')
+    : '';
+}
+
+async function llmLoadRow() {
+  $('llminfo').textContent = 'loading…';
+  const r = await api(`/api/mcq/sample?dataset=${encodeURIComponent($('llmds').value)}`
+                    + `&idx=${encodeURIComponent($('llmidx').value || 0)}`);
+  if (r.error) { $('llminfo').textContent = r.error; return; }
+  $('llmtranscript').value = r.text;
+  $('llmidx').value = r.idx;
+  $('llminfo').textContent = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + r.row_id : '')
+    + (r.label ? ' · labelled ' + r.label : '');
+  llmSize();
+}
+
+async function llmAsk() {
+  $('llmasker').textContent = '';
+  const text = $('llmtranscript').value.trim();
+  if (!text) { $('llmasker').textContent = 'paste a transcript, or load one '
+                                         + 'from a dataset above'; return; }
+  const model = $('llmmodel').value;
+  if (!model) { $('llmasker').textContent = 'no model to ask - pull one with '
+                                          + 'ollama first'; return; }
+  $('llmgo').disabled = true;
+  $('llmgo').textContent = 'Asking…';
+  $('llmanswer').innerHTML = '<div class="card muted">' + esc(model)
+    + ' is reading the call… a 14B model takes a few seconds on a GPU and '
+    + 'rather longer on a CPU</div>';
+  const body = {model: model, transcript: text};
+  for (const [id, key] of Object.entries(LFIELDS)) body[key] = $(id).value;
+  const res = await api('/api/llm/judge', body);
+  $('llmgo').disabled = false;
+  $('llmgo').textContent = 'Ask the model';
+  if (res.error) {
+    $('llmasker').textContent = res.error;
+    $('llmanswer').innerHTML = '';
+    return;
+  }
+  paintVerdict(res);
+}
+
+function paintVerdict(r) {
+  const cls = r.unreadable ? 'uncertain' : (r.scam ? 'scam' : 'legitimate');
+  const word = r.unreadable ? 'UNREADABLE' : (r.scam ? 'SCAM' : 'LEGITIMATE');
+  const notes = [];
+  if (r.over_context) notes.push('The prompt was about ' + r.prompt_tokens_estimated
+    + ' tokens and the window ' + r.num_ctx + '. Ollama drops the front of an '
+    + 'overlong prompt — the instructions with it — so this verdict may be an '
+    + 'answer to a headless transcript. Raise the context window and ask again.');
+  if (r.truncated) notes.push('The reply looks cut off. Raise the reply tokens.');
+  if (r.retried) notes.push('The first reply could not be read, so the model was '
+    + 'asked again for a single word. The reason below is from the first reply.');
+  if (r.unreadable) notes.push('Neither reply gave a verdict this page can read. '
+    + 'The benchmark would have scored this call Normal; it is shown as '
+    + 'unreadable here rather than counted as legitimate.');
+
+  $('llmanswer').innerHTML = `
+  <div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">Verdict</div>
+        <div class="big ${cls}">${word}</div>
+        <div class="hint">${esc(r.model)}</div>
+      </div>
+      <div style="flex:1; min-width:240px">
+        <div class="cap">Reason the model gave</div>
+        <div style="font-weight:600">${esc(r.reason)}</div>
+      </div>
+    </div>
+  </div>
+  ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
+  <div class="card">
+    <details class="adv" style="margin-bottom:0">
+      <summary>what the model actually replied</summary>
+      <div class="advbody"><div class="ev" style="font-style:normal; white-space:pre-wrap">${
+        esc(r.raw || '(nothing)')}</div></div>
+    </details>
+  </div>
+  <div class="card hint">${r.words} words · about ${r.prompt_tokens_estimated}
+    prompt tokens of ${r.num_ctx} · ${r.elapsed_ms} ms</div>`;
 }
 
 boot();
