@@ -393,6 +393,22 @@ is put first, so the page opens on the one the rest of the project uses.
 Ollama holds the model, not the server, so there is nothing to load or unload
 here.
 
+**Standing instructions.** The second box under the transcript is where a
+correction goes when the model gets one wrong — *"a bank asking for the last
+four digits of a card is normal here"* — and it is sent with every question
+from then on, fenced off from the transcript so the model reads it as a rule
+rather than as something the caller said. The fencing is the point: a
+transcript is full of people telling each other what to do, and a model that
+cannot tell an instruction from the call it is reading will start taking
+orders from the caller.
+
+It is not training. Nothing is stored and nothing is learned: the text goes
+into the prompt, every time, so the box *is* the model's whole memory and
+closing the page empties it. A verdict reached under instructions comes back
+flagged `guided` and is called out on the page, because at that point it is no
+longer the `llm_only` control — with the box empty the prompt is byte for byte
+what `combined_evaluate.py` sends, and with it filled it is not.
+
 Two things the page shows that the benchmark does not:
 
 - **The prompt size, before you ask.** Ollama drops the *front* of a prompt
@@ -631,6 +647,11 @@ transcript instead of at a dataset.
 python scripts/llm_judge.py --text "Hello, this is your bank's fraud team..."
 python scripts/llm_judge.py --csv datasets/scambait_bank_422.csv --idx 3
 python scripts/llm_judge.py --text "..." --model qwen2.5:14b --json
+
+# standing instructions, the same box the page has
+python scripts/llm_judge.py --text "..." \
+    --guidance "Confirming the last four digits of a card is normal here."
+python scripts/llm_judge.py --text "..." --guidance-file house_rules.txt
 
 python scripts/llm_judge.py models        # what ollama has pulled
 ```

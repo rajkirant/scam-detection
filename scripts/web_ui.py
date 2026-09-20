@@ -1090,11 +1090,19 @@ def llm_verdict(form):
         val = numeric(form, LLM_FIELDS, key)
         if val is not None:
             kw[LLM_FIELDS[key][0]] = val
+    # Standing instructions from the box under the transcript. Held nowhere:
+    # the page sends them with every question and the server forgets them the
+    # moment it has answered.
+    guidance = (form.get("guidance") or "").strip()
+    if len(guidance) > llm_judge.MAX_GUIDANCE:
+        raise ValueError("that is a lot of instructions - keep them under %d "
+                         "characters" % llm_judge.MAX_GUIDANCE)
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     try:
-        return llm_judge.judge(text, model=model, timeout=LLM_TIMEOUT, **kw)
+        return llm_judge.judge(text, model=model, timeout=LLM_TIMEOUT,
+                               guidance=guidance, **kw)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -2030,6 +2038,22 @@ shows up in Recent runs on the Benchmark page too.</pre>
       <div class="askrow">
         <span class="hint" id="llmsize"></span>
       </div>
+
+      <label for="llmguidance" style="margin-top:14px">Standing instructions</label>
+      <div class="hint" style="margin-top:0">When the model gets one wrong,
+        write the correction here and ask again — it is sent with every
+        question from now on, fenced off from the transcript so the model
+        reads it as a rule rather than as something the caller said. It is
+        <strong>not</strong> training: nothing is stored and nothing is
+        learned, so this box is the whole of the model's memory and closing
+        the page empties it.</div>
+      <textarea id="llmguidance" style="min-height:90px" placeholder="e.g. A bank asking the customer to confirm the last four digits of a card is normal here — only treat a full card number, PIN or one-time passcode as a scam signal."></textarea>
+      <div class="askrow">
+        <span class="hint" id="llmguidesize"></span>
+        <span style="flex:1"></span>
+        <button class="link" id="llmguideclear">clear them</button>
+      </div>
+
       <button class="go" id="llmgo">Ask the model</button>
       <div class="hint" id="llmasker" style="color:var(--bad)"></div>
     </div>
@@ -3232,23 +3256,35 @@ async function llmBoot() {
     `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
   $('llmload').onclick = llmLoadRow;
   $('llmgo').onclick = llmAsk;
-  $('llmtranscript').addEventListener('input', llmSize);
+  $('llmguideclear').onclick = () => { $('llmguidance').value = ''; llmSize(); };
+  for (const id of ['llmtranscript', 'llmguidance', 'llmctx'])
+    $(id).addEventListener('input', llmSize);
   llmSize();
 }
 
+const wordsIn = id => $(id).value.trim().split(/\s+/).filter(Boolean).length;
+
 // The context window is the failure people cannot see: over it, ollama cuts
 // the front of the prompt off and the instructions go with it. So the size is
-// on screen before the model is asked, not explained afterwards.
+// on screen before the model is asked, not explained afterwards. The standing
+// instructions count towards it too - they are part of every prompt.
+// The 50 and 81 are the prompt's own boilerplate - the question, the answer
+// format, and the fence the instructions go in - counted in llm_judge so the
+// number here is the same number the reply comes back with.
 function llmSize() {
-  const words = $('llmtranscript').value.trim().split(/\s+/).filter(Boolean).length;
-  const est = Math.round(words * 1.4) + 60;
+  const words = wordsIn('llmtranscript'), guide = wordsIn('llmguidance');
+  const est = Math.round((words + guide + (guide ? 81 : 50)) * 1.4) + 1;
   const ctx = parseInt($('llmctx').value, 10) || 0;
   const over = ctx && est > ctx;
   $('llmsize').innerHTML = words
-    ? `${words} words · about ${est} tokens${ctx ? ' of ' + ctx : ''}`
+    ? `${words} words${guide ? ' + ' + guide + ' of instructions' : ''}`
+      + ` · about ${est} tokens${ctx ? ' of ' + ctx : ''}`
       + (over ? ' — <strong style="color:var(--bad)">over the window, raise it'
               + ' or the instructions get cut off</strong>' : '')
     : '';
+  $('llmguidesize').textContent = guide
+    ? `${guide} words, sent with every question from now on`
+    : 'none — the model judges on the call alone';
 }
 
 async function llmLoadRow() {
@@ -3277,7 +3313,8 @@ async function llmAsk() {
   $('llmanswer').innerHTML = '<div class="card muted">' + esc(model)
     + ' is reading the call… a 14B model takes a few seconds on a GPU and '
     + 'rather longer on a CPU</div>';
-  const body = {model: model, transcript: text};
+  const body = {model: model, transcript: text,
+                guidance: $('llmguidance').value};
   for (const [id, key] of Object.entries(LFIELDS)) body[key] = $(id).value;
   const res = await api('/api/llm/judge', body);
   $('llmgo').disabled = false;
@@ -3294,6 +3331,9 @@ function paintVerdict(r) {
   const cls = r.unreadable ? 'uncertain' : (r.scam ? 'scam' : 'legitimate');
   const word = r.unreadable ? 'UNREADABLE' : (r.scam ? 'SCAM' : 'LEGITIMATE');
   const notes = [];
+  if (r.guided) notes.push('Judged under your standing instructions, so this is '
+    + 'not the <code>llm_only</code> control any more — it is the model doing '
+    + 'what you told it. Clear the box to get the unguided verdict back.');
   if (r.over_context) notes.push('The prompt was about ' + r.prompt_tokens_estimated
     + ' tokens and the window ' + r.num_ctx + '. Ollama drops the front of an '
     + 'overlong prompt — the instructions with it — so this verdict may be an '

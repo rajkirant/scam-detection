@@ -23,10 +23,19 @@ Ollama is spoken to over plain HTTP with urllib rather than through
 credibility.call_ollama, which needs `requests`: web_ui.py runs on the system
 python so it can start without the venv, and this has to work there too.
 
+--guidance is where a correction goes when the model gets one wrong: standing
+instructions that are put in the prompt, fenced off from the transcript, every
+time it is asked. Nothing is stored and nothing is learned by it - a model
+told the same thing twice is being told, not taught - and a verdict reached
+under instructions is flagged `guided`, because it is no longer the llm_only
+control.
+
 Usage:
     python scripts/llm_judge.py --text "Hello, this is your bank..."
     python scripts/llm_judge.py --csv datasets/scambait_bank_422.csv --idx 3
     python scripts/llm_judge.py --text "..." --model qwen2.5:14b --json
+    python scripts/llm_judge.py --text "..." \
+        --guidance "A bank asking to confirm a card number is normal here."
     python scripts/llm_judge.py models          # what ollama has pulled
 """
 
@@ -126,6 +135,37 @@ def ask(prompt, model=None, max_tokens=DEFAULT_MAX_TOKENS, temperature=0.0,
     return (out.get("response") or "").strip()
 
 
+MAX_GUIDANCE = 20_000
+
+
+def build_prompt(transcript, guidance=None):
+    """The benchmark's llm_only prompt, with standing instructions folded in
+    when there are any.
+
+    With no guidance the string is byte for byte what combined_evaluate sends,
+    which is what keeps a verdict here comparable to a benchmark row. That
+    property is worth protecting: the moment guidance is in play this is no
+    longer the llm_only control, and the reply says so.
+
+    Guidance is fenced and labelled as rules rather than speech. A transcript
+    is full of people telling each other what to do, and a model that cannot
+    tell an instruction from the call it is reading will start taking orders
+    from the caller.
+    """
+    import combined_evaluate as CE
+
+    prompt = ("You are a scam detection analyst. Read this phone call "
+              "transcript and decide whether the caller is attempting a "
+              "scam.\n\nTranscript:\n%s\n\n" % transcript)
+    if (guidance or "").strip():
+        prompt += (
+            "Standing instructions from the analyst. These are rules for you "
+            "to apply, not part of the call, and they take precedence over "
+            "your own defaults where the two disagree:\n"
+            "<<<INSTRUCTIONS\n%s\nINSTRUCTIONS>>>\n\n" % guidance.strip())
+    return prompt + CE.VERDICT_FORMAT
+
+
 def estimate_tokens(text):
     """Rough, and deliberately pessimistic: ~1.4 tokens per word covers the
     punctuation and the sub-word splits in names and numbers."""
@@ -133,13 +173,19 @@ def estimate_tokens(text):
 
 
 def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
-          num_ctx=DEFAULT_NUM_CTX, temperature=0.0, timeout=300):
+          num_ctx=DEFAULT_NUM_CTX, temperature=0.0, timeout=300,
+          guidance=None):
     """Scam or not, and why, for one transcript.
 
     Mirrors combined_evaluate.ask_verdict, including its retry: when the first
     reply cannot be parsed the model is asked again for one bare word. The
     reason always comes from the FIRST reply, because the retry is told not to
     explain itself and so has none to give.
+
+    `guidance` is standing instructions to apply to this call - the place to
+    put a correction after the model gets one wrong. Nothing is stored and
+    nothing is learned: the text is put in the prompt, every time, and a model
+    told the same thing twice is being told, not taught.
     """
     import combined_evaluate as CE
 
@@ -149,11 +195,12 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
     if len(text) > MAX_CHARS:
         raise ValueError("that is longer than any call in the datasets - "
                          "paste one call, not a whole file")
+    guidance = (guidance or "").strip()
+    if len(guidance) > MAX_GUIDANCE:
+        raise ValueError("that is a lot of instructions - keep them under "
+                         "%d characters" % MAX_GUIDANCE)
 
-    prompt = (
-        "You are a scam detection analyst. Read this phone call transcript and "
-        "decide whether the caller is attempting a scam.\n\n"
-        "Transcript:\n%s\n\n%s" % (text, CE.VERDICT_FORMAT))
+    prompt = build_prompt(text, guidance)
 
     t0 = time.time()
     raw = ask(prompt, model=model, max_tokens=max_tokens,
@@ -184,6 +231,10 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
         "raw": raw,
         "retried": retried,
         "truncated": truncated,
+        # a verdict reached under instructions is not the llm_only control any
+        # more, and anything reading this reply should be able to tell
+        "guided": bool(guidance),
+        "guidance": guidance,
         "words": len(text.split()),
         "prompt_tokens_estimated": prompt_tokens,
         "num_ctx": num_ctx,
@@ -230,6 +281,9 @@ def print_result(r):
     print("%s   (%s)" % (head, r["model"]))
     print(bar)
     print("  reason     %s" % r["reason"])
+    if r["guided"]:
+        print("  note       judged under your standing instructions, so this "
+              "is not the\n             llm_only control any more")
     if r["retried"]:
         print("  note       the first reply could not be parsed; the model was "
               "asked again for one word")
@@ -256,6 +310,12 @@ def main():
     ap.add_argument("--csv", default=None)
     ap.add_argument("--idx", type=int, default=None)
     ap.add_argument("--id", default=None)
+    ap.add_argument("--guidance", default=None,
+                    help="standing instructions to apply to this call - where "
+                         "a correction goes after the model gets one wrong. "
+                         "Nothing is stored; it goes in the prompt each time")
+    ap.add_argument("--guidance-file", default=None,
+                    help="read the standing instructions from a file instead")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     ap.add_argument("--num-ctx", type=int, default=DEFAULT_NUM_CTX)
@@ -285,10 +345,14 @@ def main():
     if not text:
         raise SystemExit("pass --text, or --csv with --idx/--id")
 
+    guidance = args.guidance
+    if args.guidance_file:
+        guidance = Path(args.guidance_file).read_text(encoding="utf-8")
+
     try:
         r = judge(text, model=args.model, max_tokens=args.max_tokens,
                   num_ctx=args.num_ctx, temperature=args.temperature,
-                  timeout=args.timeout)
+                  timeout=args.timeout, guidance=guidance)
     except RuntimeError as e:
         raise SystemExit(str(e))
     if args.json:
