@@ -1575,6 +1575,11 @@ PAGE = r"""<!doctype html>
           color:var(--dim); }
   .pill.running { color:var(--accent); border-color:var(--accent); }
   .pill.failed  { color:var(--bad); border-color:var(--bad); }
+  /* the dataset's own label for a loaded row - the answer, before the model
+     has been asked. Same colours the verdict uses, so agreeing and
+     disagreeing read at a glance. */
+  .pill.truth-scam { color:var(--bad); border-color:var(--bad); font-weight:700; }
+  .pill.truth-legit { color:var(--accent); border-color:var(--accent); font-weight:700; }
   /* Capped so fifteen runs cannot push the run form below the fold - the
      whole point of moving the list up here. */
   .hist { font-size:13px; max-height:34vh; overflow-y:auto; }
@@ -2978,6 +2983,7 @@ async function mcqBoot() {
   $('trainstop').onclick = () => trainRun && api('/api/stop', {id: trainRun});
   $('askgo').onclick = ask;
   $('sampleload').onclick = loadSample;
+  forgetRowOnEdit('transcript', 'sampleinfo');
   $('sampleidx').onkeydown = e => { if (e.key === 'Enter') loadSample(); };
   $('unload').onclick = unloadModel;
   for (const b of $('mcqtabs').querySelectorAll('button'))
@@ -3149,6 +3155,23 @@ async function mpoll() {
 }
 
 // ----------------------------------------------------------- asking it
+// The dataset's own label for the row just loaded. It is the ground truth,
+// not a prediction, so it is worth showing before the model is asked - and
+// worth taking away the moment the text stops being that row.
+function truthPill(label) {
+  const v = String(label || '').trim().toLowerCase();
+  if (!v) return '';
+  const scam = ['scam', 'fraud', 'fraudulent', '1', 'true', 'yes'].includes(v);
+  return ` <span class="pill ${scam ? 'truth-scam' : 'truth-legit'}">`
+       + `labelled ${scam ? 'SCAM' : 'LEGITIMATE'}</span>`;
+}
+
+// Wires a transcript box so that editing it clears the row's label: once the
+// text is not that row any more, the label is about nothing.
+function forgetRowOnEdit(boxId, infoId) {
+  $(boxId).addEventListener('input', () => { $(infoId).innerHTML = ''; });
+}
+
 async function loadSample() {
   $('sampleinfo').textContent = 'loading…';
   const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('sampleds').value)}`
@@ -3156,9 +3179,8 @@ async function loadSample() {
   if (r.error) { $('sampleinfo').textContent = r.error; return; }
   $('transcript').value = r.text;
   $('sampleidx').value = r.idx;
-  $('sampleinfo').textContent = `row ${r.idx} of ${r.total}`
-    + (r.row_id ? ' · id ' + r.row_id : '')
-    + (r.label ? ' · labelled ' + r.label : '');
+  $('sampleinfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
 }
 
 async function ask() {
@@ -3302,6 +3324,7 @@ async function llmBoot() {
   $('llmds').innerHTML = cfg.datasets.map(d =>
     `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
   $('llmload').onclick = llmLoadRow;
+  forgetRowOnEdit('llmtranscript', 'llminfo');
   $('llmgo').onclick = llmAsk;
   $('llmguideclear').onclick = () => { $('llmguidance').value = ''; llmSize(); };
   for (const id of ['llmtranscript', 'llmguidance', 'llmctx'])
@@ -3347,9 +3370,8 @@ async function llmLoadRow() {
   if (r.error) { $('llminfo').textContent = r.error; return; }
   $('llmtranscript').value = r.text;
   $('llmidx').value = r.idx;
-  $('llminfo').textContent = `row ${r.idx} of ${r.total}`
-    + (r.row_id ? ' · id ' + r.row_id : '')
-    + (r.label ? ' · labelled ' + r.label : '');
+  $('llminfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
   llmSize();
 }
 
