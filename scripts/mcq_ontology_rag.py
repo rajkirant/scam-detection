@@ -147,7 +147,16 @@ def label_fidelity(original, labelled):
     return SequenceMatcher(None, a, b).ratio()
 
 
-def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=900, debug=False):
+# Labelling asks the model to write the whole transcript back out with
+# speaker tags, so its reply has to be at least as long as the transcript.
+# Above this it is not worth attempting: generating twenty thousand tokens to
+# relabel one call costs minutes, and the fidelity check would reject the
+# truncated result anyway.
+LABEL_MAX_REPLY = 6000
+
+
+def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=None,
+                debug=False):
     """Return (text_for_questions, was_labelled, reason).
 
     Strictly improve-or-do-nothing: if the model's output does not match the
@@ -159,7 +168,24 @@ def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=900, debug=Fal
     ("Here is the labelled transcript:") before the real content. That
     preamble is stripped before the fidelity check, so it cannot sink an
     otherwise faithful labelling.
+
+    The reply budget is sized to the transcript rather than fixed. It used to
+    be 900 tokens, which is fine for a two-minute call and hopeless for the
+    long ones in scamai_hard_subset.csv: the model would be cut off partway
+    through, the fidelity check would reject what came back, and the call
+    would fall back to unlabelled - having spent a full-length request to
+    learn nothing. Now a transcript too long to reproduce is skipped before
+    the request is made.
     """
+    import ollama_ctx
+
+    if max_tokens is None:
+        # +15% for the Agent:/Caller: tags and the estimate running low
+        max_tokens = int(ollama_ctx.estimate_tokens(transcript) * 1.15) + 200
+    if max_tokens > LABEL_MAX_REPLY:
+        return (transcript, False,
+                "too long to relabel (~%d reply tokens needed, limit %d)"
+                % (max_tokens, LABEL_MAX_REPLY))
     try:
         raw = ask_fn(LABEL_PROMPT.format(text=transcript),
                      max_tokens=max_tokens, where="mcq label_turns")

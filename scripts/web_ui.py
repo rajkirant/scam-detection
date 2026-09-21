@@ -374,6 +374,8 @@ def start_run(form):
     baselines = [b[0] for b in BASELINES if b[0] in set(picked)]
     if not LIMIT_RE.match(limit):
         raise ValueError("limit must be a whole number, id:<value>, or idx:<n>")
+    num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
+                      "num_ctx")
     if any(known[b][3] for b in baselines):
         if model not in MODELS:
             raise ValueError("pick a model")
@@ -404,6 +406,13 @@ def start_run(form):
     env = dict(os.environ)
     env["RUN_ALL_DETACHED"] = "1"       # never ask the tmux question
     env["TERM"] = "dumb"
+    # The context window the LLM systems size their prompts against. It is an
+    # environment variable rather than a run_all.sh flag because every script
+    # under it reads it the same way; without this the page could only ever
+    # run at whatever the server itself was started with, which on a dataset
+    # of long calls is the difference between a verdict and a guess.
+    if num_ctx:
+        env["SCAM_NUM_CTX"] = str(num_ctx)
 
     with open(log, "wb") as out:
         out.write(("$ ./run_all.sh " + " ".join(shlex.quote(f) for f in flags)
@@ -1676,6 +1685,15 @@ PAGE = r"""<!doctype html>
       <div id="modelbox">
         <label for="model">Model</label>
         <select id="model"></select>
+        <label for="numctx">Context window</label>
+        <input type="text" id="numctx" placeholder="8192" spellcheck="false">
+        <div class="hint">How many tokens the model may read. Ollama cuts an
+          overlong prompt from the <em>front</em> — instructions first — and
+          keeps only about half the window, so a call that does not fit comes
+          back as a confident verdict on its last few minutes. Leave it blank
+          for 8192. <code>scamai_hard_subset.csv</code> needs 16384 to cover
+          97% of its calls and 32768 for all but one; both cost VRAM on top of
+          the model.</div>
       </div>
 
       <button class="go" id="go">Run</button>
@@ -2290,6 +2308,7 @@ async function go() {
     baselines: chosen(),
     limit: limit,
     model: $('model').value,
+    num_ctx: $('numctx').value,
   });
   onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }

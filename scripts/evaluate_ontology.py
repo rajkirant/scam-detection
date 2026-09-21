@@ -16,7 +16,13 @@ Reference numbers to compare against (from earlier verified runs, KB-only vector
 The interesting question: does ontology matching + legit-contrast cut the
 bank false positives below 113?
 """
-import argparse, csv, os, random, time
+import argparse, csv, os, random, sys, time
+
+# Transcripts run to a quarter of a million characters in
+# datasets/scamai_hard_subset.csv, and the csv module refuses any field
+# over 131,072 by default - with an error that names no row and no file.
+csv.field_size_limit(sys.maxsize)
+
 from ontology_rag import OntologyRAG, DEFAULT_ONTOLOGY
 
 def main():

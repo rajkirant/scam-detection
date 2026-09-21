@@ -23,6 +23,11 @@ import sys
 import time
 from pathlib import Path
 
+# Transcripts run to a quarter of a million characters in
+# datasets/scamai_hard_subset.csv, and the csv module refuses any field
+# over 131,072 by default - with an error that names no row and no file.
+csv.field_size_limit(sys.maxsize)
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from mcq_ontology_rag import MCQOntologyDetector, DEFAULT_ONTOLOGY
