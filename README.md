@@ -711,14 +711,38 @@ python scripts/llm_judge.py --csv datasets/scamai_hard_subset.csv --idx 0 \
 
 The last line of each run is the evidence, because Ollama reports
 `prompt_eval_count` — how many prompt tokens it actually read, which is the
-only number here that is not an estimate:
+only number here that is not an estimate. Measured on `qwen2.5:14b` against
+row 0 of the hard subset (10,873 words, ~15,293 tokens):
 
 ```
-  4500 words, ~6371 prompt tokens estimated, 6371 read by ollama, window 8192
-  4500 words, ~6371 prompt tokens estimated, 2048 read by ollama, window 2048
-                                             ^^^^ 4,323 tokens thrown away,
-                                                  starting with the question
+window  8192 → ollama read  4098  (27%)     estimate ~15,293
+window  2048 → ollama read  1026  ( 7%)     estimate ~15,293
+window 32768 → ollama read 15293  (100%)    nothing lost
 ```
+
+### Missing the window costs half of it, not the overflow
+
+Look at those first two numbers: `4098` is `8192/2 + 2`, and `1026` is
+`2048/2 + 2`. When a prompt overflows, Ollama does not trim it to fit — it
+keeps **about half the window** and discards the rest, from the front. A
+window merely *close* to the prompt size is therefore no use at all; it has to
+exceed it.
+
+What that looks like in practice, on row 0 of `scamai_hard_subset.csv`, which
+is labelled **scam**:
+
+```
+kept (the last 27%):  "No bother, love. We got there in the end, didn't we?
+                       ... You have a good day now. ... Bye bye."
+discarded (the front): "responding to the health insurance application
+                       ... submitted for mister [NAME] ..."
+```
+
+At both 8192 and 2048 the model answered **Normal** — "a legitimate benefits
+coordinator helping to finalize the application" — which is a fair reading of
+the goodbyes it was given, and a false negative on the call. That is the
+failure this whole section exists to make impossible to miss: fluent,
+confident, and wrong, with no error anywhere.
 
 A third run is the one that matters for the thesis: the same rows through the
 benchmark at both windows. If the verdicts move, every earlier number on that
@@ -744,6 +768,13 @@ The single longest call in that set is ~56,500 tokens and fits no `qwen2.5`
 window at all. Those calls will warn on every run, which is the point — they
 need a decision (drop them, split them, or summarise them first), not a
 silent truncation.
+
+Because a prompt that misses the window loses half of it rather than the
+overflow, "fits" above means *strictly* fits — there is no partial credit. The
+p90 of that set is ~11,400 tokens, so 16384 is the smallest window that covers
+most of it, and `qwen2.5`'s 32768 covers all but one call. Both cost VRAM on
+top of the ~9.5 GB the weights already take on an 11.4 GB card, so check
+`nvidia-smi` and expect to unload between a long LLM run and a BERT run.
 
 Every Ollama client in the project now routes its window through
 `scripts/ollama_ctx.py`, which sizes it to the prompt, floors it at Ollama's
