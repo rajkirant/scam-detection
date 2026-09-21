@@ -326,22 +326,100 @@ Two numbers sit side by side at the top and are deliberately never combined:
 | **MCQ score** | the sum of the option values chosen below, banded by the cut-offs in `mcq_ontology.json` |
 | **prob_scam** | the binary classification head — the only thing training directly fits |
 
-The questions themselves have no labels to train on. The fine-tuned encoder is
-used as an embedding model instead: the transcript is cut into overlapping
-windows, each window and each option text is mean-pooled into a vector, and an
-option scores the best cosine similarity it reaches against any window. Scores
-are centred per question and softmaxed into the confidences shown; when nothing
-clears the threshold the question abstains to its "not stated" option rather
-than inventing an answer. So what training changes is the space the options are
-matched in — which makes "train two checkpoints and ask the same transcript
-twice" the comparison the page is for. The **How it answers** tab says all of
-this on the page, including where the method is weak (similarity reads subject
-matter, not negation).
+The questions themselves have no labels to train on, so they are answered by
+similarity: the transcript is cut into overlapping windows, each window and
+each option text is mean-pooled into a vector, and an option scores the best
+cosine similarity it reaches against any window.
+
+Four things about that matching decide whether the answers mean anything, and
+each of them was, at one point, the reason they did not:
+
+- **The encoder.** Options are matched in `all-MiniLM-L6-v2` — already this
+  project's embedding model — not in the fine-tuned checkpoint's own hidden
+  states. A binary scam/legitimate objective never asks an encoder to tell "a
+  courier" from "a customs agency", which is the distinction every question
+  here turns on. Matched in the checkpoint, every option of a question came
+  back within a few hundredths of every other and the winner was decided by
+  noise. `--encoder self` puts it back for comparison.
+- **The key.** An option is embedded as its own text. Prefixing the question
+  prompt, which is identical across that question's options, made the strings
+  being compared about 90% the same characters.
+- **Centring.** The mean direction of the whole option corpus is subtracted
+  from both sides before the cosine. BERT sentence vectors sit in a narrow
+  cone, so two unrelated phrases still score .85 against each other; removing
+  that shared direction is what gives the options room to differ.
+  `--no-center` disables it.
+- **The gate.** A question is answered only when its best option is clear of
+  the runner-up by `--min-margin` in raw cosine. A softmax over four
+  near-identical scores still has to hand its probability to somebody, so
+  confidence alone cannot tell a real answer from a coin flip. Below the
+  margin the question abstains and contributes **nothing** — not knowing
+  whether the caller asked for anything is not evidence that they asked for
+  nothing.
+
+Transcripts are repaired first: the tone tags (`[curious]`, `[long pause]`)
+come out, redacted entities keep their word (`[CARD]` → "card number"), and
+the apostrophes ASR dropped go back in, because "i m" and "don t" are not
+words any encoder was trained on. `--raw` disables it. Note that the tone tags
+also reach `bert_baseline.py`, which is worth knowing about: in
+`scamai_full_1000.csv`, `[satisfied]` appears on 54.8% of legitimate calls and
+31.0% of scams, so a classifier reading them can score off the labelling
+convention rather than off the call.
+
+What training changes is therefore `prob_scam`, and the MCQ answers are
+zero-shot. The **How it answers** tab says this on the page, including where
+the method is weak (similarity reads subject matter, not negation).
 
 Answering happens on the CPU unless *answer on the GPU* is ticked, so the page
 stays usable while a benchmark run has the VRAM. The checkpoint is held in
 memory between questions and let go after ten idle minutes, or when you press
 *unload it*.
+
+### LLM judge page
+
+The third tab, and the simplest thing in the project. Paste a transcript (or
+load a row from a dataset with the picker at the top), press **Ask the
+model**, and the local LLM says whether it is a scam and gives its reason. No
+retrieval, no ontology, no fine-tuned anything.
+
+It is the `llm_only` control from the Benchmark page asked one call at a time,
+and it shares the benchmark's prompt and verdict parser — so the answer on
+this page is the answer that would have been recorded there for that call.
+`scripts/llm_judge.py` does the work
+([section C.10](#10-ask-the-llm-about-one-call)).
+
+The model menu lists whatever `ollama list` would: the model in `SCAM_MODEL`
+is put first, so the page opens on the one the rest of the project uses.
+Ollama holds the model, not the server, so there is nothing to load or unload
+here.
+
+**Standing instructions.** The second box under the transcript is where a
+correction goes when the model gets one wrong — *"a bank asking for the last
+four digits of a card is normal here"* — and it is sent with every question
+from then on, fenced off from the transcript so the model reads it as a rule
+rather than as something the caller said. The fencing is the point: a
+transcript is full of people telling each other what to do, and a model that
+cannot tell an instruction from the call it is reading will start taking
+orders from the caller.
+
+It is not training. Nothing is stored and nothing is learned: the text goes
+into the prompt, every time, so the box *is* the model's whole memory and
+closing the page empties it. A verdict reached under instructions comes back
+flagged `guided` and is called out on the page, because at that point it is no
+longer the `llm_only` control — with the box empty the prompt is byte for byte
+what `combined_evaluate.py` sends, and with it filled it is not.
+
+Two things the page shows that the benchmark does not:
+
+- **The prompt size, before you ask.** Ollama drops the *front* of a prompt
+  that overflows the context window — the instructions go first — and what
+  comes back then reads like a bad model rather than a bad setting. The word
+  and token count sits under the box and turns red when a transcript is over
+  the window.
+- **Unreadable answers, as unreadable.** When neither the first reply nor the
+  one-word retry can be parsed, the benchmark has to score something and
+  settles for Normal. Here it says so, because on a single call "Normal"
+  should not sometimes mean "the model did not answer".
 
 ---
 
@@ -528,9 +606,23 @@ python scripts/bert_mcq.py answer --name zhi-bert --text "Hello, this is..."
 python scripts/bert_mcq.py answer --name zhi-bert \
     --csv datasets/zhi_english_646.csv --idx 3 --json
 
+# the numbers behind every pick, when the answers look arbitrary
+python scripts/bert_mcq.py diagnose --name zhi-bert \
+    --csv datasets/zhi_english_646.csv --idx 3 --control
+
 python scripts/bert_mcq.py models              # what is in models/
 python scripts/bert_mcq.py delete --name zhi-bert
 ```
+
+`diagnose` prints the raw cosine behind every option, the margin between the
+best two, and the spread across each question — read those before trusting a
+verdict. `--control` answers a word-shuffled copy of the same call as well.
+Shuffling keeps every word and destroys every phrase, so any answer that
+survives it was reading the vocabulary rather than the call; a low agreement
+count is the good result. The knobs worth moving are `--min-margin` (raise it
+until only the questions the call really answers come through), `--encoder`
+(`self` matches in the checkpoint, which is the old behaviour) and
+`--no-center`.
 
 `answer` prints the branch it routed to, the option it chose for each question
 with a confidence, the summed score and the verdict, and `prob_scam` from the
@@ -544,6 +636,39 @@ benchmark for VRAM. `--branch <id>` forces a branch instead of routing to one,
 `--min-confidence` control how options are matched. There is also a `serve`
 mode — one JSON request per line on stdin — which is how the web UI keeps a
 checkpoint loaded between questions.
+
+### 10. Ask the LLM about one call
+
+The command line behind the **LLM judge** page
+([section A](#llm-judge-page)): the `llm_only` baseline pointed at a single
+transcript instead of at a dataset.
+
+```bash
+python scripts/llm_judge.py --text "Hello, this is your bank's fraud team..."
+python scripts/llm_judge.py --csv datasets/scambait_bank_422.csv --idx 3
+python scripts/llm_judge.py --text "..." --model qwen2.5:14b --json
+
+# standing instructions, the same box the page has
+python scripts/llm_judge.py --text "..." \
+    --guidance "Confirming the last four digits of a card is normal here."
+python scripts/llm_judge.py --text "..." --guidance-file house_rules.txt
+
+python scripts/llm_judge.py models        # what ollama has pulled
+```
+
+It prints the verdict, the model's own reason, and a warning when the prompt
+is bigger than `--num-ctx` — Ollama truncates an overlong prompt from the
+front, so the instructions are the first thing lost and the reply that comes
+back is answering a headless transcript. `--max-tokens` raises the reply
+budget when an answer comes back cut off. Unlike the benchmark, a reply that
+cannot be parsed is reported as unreadable rather than scored Normal.
+
+The prompt and the verdict parser are imported from `combined_evaluate.py`
+rather than copied, so a verdict here is the verdict the benchmark would have
+recorded for that call. It talks to Ollama over plain HTTP with nothing but
+the standard library, so it runs outside the venv as well as in it.
+`OLLAMA_URL` (or `OLLAMA_HOST`) points it at another machine and `SCAM_MODEL`
+sets the default model.
 
 ---
 
@@ -570,7 +695,7 @@ the row count — the launcher parses them as CSV instead.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `SCAM_MODEL` | `llama3.1:8b` | Ollama model the LLM systems call. `run_all.sh -m` sets it for you. |
-| `OLLAMA_URL` | `http://localhost:11434` | where the web UI probes for Ollama |
+| `OLLAMA_URL` | `http://localhost:11434` | where the web UI probes for Ollama, and where the LLM judge page sends its transcripts (`OLLAMA_HOST` is read as a fallback, so ollama's own variable works too) |
 | `TAVILY_API_KEY` | — | read from `.env`; only `harvest_patterns.py` needs it |
 | `WEBRAG_MIN_SIMILARITY` | `0.35` | cosine floor before the LLM relevance gate |
 | `WEBRAG_LLM_GATE` | `1` | `0` ablates the LLM relevance check |
