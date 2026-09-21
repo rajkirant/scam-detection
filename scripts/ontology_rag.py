@@ -90,10 +90,21 @@ Answer in JSON: {{"verdict": "Fraud" or "Normal", "confidence": 0-100,
 "reason": "one sentence"}} JSON only."""
 
 
-def call_ollama(prompt, timeout=180):
+def call_ollama(prompt, timeout=180, max_tokens=None, where="ontology_rag"):
+    """The window is sized to the prompt rather than left to Ollama's 2048
+    default, which truncates from the FRONT without erroring. This file also
+    caps the transcript at 6000 characters in its own prompts, which kept it
+    accidentally near the old window; the cap stays, but the window is now
+    explicit rather than a coincidence. See ollama_ctx.py."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ollama_ctx
+
+    num_ctx = ollama_ctx.fit_num_ctx(prompt, max_tokens or 600, where=where)
     r = requests.post(OLLAMA_URL, json={
         "model": MODEL, "prompt": prompt, "stream": False,
-        "options": {"temperature": 0}
+        "options": {"temperature": 0, "num_ctx": int(num_ctx)}
     }, timeout=timeout)
     r.raise_for_status()
     return r.json().get("response", "")

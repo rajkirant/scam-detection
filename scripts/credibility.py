@@ -8,7 +8,10 @@ Imported by both harvest_patterns.py (KB building) and webrag_system.py
 import json, os
 import math
 import hashlib
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 
@@ -166,18 +169,25 @@ RECENCY_HALFLIFE_DAYS = 45.0
 W_TRUST, W_RECENCY, W_CORROB = 0.5, 0.3, 0.2
 
 
-def call_ollama(prompt, max_tokens=300, temperature=0.0, num_ctx=None):
+def call_ollama(prompt, max_tokens=300, temperature=0.0, num_ctx=None,
+                where="call_ollama"):
     """Call the local model.
 
-    num_ctx is opt-in and left unset by default so every existing caller
-    keeps whatever context window Ollama defaults to for the model. Pass it
-    when a prompt is long: Ollama silently truncates from the FRONT once the
-    prompt exceeds the window, which drops the instructions and leaves the
-    model answering an unlabelled wall of text.
+    num_ctx used to be opt-in, which meant every caller that did not think
+    about it got Ollama's 2048-token default and had its long prompts cut off
+    at the FRONT - instructions first - with no error and no warning. It is
+    now sized to the prompt by ollama_ctx.fit_num_ctx unless the caller names
+    a window itself, and an overflow is always reported. See ollama_ctx.py for
+    which datasets this actually bit.
     """
+    import ollama_ctx
+
     options = {"temperature": temperature, "num_predict": max_tokens}
     if num_ctx:
-        options["num_ctx"] = int(num_ctx)
+        ollama_ctx.check_num_ctx(prompt, num_ctx, max_tokens, where)
+    else:
+        num_ctx = ollama_ctx.fit_num_ctx(prompt, max_tokens, where=where)
+    options["num_ctx"] = int(num_ctx)
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,

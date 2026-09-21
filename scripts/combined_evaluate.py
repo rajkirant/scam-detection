@@ -293,7 +293,7 @@ def ask_verdict(prompt, stats, max_tokens=300, debug=False, idx=None):
     """
     import credibility as C
 
-    raw = C.call_ollama(prompt, max_tokens=max_tokens)
+    raw = C.call_ollama(prompt, max_tokens=max_tokens, where=stats.name)
     truncated = looks_truncated(raw)
     verdict = parse_verdict(raw)
     # A model that answers with the bare word and nothing else leaves nothing
@@ -309,7 +309,8 @@ def ask_verdict(prompt, stats, max_tokens=300, debug=False, idx=None):
 
     # retry, forcing a one-word answer
     retry_prompt = prompt + "\n\nReply with exactly one word, either Fraud or Normal. No explanation."
-    raw2 = C.call_ollama(retry_prompt, max_tokens=10)
+    raw2 = C.call_ollama(retry_prompt, max_tokens=10,
+                         where=stats.name + " retry")
     verdict2 = parse_verdict(raw2)
     if verdict2 is not None:
         stats.record("retried", raw, truncated)
@@ -1251,6 +1252,12 @@ def main():
     print("=" * 74)
     for k in results:
         show(k, metrics(results[k]))
+    # Any prompt that did not fit its context window, named by the system that
+    # sent it. Printed last because it invalidates the table above it: Ollama
+    # truncates from the front, so those rows are verdicts on a transcript
+    # whose instructions were cut off.
+    import ollama_ctx
+    ollama_ctx.report(sys.stdout)
     _save(results, data, reasons, raw_log, args.debug)
 
 

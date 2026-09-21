@@ -3268,12 +3268,18 @@ const wordsIn = id => $(id).value.trim().split(/\s+/).filter(Boolean).length;
 // the front of the prompt off and the instructions go with it. So the size is
 // on screen before the model is asked, not explained afterwards. The standing
 // instructions count towards it too - they are part of every prompt.
-// The 50 and 81 are the prompt's own boilerplate - the question, the answer
-// format, and the fence the instructions go in - counted in llm_judge so the
-// number here is the same number the reply comes back with.
+// Mirrors ollama_ctx.estimate_tokens: the larger of 1.4 per word and one per
+// four characters, since these transcripts are full of short words, digits
+// and names that split into several tokens each. The 50 and 81 are the
+// prompt's own boilerplate - the question, the answer format, and the fence
+// the instructions go in - so the number here is the number the reply comes
+// back with.
 function llmSize() {
   const words = wordsIn('llmtranscript'), guide = wordsIn('llmguidance');
-  const est = Math.round((words + guide + (guide ? 81 : 50)) * 1.4) + 1;
+  const chars = $('llmtranscript').value.length + $('llmguidance').value.length;
+  const boiler = guide ? 81 : 50;
+  const est = Math.max(Math.floor((words + guide + boiler) * 1.4),
+                       Math.floor((chars + boiler * 6) / 4)) + 1;
   const ctx = parseInt($('llmctx').value, 10) || 0;
   const over = ctx && est > ctx;
   $('llmsize').innerHTML = words

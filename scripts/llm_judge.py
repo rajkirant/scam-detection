@@ -167,9 +167,10 @@ def build_prompt(transcript, guidance=None):
 
 
 def estimate_tokens(text):
-    """Rough, and deliberately pessimistic: ~1.4 tokens per word covers the
-    punctuation and the sub-word splits in names and numbers."""
-    return int(len((text or "").split()) * 1.4) + 1
+    """Shared with every other Ollama client in the project, so the number the
+    page shows is the number the benchmark sizes its windows by."""
+    import ollama_ctx
+    return ollama_ctx.estimate_tokens(text)
 
 
 def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
