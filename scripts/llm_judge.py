@@ -263,7 +263,11 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
         # a window merely close to the prompt size is not enough: missing by
         # one token costs half the window, not one token.
         "prompt_tokens_read": read,
-        "prompt_kept_pct": (round(100.0 * read / prompt_tokens, 1)
+        # Capped at 100: the estimate runs a few percent low against a real
+        # tokenizer (15,933 read against 15,293 estimated, on the call this
+        # was calibrated on), and "kept 104%" reads like a bug rather than
+        # like a heuristic being a heuristic.
+        "prompt_kept_pct": (min(100.0, round(100.0 * read / prompt_tokens, 1))
                             if read and prompt_tokens else None),
         # Certain when the prompt could not have fitted. A prompt that did fit
         # can also read short, which is a cached prefix rather than a loss.

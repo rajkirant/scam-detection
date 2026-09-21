@@ -39,6 +39,17 @@ FLOOR = 2048
 STEP = 1024
 DEFAULT_CAP = max(FLOOR, int(os.environ.get("SCAM_NUM_CTX", "8192")))
 
+# Headroom on the estimate before a window is sized from it.
+#
+# estimate_tokens is a heuristic and it runs low. Measured on row 0 of
+# scamai_hard_subset.csv against qwen2.5:14b: estimated 15,293, actually read
+# 15,933, so the guess was 4.2% under. Rounding up to STEP does not reliably
+# cover that - a prompt estimated at 7,800 rounds to an 8,192 window and then
+# really needs 8,427 - and the cost of being wrong is not the overflow, it is
+# half the window (see _warn_overflow). So the sizing pays 15% up front, which
+# is cheap, rather than risk losing half the call, which is not.
+SAFETY = 1.15
+
 # where -> [times it overflowed, worst prompt seen]
 _overflows = {}
 
@@ -67,7 +78,7 @@ def fit_num_ctx(prompt, reply_tokens=300, cap=None, where=""):
     and not know.
     """
     cap = int(cap or DEFAULT_CAP)
-    needed = estimate_tokens(prompt) + int(reply_tokens or 0)
+    needed = int(estimate_tokens(prompt) * SAFETY) + int(reply_tokens or 0)
     want = min(cap, max(FLOOR, -(-needed // STEP) * STEP))
     if needed > cap:
         _warn_overflow(where or "an ollama call", needed, cap)
@@ -76,7 +87,7 @@ def fit_num_ctx(prompt, reply_tokens=300, cap=None, where=""):
 
 def check_num_ctx(prompt, num_ctx, reply_tokens=300, where=""):
     """Same warning for a caller that has already decided its own window."""
-    needed = estimate_tokens(prompt) + int(reply_tokens or 0)
+    needed = int(estimate_tokens(prompt) * SAFETY) + int(reply_tokens or 0)
     if num_ctx and needed > int(num_ctx):
         _warn_overflow(where or "an ollama call", needed, int(num_ctx))
     return num_ctx
