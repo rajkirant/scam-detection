@@ -73,7 +73,7 @@ BASELINES = [
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
-    ("mcq",      "MCQ ontology",          "mcq_ontology.json, 2 calls per transcript", True),
+    ("mcq",      "BERT ontology",          "mcq_ontology.json, 2 calls per transcript", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
 MODELS = ["qwen2.5:14b", "llama3.1:8b"]
@@ -896,6 +896,7 @@ class Answerer:
     def __init__(self, name, opts, script=None, log="worker.log"):
         self.name, self.opts = name, opts
         self.script = str(script or BERT_SCRIPT)
+        self.log = log
         self.lock = threading.Lock()
         self.last = time.time()
         self.lines = queue.Queue()
@@ -931,10 +932,10 @@ class Answerer:
             line = self.lines.get(timeout=timeout)
         except queue.Empty:
             raise ValueError("the answerer has not replied in %ds - see "
-                             "results/logs/web/mcq_worker.log" % timeout)
+                             "results/logs/web/%s" % (timeout, self.log))
         if not line.strip():
             raise ValueError("the answerer stopped - see "
-                             "results/logs/web/mcq_worker.log")
+                             "results/logs/web/" + self.log)
         try:
             return json.loads(line)
         except ValueError:
@@ -1469,6 +1470,9 @@ def start_length_train_run(form):
 # over plain HTTP, so this page works from the system python like the rest of
 # the server - no venv, no subprocess, nothing to keep alive between clicks.
 import llm_judge
+# Also standard library only, and for the same reason: it is the fitting side
+# of the same page, and this server starts without the venv.
+import llm_fit
 
 # (kwarg, cast, low, high, default) - the same shape numeric() reads for the
 # other two pages.
@@ -1477,6 +1481,24 @@ LLM_FIELDS = {
     "num_ctx":     ("num_ctx", int, 512, 131072, llm_judge.DEFAULT_NUM_CTX),
     "temperature": ("temperature", float, 0.0, 2.0, 0.0),
 }
+# The fitting side of the LLM page. Nothing here fine-tunes anything - the
+# weights Ollama is holding do not move and cannot be moved from here. What is
+# fitted is the prompt: worked examples drawn from a dataset, a rubric the
+# model writes from them, and the standing instructions box made durable. The
+# page says so in those words, because "trained" next to a page that really
+# does train a BERT would be a lie.
+#
+# The one thing that makes it worth doing rather than guessing is that fitting
+# scores the holdout twice, fitted and bare, so the run reports what the
+# prompt bought rather than just an accuracy.
+LLM_FIT_FIELDS = {
+    "shots":         ("--shots", int, 0, llm_fit.MAX_SHOTS, 4),
+    "shot_words":    ("--shot-words", int, 20, llm_fit.MAX_SHOT_WORDS, 120),
+    "holdout_calls": ("--holdout-calls", int, 0, 400, 20),
+    "seed":          ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":         ("--limit", int, 0, 100000, 0),
+}
+
 LLM_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]{0,120}$")
 LLM_TIMEOUT = 600
 # One generation at a time. Ollama will queue a second, but a 14B model is
@@ -1492,6 +1514,8 @@ def llm_config():
         "host": llm_judge.OLLAMA_HOST,
         "default_model": llm_judge.DEFAULT_MODEL,
         "defaults": {k: v[4] for k, v in LLM_FIELDS.items()},
+        "fit_defaults": {k: v[4] for k, v in LLM_FIT_FIELDS.items()},
+        "profiles": llm_fit.list_models(),
         "models": [],
     }
     # ollama being down is a normal state for this page to be in - the box may
@@ -1523,12 +1547,23 @@ def llm_verdict(form):
     if len(guidance) > llm_judge.MAX_GUIDANCE:
         raise ValueError("that is a lot of instructions - keep them under %d "
                          "characters" % llm_judge.MAX_GUIDANCE)
+    # A fitted prompt, if one is picked. "" means the bare llm_only control,
+    # which is the page's default and the only setting whose answer is
+    # comparable with a benchmark row.
+    profile = None
+    pname = str(form.get("profile") or "").strip()
+    if pname:
+        if not BERT_NAME_RE.match(pname):
+            raise ValueError("bad profile name")
+        if not (MODELS_DIR / pname / llm_fit.PROFILE_FILE).exists():
+            raise ValueError("models/%s is not a fitted prompt" % pname)
+        profile = llm_fit.load_profile(pname)
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     try:
         return llm_judge.judge(text, model=model, timeout=LLM_TIMEOUT,
-                               guidance=guidance, **kw)
+                               guidance=guidance, profile=profile, **kw)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -1718,6 +1753,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/bow/models":
                 return self._send(200, {"models": bow_classify.list_models(),
                                         "worker": BOW_SLOT.state()})
+            if u.path == "/api/llm/profiles":
+                return self._send(200, {"profiles": llm_fit.list_models()})
             if u.path == "/api/length/config":
                 return self._send(200, length_config())
             if u.path == "/api/length/models":
@@ -1806,11 +1843,128 @@ class Handler(BaseHTTPRequestHandler):
             # ---- the LLM judge page
             if u.path == "/api/llm/judge":
                 return self._send(200, llm_verdict(form))
+            if u.path == "/api/llm/fit":
+                meta = start_llm_fit_run(form)
+                sys.stderr.write("started %s  fit prompt %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/llm/delete_profile":
+                out = remove_llm_profile(form.get("name", ""))
+                sys.stderr.write("deleted fitted prompt %s\n" % out["id"])
+                return self._send(200, out)
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
         except Exception as e:
             return self._send(500, {"error": str(e)})
+
+
+def remove_llm_profile(name):
+    name = (name or "").strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("bad profile name")
+    d = MODELS_DIR / name
+    if not (d / llm_fit.PROFILE_FILE).exists():
+        raise ValueError("no such fitted prompt: %s" % name)
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_llm_fit_run(form):
+    """Fit a prompt. Detached and logged like every other run.
+
+    This one is not quick: it scores the holdout twice, so it is two LLM calls
+    per held-out call plus one for the rubric, and on a 14B model that is
+    minutes rather than seconds. It refuses to start alongside another run for
+    the same reason a BERT training run does - it wants the model Ollama is
+    holding, and a benchmark running at the same time wants the same one.
+    """
+    name = str(form.get("name", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("a name is letters, digits, dot, dash or underscore")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    model = str(form.get("model") or llm_judge.DEFAULT_MODEL).strip()
+    if not LLM_MODEL_RE.match(model):
+        raise ValueError("%r is not a name ollama would accept" % model[:60])
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick replace" % name)
+
+    running = [r for r in all_runs() if r["status"] == "running"]
+    if running:
+        raise ValueError("a run is already going (%s). Stop it first - this "
+                         "wants the model ollama is holding, and so does "
+                         "that." % running[0]["id"])
+
+    flags = ["fit", "--csv", ds, "--name", name, "--model", model]
+    for key, (flag, _c, _lo, _hi, _d) in LLM_FIT_FIELDS.items():
+        val = numeric(form, LLM_FIT_FIELDS, key)
+        if val is None or (key == "limit" and not val):
+            continue
+        flags += [flag, str(val)]
+    if form.get("rubric"):
+        flags.append("--rubric")
+    if overwrite:
+        flags.append("--overwrite")
+
+    num_ctx = numeric(form, LLM_FIELDS, "num_ctx")
+    if num_ctx:
+        flags += ["--num-ctx", str(num_ctx)]
+
+    # The standing instructions go through a file rather than the command
+    # line: they are free text a person typed, they can run to pages, and a
+    # command line is not where either of those belongs.
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_llmfit_" + name
+    guidance = (form.get("guidance") or "").strip()
+    if len(guidance) > llm_judge.MAX_GUIDANCE:
+        raise ValueError("that is a lot of instructions - keep them under %d "
+                         "characters" % llm_judge.MAX_GUIDANCE)
+    if guidance:
+        gfile = run_path(run_id, "guidance.txt")
+        with open(gfile, "w", encoding="utf-8") as f:
+            f.write(guidance)
+        flags += ["--guidance-file", str(gfile)]
+
+    log = run_path(run_id, "log")
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "fit() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> fit\\n"',
+        '  "$PY" -u scripts/llm_fit.py ' + quoted
+        + ' || { printf "  fail fit\\n"; return 1; }',
+        '  printf "  ok fit\\n"',
+        "}", "fit",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/llm_fit.py " + quoted + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "llm_fit",
+            "model_name": name, "label": "fit prompt · " + name,
+            "dataset": ds, "baseline": "llm_prompt:" + name, "limit": "-",
+            "model": model, "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
 
 
 PAGE = r"""<!doctype html>
@@ -2107,6 +2261,10 @@ PAGE = r"""<!doctype html>
      the data it was fitted on */
   .card.warn { border-color:var(--warn); color:var(--ink); font-size:12.5px; }
 
+  /* a fitted prompt that beat the control, and one that did not - the
+     second is the more useful of the two and must not be hidden */
+  .gain-up { color:var(--accent); }
+  .gain-down { color:var(--bad); }
   .note { color:var(--dim); font-size:12.5px; }
   .note p { margin:0 0 10px; }
   .note p:last-child { margin-bottom:0; }
@@ -2124,7 +2282,7 @@ PAGE = r"""<!doctype html>
   <h1>scam-detection</h1>
   <nav class="pages" id="pages">
     <button data-page="bench" class="on">Benchmark</button>
-    <button data-page="mcq">BERT</button>
+    <button data-page="bert">BERT</button>
     <button data-page="bow">Bag of words</button>
     <button data-page="length">Length only</button>
     <button data-page="llm">LLM judge</button>
@@ -2282,13 +2440,13 @@ results table, and the prediction it made for every single call.</pre>
 </div>
 
 <!-- ==================== page two: BERT ==================== -->
-<div class="wrap" id="page-mcq" hidden>
+<div class="wrap" id="page-bert" hidden>
   <div class="side">
     <div class="sect">
       <div class="secthead">Trained models</div>
       <div class="hint" style="margin-top:0">the checkpoint a call is put to ·
         hover to delete one</div>
-      <div class="hist" id="mcqmodels"></div>
+      <div class="hist" id="bertmodels"></div>
       <div class="row" style="margin-top:8px">
         <span class="hint" id="workerstate" style="flex:1"></span>
         <button class="link" id="unload" hidden>unload it</button>
@@ -2348,16 +2506,16 @@ results table, and the prediction it made for every single call.</pre>
   <div class="main">
     <div class="card">
       <div class="row">
-        <strong id="mcqtitle">No model selected</strong>
-        <span class="pill" id="mcqpill" hidden></span>
+        <strong id="berttitle">No model selected</strong>
+        <span class="pill" id="bertpill" hidden></span>
         <span style="flex:1"></span>
         <button class="stop" id="trainstop" hidden>Stop</button>
       </div>
-      <div class="hint" id="mcqsub">Train one on the left, then put a
+      <div class="hint" id="bertsub">Train one on the left, then put a
         transcript to it.</div>
     </div>
 
-    <div class="tabs" id="mcqtabs">
+    <div class="tabs" id="berttabs">
       <button data-mtab="ask" class="on">Classify</button>
       <button data-mtab="train">Training output</button>
       <button data-mtab="about">How it decides</button>
@@ -2806,6 +2964,64 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
     </div>
 
     <div class="sect">
+      <div class="secthead">Fitted prompts</div>
+      <div class="hint" style="margin-top:0">what goes in the prompt before
+        the call &middot; hover to delete one</div>
+      <div class="hist" id="llmprofiles"></div>
+      <div class="hint" id="llmproferr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Fit a prompt</div>
+      <div class="hint" style="margin-top:0"><strong>This does not fine-tune
+        anything.</strong> The weights Ollama is holding do not move and
+        cannot be moved from here. What is fitted is the prompt: worked
+        examples out of a dataset, a rubric the model writes from them, and
+        your standing instructions made durable. That is in-context learning,
+        and it is the only kind of training a frozen local model can be
+        given.</div>
+
+      <label for="llmfitname">Name</label>
+      <input type="text" id="llmfitname" placeholder="e.g. zhi-prompt" spellcheck="false">
+
+      <label for="llmfitds">Dataset</label>
+      <select id="llmfitds"></select>
+
+      <div class="grid2">
+        <div><label for="llmshots">Worked examples</label>
+             <input type="text" id="llmshots" style="width:100%"></div>
+        <div><label for="llmshotwords">Words from each</label>
+             <input type="text" id="llmshotwords" style="width:100%"></div>
+        <div><label for="llmholdcalls">Calls to score on</label>
+             <input type="text" id="llmholdcalls" style="width:100%"></div>
+        <div><label for="llmfitseed">Seed</label>
+             <input type="text" id="llmfitseed" style="width:100%"></div>
+      </div>
+
+      <label class="inline" style="margin-top:14px">
+        <input type="checkbox" id="llmrubric" checked>
+        <span><span class="name">Have the model write the rubric</span>
+        <span class="note">it reads the examples and writes the rules, which
+          then ride in every prompt</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="llmfitguide" checked>
+        <span><span class="name">Carry the standing instructions in</span>
+        <span class="note">whatever is in the box on the right, made durable
+          instead of lost on reload</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="llmfitover">
+        <span><span class="name">Replace a prompt of that name</span>
+        <span class="note">the old one is overwritten, not kept</span></span>
+      </label>
+
+      <div class="hint" id="llmfitcost"></div>
+      <button class="go" id="llmfitgo">Fit</button>
+      <div class="hint" id="llmfiterr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
       <div class="secthead">Settings</div>
       <div class="grid2">
         <div><label for="llmmaxtok">Reply tokens</label>
@@ -2833,6 +3049,22 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
   </div>
 
   <div class="main">
+    <div class="card">
+      <div class="row">
+        <strong id="llmtitle">Bare llm_only control</strong>
+        <span style="flex:1"></span>
+      </div>
+      <div class="hint" id="llmsub">No fitted prompt — the transcript and the
+        question, exactly as the benchmark asks it.</div>
+    </div>
+
+    <div class="tabs" id="llmtabs">
+      <button data-jtab="ask" class="on">Ask</button>
+      <button data-jtab="fit">Fitting output</button>
+      <button data-jtab="about">How it decides</button>
+    </div>
+
+    <div id="j-ask">
     <div class="card">
       <div class="filepick">
         <select id="llmds"></select>
@@ -2864,6 +3096,62 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
       <div class="hint" id="llmasker" style="color:var(--bad)"></div>
     </div>
     <div id="llmanswer"></div>
+    </div>
+
+    <div id="j-fit" hidden>
+      <pre class="log" id="llmfitlog">No fitting run selected.
+
+Fill in "Fit a prompt" on the left and press Fit. It scores the held-out calls
+twice - once with the fitted prompt and once with the bare one - so what comes
+back is what the fitting bought, not just an accuracy. That is two LLM calls
+per held-out call, so it takes minutes, not seconds.</pre>
+    </div>
+
+    <div id="j-about" hidden>
+      <div class="card note">
+        <p><strong>What this is.</strong> The <code>llm_only</code> control
+        from the Benchmark page, asked one call at a time. No retrieval, no
+        ontology. With no fitted prompt selected it uses the same prompt and
+        the same verdict parser as the benchmark, so the answer here is the
+        answer that would have been recorded there.</p>
+
+        <p><strong>Fitting a prompt is not fine-tuning.</strong> The weights
+        Ollama is holding do not move, and nothing in this project can move
+        them. A fitted prompt is text that gets prepended to every question:
+        worked examples drawn from a dataset, a rubric the model wrote after
+        reading them, and your standing instructions. The other three pages
+        train a model; this one writes a better question. They are not the
+        same thing and the page will not call them the same thing.</p>
+
+        <p><strong>Why the fit scores everything twice.</strong> A longer
+        prompt always <em>feels</em> like an improvement, and often is not. So
+        fitting runs the held-out calls through the fitted prompt and through
+        the bare one, in the same order, and reports the difference. If the
+        fitted prompt did not beat the control it has cost you context window
+        and bought nothing — and the run says so in those words rather than
+        quietly reporting a number that looks fine on its own.</p>
+
+        <p><strong>Where the parts sit in the prompt, and why it matters.</strong>
+        Ollama truncates an overlong prompt from the <em>front</em>. So the
+        order is worst-to-best: worked examples, then the rubric, then the
+        transcript, then the rules and the answer format. A fitted prompt that
+        overflows loses its examples first and decays into the control, rather
+        than into a headless wall of transcript with no question attached. The
+        fitting run counts how many held-out prompts this happened to.</p>
+
+        <p><strong>Standing instructions.</strong> The box under the
+        transcript is sent with every question, fenced off so the model reads
+        it as a rule rather than as something the caller said. On its own it
+        is not stored — closing the page empties it. Tick <em>carry the
+        standing instructions in</em> when fitting and they become part of the
+        saved prompt instead.</p>
+
+        <p><strong>A verdict under either is not the control.</strong> The
+        moment a fitted prompt or standing instructions are in play, the
+        answer stops being comparable with an <code>llm_only</code> row on the
+        Benchmark page. The answer card says which applied.</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -3685,11 +3973,16 @@ function markHistory() {
 // the first one. The only thing the two share is the run machinery on the
 // server: a training run is a detached run like any other, which is why it
 // also turns up under Recent runs.
-const PAGES = ['bench', 'mcq', 'bow', 'length', 'llm'];
-const pageInUrl = () => PAGES.includes(location.hash.slice(1))
-  ? location.hash.slice(1) : 'bench';
+const PAGES = ['bench', 'bert', 'bow', 'length', 'llm'];
+// The BERT page was #mcq until the ontology came off it. Someone's bookmark
+// should not quietly land on the benchmark form.
+const PAGE_WAS = {mcq: 'bert'};
+const pageInUrl = () => {
+  const h = PAGE_WAS[location.hash.slice(1)] || location.hash.slice(1);
+  return PAGES.includes(h) ? h : 'bench';
+};
 
-let MCQ = null, model = null, MODELS = [];
+let BERT = null, model = null, MODELS = [];
 let trainRun = null, mtimer = null, moffset = 0;
 
 // form field -> the key /api/bert/config sends its default under
@@ -3697,7 +3990,7 @@ const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
                  tlr: 'lr', tseed: 'seed', tlimit: 'limit', tholdout: 'holdout',
                  awindow: 'window', astride: 'stride', amaxlen: 'max_length'};
 
-// The page is in the URL, so #mcq can be bookmarked, reloaded, and sent to
+// The page is in the URL, so #bert can be bookmarked, reloaded, and sent to
 // someone - and reloading while reading an answer comes back to the answer
 // pane rather than to the benchmark form.
 function showPage(name) {
@@ -3706,34 +3999,34 @@ function showPage(name) {
   for (const b of $('pages').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.page === name);
   $('page-bench').hidden = name !== 'bench';
-  $('page-mcq').hidden = name !== 'mcq';
+  $('page-bert').hidden = name !== 'bert';
   $('page-bow').hidden = name !== 'bow';
   $('page-length').hidden = name !== 'length';
   $('page-llm').hidden = name !== 'llm';
   // drawn on first visit rather than at boot: someone who only ever runs
   // benchmarks should not be made to wait for a directory scan of models/,
   // nor for ollama to be asked what it has pulled
-  if (name === 'mcq' && !MCQ) mcqBoot();
+  if (name === 'bert' && !BERT) bertBoot();
   if (name === 'bow' && !BOW) bowBoot();
   if (name === 'length' && !LEN) lenBoot();
   if (name === 'llm' && !LLM) llmBoot();
 }
 
-async function mcqBoot() {
+async function bertBoot() {
   const cfg = await api('/api/bert/config');
   if (cfg.error || !cfg.bases) {
     $('modelerr').textContent = cfg.error || 'unexpected reply from /api/bert/config';
     return;
   }
-  MCQ = cfg;
+  BERT = cfg;
 
-  $('tdataset').innerHTML = $('sampleds').innerHTML = MCQ.datasets.map(d =>
+  $('tdataset').innerHTML = $('sampleds').innerHTML = BERT.datasets.map(d =>
     `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
   ).join('');
-  $('tbase').innerHTML = MCQ.bases.map(b =>
+  $('tbase').innerHTML = BERT.bases.map(b =>
     `<option value="${b.id}">${b.id}</option>`).join('');
   for (const [id, key] of Object.entries(MFIELDS))
-    if ($(id) && MCQ.defaults[key] !== undefined) $(id).value = MCQ.defaults[key];
+    if ($(id) && BERT.defaults[key] !== undefined) $(id).value = BERT.defaults[key];
 
   $('tbase').onchange = onBase;
   onBase();
@@ -3744,7 +4037,7 @@ async function mcqBoot() {
   forgetRowOnEdit('transcript', 'sampleinfo');
   $('sampleidx').onkeydown = e => { if (e.key === 'Enter') loadSample(); };
   $('unload').onclick = unloadModel;
-  for (const b of $('mcqtabs').querySelectorAll('button'))
+  for (const b of $('berttabs').querySelectorAll('button'))
     b.onclick = () => showMtab(b.dataset.mtab);
 
   await refreshModels();
@@ -3756,12 +4049,12 @@ async function mcqBoot() {
 }
 
 function onBase() {
-  const b = MCQ.bases.find(x => x.id === $('tbase').value);
+  const b = BERT.bases.find(x => x.id === $('tbase').value);
   $('tbasenote').textContent = b ? b.note : '';
 }
 
 function showMtab(name) {
-  for (const b of $('mcqtabs').querySelectorAll('button'))
+  for (const b of $('berttabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.mtab === name);
   for (const t of ['ask', 'train', 'about']) $('m-' + t).hidden = t !== name;
 }
@@ -3778,13 +4071,13 @@ function paintModels(models, worker) {
   MODELS = models;
   paintWorker(worker);
   if (!models.length) {
-    $('mcqmodels').innerHTML = '<div class="muted">nothing trained yet</div>';
+    $('bertmodels').innerHTML = '<div class="muted">nothing trained yet</div>';
     model = null;
-    paintMcqHeader();
+    paintBertHeader();
     return;
   }
   if (!models.some(m => m.name === model)) model = models[0].name;
-  $('mcqmodels').innerHTML = models.map(m => {
+  $('bertmodels').innerHTML = models.map(m => {
     const acc = m.holdout && m.holdout.acc != null
       ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%'
       : 'not scored';
@@ -3799,16 +4092,16 @@ function paintModels(models, worker) {
         ${esc((m.dataset || 'dataset unrecorded').replace('datasets/', ''))} · ${kb(m.bytes)}</div>
     </a>`;
   }).join('');
-  for (const a of $('mcqmodels').querySelectorAll('a'))
-    a.onclick = () => { model = a.dataset.model; markModels(); paintMcqHeader(); };
-  for (const b of $('mcqmodels').querySelectorAll('[data-delmodel]'))
+  for (const a of $('bertmodels').querySelectorAll('a'))
+    a.onclick = () => { model = a.dataset.model; markModels(); paintBertHeader(); };
+  for (const b of $('bertmodels').querySelectorAll('[data-delmodel]'))
     b.onclick = e => { e.stopPropagation(); delModel(b.dataset.delmodel); };
   markModels();
-  paintMcqHeader();
+  paintBertHeader();
 }
 
 function markModels() {
-  for (const a of $('mcqmodels').querySelectorAll('a'))
+  for (const a of $('bertmodels').querySelectorAll('a'))
     a.classList.toggle('on', a.dataset.model === model);
 }
 
@@ -3821,10 +4114,10 @@ function paintWorker(w) {
       + 'takes a few seconds';
 }
 
-function paintMcqHeader(status) {
+function paintBertHeader(status) {
   const m = MODELS.find(x => x.name === model);
   if (m) {
-    $('mcqtitle').textContent = m.name;
+    $('berttitle').textContent = m.name;
     const bits = [m.base];
     if (m.dataset) bits.push(m.dataset.replace('datasets/', '')
                              + (m.rows ? ' · ' + m.rows + ' calls' : ''));
@@ -3832,14 +4125,14 @@ function paintMcqHeader(status) {
       bits.push('holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%'
                 + ' · F1 ' + m.holdout.f1.toFixed(3));
     if (m.trained_at) bits.push(new Date(m.trained_at).toLocaleString());
-    $('mcqsub').textContent = bits.join(' · ');
+    $('bertsub').textContent = bits.join(' · ');
   } else {
-    $('mcqtitle').textContent = 'No model selected';
-    $('mcqsub').textContent = 'Train one on the left, then put a transcript '
+    $('berttitle').textContent = 'No model selected';
+    $('bertsub').textContent = 'Train one on the left, then put a transcript '
                             + 'to it.';
   }
   const st = status || (trainRun && RUNS[trainRun] && RUNS[trainRun].status);
-  const pill = $('mcqpill');
+  const pill = $('bertpill');
   pill.hidden = !st;
   if (st) { pill.textContent = 'training · ' + st; pill.className = 'pill ' + st; }
   $('trainstop').hidden = st !== 'running';
@@ -3903,7 +4196,7 @@ async function mpoll() {
   moffset = r.offset;
   if (r.text) append(r.text, 'trainlog');
   if (RUNS[trainRun]) RUNS[trainRun].status = r.status;
-  paintMcqHeader(r.status);
+  paintBertHeader(r.status);
   if (r.status !== 'running') {
     clearInterval(mtimer); mtimer = null;
     // the checkpoint that just appeared is the point of the whole run
@@ -4490,8 +4783,11 @@ function lenPaint(a) {
 // The third page. One transcript, one question, one verdict with a reason.
 // It holds nothing between clicks - there is no worker to keep alive, since
 // ollama is the thing holding the model.
-let LLM = null;
+let LLM = null, llmProf = '', llmProfs = [];
+let llmFitRun = null, llmFitTimer = null;
 const LFIELDS = {llmmaxtok: 'max_tokens', llmctx: 'num_ctx', llmtemp: 'temperature'};
+const JFIELDS = {llmshots: 'shots', llmshotwords: 'shot_words',
+                 llmholdcalls: 'holdout_calls', llmfitseed: 'seed'};
 
 async function llmBoot() {
   const cfg = await api('/api/llm/config');
@@ -4528,7 +4824,128 @@ async function llmBoot() {
   $('llmguideclear').onclick = () => { $('llmguidance').value = ''; llmSize(); };
   for (const id of ['llmtranscript', 'llmguidance', 'llmctx'])
     $(id).addEventListener('input', llmSize);
+
+  // the fitting side
+  $('llmfitds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  for (const [id, key] of Object.entries(JFIELDS))
+    if (cfg.fit_defaults[key] !== undefined) $(id).value = cfg.fit_defaults[key];
+  $('llmfitgo').onclick = llmFit;
+  for (const id of ['llmshots', 'llmholdcalls', 'llmrubric'])
+    $(id).addEventListener('input', llmFitCost);
+  for (const b of $('llmtabs').querySelectorAll('button'))
+    b.onclick = () => llmTab(b.dataset.jtab);
+  llmFitCost();
+  await llmProfiles();
   llmSize();
+}
+
+function llmTab(name) {
+  for (const b of $('llmtabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.jtab === name);
+  $('j-ask').hidden = name !== 'ask';
+  $('j-fit').hidden = name !== 'fit';
+  $('j-about').hidden = name !== 'about';
+}
+
+// What a fit is going to cost, before it is started rather than after. Two
+// calls per held-out call is the honest price of knowing whether the fitted
+// prompt beat the control, and it is not obvious from the form.
+function llmFitCost() {
+  const hold = parseInt($('llmholdcalls').value, 10) || 0;
+  const n = hold * 2 + ($('llmrubric').checked ? 1 : 0);
+  $('llmfitcost').innerHTML = n
+    ? `about <strong>${n}</strong> calls to the model: ${hold} held-out `
+      + `call${hold === 1 ? '' : 's'} scored twice, fitted and bare`
+      + ($('llmrubric').checked ? ', plus one to write the rubric' : '')
+      + '. On a 14B model that is minutes, not seconds.'
+    : 'no holdout — the prompt will be saved unmeasured, which means you will '
+      + 'not know whether it beat the bare one.';
+}
+
+async function llmProfiles() {
+  const r = await api('/api/llm/profiles');
+  if (r.error) { $('llmproferr').textContent = r.error; return; }
+  llmProfs = r.profiles || [];
+  if (!llmProfs.some(p => p.name === llmProf)) llmProf = '';
+  const row = (name, label, sub, on) => `<div class="row">
+      <a href="#llm" data-prof="${esc(name)}" class="${on ? 'on' : ''}">
+        <strong>${esc(label)}</strong>
+        <span class="muted">${sub}</span>
+      </a>${name ? `<button class="link" data-profdel="${esc(name)}">delete</button>`
+                 : ''}</div>`;
+
+  let html = row('', 'None — the bare control', 'the transcript and the '
+    + 'question, nothing else. The only setting comparable with a benchmark '
+    + 'row.', !llmProf);
+  html += llmProfs.map(p => {
+    const acc = p.holdout && p.holdout.acc;
+    const gain = p.gain;
+    const bits = [esc(p.dataset || ''), (p.shots || 0) + ' example'
+      + (p.shots === 1 ? '' : 's')];
+    if (p.rubric) bits.push('rubric');
+    if (p.guided) bits.push('instructions');
+    if (acc !== undefined && acc !== null)
+      bits.push(`holdout ${(100 * acc).toFixed(1)}%`
+        + (gain === null || gain === undefined ? ''
+           : `, <strong class="${gain > 0 ? 'gain-up' : 'gain-down'}">`
+             + `${gain > 0 ? '+' : ''}${(100 * gain).toFixed(1)} vs control</strong>`));
+    return row(p.name, p.name, bits.join(' · '), p.name === llmProf);
+  }).join('');
+  $('llmprofiles').innerHTML = html;
+
+  for (const a of $('llmprofiles').querySelectorAll('a'))
+    a.onclick = e => { e.preventDefault(); llmProf = a.dataset.prof; llmProfiles(); };
+  for (const b of $('llmprofiles').querySelectorAll('[data-profdel]'))
+    b.onclick = async () => {
+      if (!confirm('Delete models/' + b.dataset.profdel + '?')) return;
+      const r = await api('/api/llm/delete_profile', {name: b.dataset.profdel});
+      if (r.error) { $('llmproferr').textContent = r.error; return; }
+      await llmProfiles();
+    };
+
+  const p = llmProfs.find(x => x.name === llmProf);
+  $('llmtitle').textContent = p ? p.name : 'Bare llm_only control';
+  $('llmsub').innerHTML = p
+    ? [esc(p.dataset || '?'), (p.shots || 0) + ' worked example'
+        + (p.shots === 1 ? '' : 's'),
+       p.rubric ? 'a rubric' : null,
+       p.guided ? 'standing instructions' : null,
+       p.prompt_tokens ? '~' + p.prompt_tokens + ' extra tokens per call' : null,
+       (p.gain === null || p.gain === undefined) ? null
+         : `${p.gain > 0 ? '+' : ''}${(100 * p.gain).toFixed(1)} points against `
+           + `the control on ${p.holdout_rows} held-out calls`,
+      ].filter(Boolean).join(' · ')
+    : 'No fitted prompt — the transcript and the question, exactly as the '
+      + 'benchmark asks it.';
+}
+
+async function llmFit() {
+  $('llmfiterr').textContent = '';
+  const model = $('llmmodel').value;
+  if (!model) { $('llmfiterr').textContent = 'no model to fit against - pull '
+                                           + 'one with ollama first'; return; }
+  const body = {name: $('llmfitname').value, dataset: $('llmfitds').value,
+                model: model, rubric: $('llmrubric').checked,
+                overwrite: $('llmfitover').checked,
+                num_ctx: $('llmctx').value,
+                guidance: $('llmfitguide').checked ? $('llmguidance').value : ''};
+  for (const [id, key] of Object.entries(JFIELDS)) body[key] = $(id).value;
+  const res = await api('/api/llm/fit', body);
+  if (res.error) { $('llmfiterr').textContent = res.error; return; }
+  llmFitRun = res.id;
+  llmTab('fit');
+  llmFitPoll();
+}
+
+async function llmFitPoll() {
+  if (!llmFitRun) return;
+  const r = await api(`/api/log?id=${encodeURIComponent(llmFitRun)}&offset=0`);
+  if (!r.error) $('llmfitlog').textContent = r.text || '(no output yet)';
+  clearTimeout(llmFitTimer);
+  if (r.error || r.done) { await llmProfiles(); return; }
+  llmFitTimer = setTimeout(llmFitPoll, 1500);
 }
 
 const wordsIn = id => $(id).value.trim().split(/\s+/).filter(Boolean).length;
@@ -4587,7 +5004,7 @@ async function llmAsk() {
   $('llmanswer').innerHTML = '<div class="card muted">' + esc(model)
     + ' is reading the call… a 14B model takes a few seconds on a GPU and '
     + 'rather longer on a CPU</div>';
-  const body = {model: model, transcript: text,
+  const body = {model: model, transcript: text, profile: llmProf,
                 guidance: $('llmguidance').value};
   for (const [id, key] of Object.entries(LFIELDS)) body[key] = $(id).value;
   const res = await api('/api/llm/judge', body);
@@ -4605,6 +5022,12 @@ function paintVerdict(r) {
   const cls = r.unreadable ? 'uncertain' : (r.scam ? 'scam' : 'legitimate');
   const word = r.unreadable ? 'UNREADABLE' : (r.scam ? 'SCAM' : 'LEGITIMATE');
   const notes = [];
+  if (r.profile) notes.push('Judged under the fitted prompt <strong>models/'
+    + esc(r.profile) + '</strong> — ' + r.shots + ' worked example'
+    + (r.shots === 1 ? '' : 's') + (r.rubric ? ' and a rubric' : '')
+    + ' went in ahead of the call. Nothing was fine-tuned: that is text in the '
+    + 'prompt, not a change to the model. This is not the <code>llm_only</code> '
+    + 'control — pick <em>None</em> on the left for that.');
   if (r.guided) notes.push('Judged under your standing instructions, so this is '
     + 'not the <code>llm_only</code> control any more — it is the model doing '
     + 'what you told it. Clear the box to get the unguided verdict back.');
@@ -4620,6 +5043,10 @@ function paintVerdict(r) {
     + "Ollama's own count, not an estimate. Note it read about half the "
     + r.num_ctx + '-token window rather than all of it: a window merely close '
     + 'to the prompt size is no use, it has to exceed it.');
+  if (r.prompt_truncated && r.profile) notes.push('Because the prompt was '
+    + 'truncated, the worked examples were the first thing to go — they sit at '
+    + 'the front for exactly that reason. This verdict is closer to the bare '
+    + 'control than to the fitted prompt you picked.');
   if (r.truncated) notes.push('The reply looks cut off. Raise the reply tokens.');
   if (r.retried) notes.push('The first reply could not be read, so the model was '
     + 'asked again for a single word. The reason below is from the first reply.');

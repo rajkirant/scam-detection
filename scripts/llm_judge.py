@@ -150,32 +150,68 @@ def generate(prompt, model=None, max_tokens=DEFAULT_MAX_TOKENS,
 
 MAX_GUIDANCE = 20_000
 
+OPENING = ("You are a scam detection analyst. Read this phone call "
+           "transcript and decide whether the caller is attempting a scam.")
 
-def build_prompt(transcript, guidance=None):
-    """The benchmark's llm_only prompt, with standing instructions folded in
-    when there are any.
 
-    With no guidance the string is byte for byte what combined_evaluate sends,
-    which is what keeps a verdict here comparable to a benchmark row. That
-    property is worth protecting: the moment guidance is in play this is no
-    longer the llm_only control, and the reply says so.
+def build_prompt(transcript, guidance=None, profile=None):
+    """The benchmark's llm_only prompt, with anything fitted folded in.
 
-    Guidance is fenced and labelled as rules rather than speech. A transcript
-    is full of people telling each other what to do, and a model that cannot
-    tell an instruction from the call it is reading will start taking orders
-    from the caller.
+    With no guidance and no profile the string is byte for byte what
+    combined_evaluate sends, which is what keeps a verdict here comparable to
+    a benchmark row. That property is worth protecting: the moment either is
+    in play this is no longer the llm_only control, and the reply says so.
+
+    The order of the parts is not cosmetic. Ollama truncates an overlong
+    prompt from the FRONT, so everything is laid out worst-to-best: the
+    worked examples first, because losing them costs calibration; then the
+    transcript; then the rules and the answer format, which are the last
+    things that may be lost. A fitted prompt that overflows degrades into the
+    unfitted one rather than into a headless wall of transcript.
+
+    Every fitted part is fenced and labelled as material for the analyst
+    rather than as speech. A transcript is full of people telling each other
+    what to do, and a model that cannot tell an instruction from the call it
+    is reading will start taking orders from the caller.
     """
     import combined_evaluate as CE
 
-    prompt = ("You are a scam detection analyst. Read this phone call "
-              "transcript and decide whether the caller is attempting a "
-              "scam.\n\nTranscript:\n%s\n\n" % transcript)
-    if (guidance or "").strip():
+    profile = profile or {}
+    shots = profile.get("shots") or []
+    rubric = (profile.get("rubric") or "").strip()
+
+    prompt = OPENING + "\n\n"
+    if shots:
         prompt += (
-            "Standing instructions from the analyst. These are rules for you "
-            "to apply, not part of the call, and they take precedence over "
-            "your own defaults where the two disagree:\n"
-            "<<<INSTRUCTIONS\n%s\nINSTRUCTIONS>>>\n\n" % guidance.strip())
+            "Worked examples: past calls from this corpus with the answer "
+            "already known. They are for calibration only - none of them is "
+            "the call you are being asked about.\n<<<EXAMPLES\n")
+        for i, sh in enumerate(shots, 1):
+            prompt += ("[%d] Answer: %s\n%s\n\n"
+                       % (i, sh.get("verdict", "Normal"),
+                          (sh.get("excerpt") or "").strip()))
+        prompt += "EXAMPLES>>>\n\n"
+    if rubric:
+        prompt += (
+            "What separates the two classes in this corpus, written from the "
+            "labelled calls above. Treat it as a guide to this corpus, not as "
+            "a rule that overrides what you read:\n"
+            "<<<RUBRIC\n%s\nRUBRIC>>>\n\n" % rubric)
+
+    prompt += "Transcript:\n%s\n\n" % transcript
+
+    # The analyst's own corrections go last of all, because they are the one
+    # thing here a person typed on purpose.
+    for text, head in ((profile.get("guidance"),
+                        "Standing instructions carried in the fitted prompt"),
+                       (guidance,
+                        "Standing instructions from the analyst")):
+        if (text or "").strip():
+            prompt += (
+                "%s. These are rules for you to apply, not part of the call, "
+                "and they take precedence over your own defaults where the "
+                "two disagree:\n<<<INSTRUCTIONS\n%s\nINSTRUCTIONS>>>\n\n"
+                % (head, text.strip()))
     return prompt + CE.VERDICT_FORMAT
 
 
@@ -188,7 +224,7 @@ def estimate_tokens(text):
 
 def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
           num_ctx=DEFAULT_NUM_CTX, temperature=0.0, timeout=300,
-          guidance=None):
+          guidance=None, profile=None):
     """Scam or not, and why, for one transcript.
 
     Mirrors combined_evaluate.ask_verdict, including its retry: when the first
@@ -200,6 +236,12 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
     put a correction after the model gets one wrong. Nothing is stored and
     nothing is learned: the text is put in the prompt, every time, and a model
     told the same thing twice is being told, not taught.
+
+    `profile` is a fitted prompt out of llm_fit.py: worked examples drawn from
+    a dataset, a rubric the model wrote from them, or both. The same applies -
+    the weights do not move, the prompt gets longer. What it buys is measured
+    at fit time against this same function with profile=None, which is the
+    only way to know whether it bought anything.
     """
     import combined_evaluate as CE
 
@@ -214,7 +256,7 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
         raise ValueError("that is a lot of instructions - keep them under "
                          "%d characters" % MAX_GUIDANCE)
 
-    prompt = build_prompt(text, guidance)
+    prompt = build_prompt(text, guidance, profile)
 
     t0 = time.time()
     out = generate(prompt, model=model, max_tokens=max_tokens,
@@ -247,10 +289,15 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
         "raw": raw,
         "retried": retried,
         "truncated": truncated,
-        # a verdict reached under instructions is not the llm_only control any
-        # more, and anything reading this reply should be able to tell
+        # a verdict reached under instructions or a fitted prompt is not the
+        # llm_only control any more, and anything reading this reply should be
+        # able to tell
         "guided": bool(guidance),
         "guidance": guidance,
+        "profile": (profile or {}).get("name"),
+        "shots": len((profile or {}).get("shots") or []),
+        "rubric": bool(((profile or {}).get("rubric") or "").strip()),
+        "fitted": bool(profile),
         "words": len(text.split()),
         "prompt_tokens_estimated": prompt_tokens,
         # What Ollama says it actually read: the only number here that is not
@@ -317,9 +364,15 @@ def print_result(r):
     print("%s   (%s)" % (head, r["model"]))
     print(bar)
     print("  reason     %s" % r["reason"])
-    if r["guided"]:
-        print("  note       judged under your standing instructions, so this "
-              "is not the\n             llm_only control any more")
+    if r.get("profile"):
+        print("  prompt     fitted: models/%s, %d worked example(s)%s"
+              % (r["profile"], r["shots"],
+                 " and a rubric" if r.get("rubric") else ""))
+    if r["guided"] or r.get("fitted"):
+        print("  note       judged under %s, so this is not the\n"
+              "             llm_only control any more"
+              % ("a fitted prompt" if r.get("fitted") and not r["guided"]
+                 else "your standing instructions"))
     if r["retried"]:
         print("  note       the first reply could not be parsed; the model was "
               "asked again for one word")
@@ -367,6 +420,9 @@ def main():
                          "Nothing is stored; it goes in the prompt each time")
     ap.add_argument("--guidance-file", default=None,
                     help="read the standing instructions from a file instead")
+    ap.add_argument("--profile", default=None,
+                    help="a fitted prompt from llm_fit.py, by name - its "
+                         "worked examples and rubric go in the prompt")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     ap.add_argument("--num-ctx", type=int, default=DEFAULT_NUM_CTX)
@@ -400,10 +456,15 @@ def main():
     if args.guidance_file:
         guidance = Path(args.guidance_file).read_text(encoding="utf-8")
 
+    profile = None
+    if args.profile:
+        import llm_fit
+        profile = llm_fit.load_profile(args.profile)
+
     try:
         r = judge(text, model=args.model, max_tokens=args.max_tokens,
                   num_ctx=args.num_ctx, temperature=args.temperature,
-                  timeout=args.timeout, guidance=guidance)
+                  timeout=args.timeout, guidance=guidance, profile=profile)
     except RuntimeError as e:
         raise SystemExit(str(e))
     if args.json:
