@@ -3344,6 +3344,11 @@ function paintVerdict(r) {
     + ' tokens and the window ' + r.num_ctx + '. Ollama drops the front of an '
     + 'overlong prompt — the instructions with it — so this verdict may be an '
     + 'answer to a headless transcript. Raise the context window and ask again.');
+  if (r.window_full) notes.push('Ollama reports it read ' + r.prompt_tokens_read
+    + ' tokens into a ' + r.num_ctx + '-token window — the window was full, so '
+    + 'the front of this prompt was cut off and the model answered without its '
+    + 'instructions. This is Ollama\'s own count, not an estimate. Raise the '
+    + 'context window and ask again.');
   if (r.truncated) notes.push('The reply looks cut off. Raise the reply tokens.');
   if (r.retried) notes.push('The first reply could not be read, so the model was '
     + 'asked again for a single word. The reason below is from the first reply.');
@@ -3374,7 +3379,8 @@ function paintVerdict(r) {
     </details>
   </div>
   <div class="card hint">${r.words} words · about ${r.prompt_tokens_estimated}
-    prompt tokens of ${r.num_ctx} · ${r.elapsed_ms} ms</div>`;
+    prompt tokens of ${r.num_ctx}${r.prompt_tokens_read
+      ? ` · ollama read ${r.prompt_tokens_read}` : ''} · ${r.elapsed_ms} ms</div>`;
 }
 
 boot();

@@ -697,6 +697,38 @@ number measured on the two `scamai` sets before this was fixed was mostly
 measured on truncated calls — on `scamai_hard_subset.csv`, only **3.6%** of
 the calls fit the 2048 default at all.
 
+### Checking it
+
+```bash
+# 1. offline, no Ollama and no GPU: every client sends a big enough window
+python scripts/test_ollama_ctx.py
+
+# 2. against your real Ollama - compare the estimate to what it actually read
+python scripts/llm_judge.py --csv datasets/scamai_hard_subset.csv --idx 0
+python scripts/llm_judge.py --csv datasets/scamai_hard_subset.csv --idx 0 \
+    --num-ctx 2048          # what every baseline used to do
+```
+
+The last line of each run is the evidence, because Ollama reports
+`prompt_eval_count` — how many prompt tokens it actually read, which is the
+only number here that is not an estimate:
+
+```
+  4500 words, ~6371 prompt tokens estimated, 6371 read by ollama, window 8192
+  4500 words, ~6371 prompt tokens estimated, 2048 read by ollama, window 2048
+                                             ^^^^ 4,323 tokens thrown away,
+                                                  starting with the question
+```
+
+A third run is the one that matters for the thesis: the same rows through the
+benchmark at both windows. If the verdicts move, every earlier number on that
+dataset was measured on truncated calls.
+
+```bash
+SCAM_NUM_CTX=2048  ./run_all.sh -d datasets/scamai_hard_subset.csv -b llm_only -l 20
+SCAM_NUM_CTX=16384 ./run_all.sh -d datasets/scamai_hard_subset.csv -b llm_only -l 20
+```
+
 ### Picking `SCAM_NUM_CTX`
 
 For `scamai_hard_subset.csv`, the share of calls that fit the window:
