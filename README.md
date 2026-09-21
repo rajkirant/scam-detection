@@ -29,7 +29,7 @@ base.
 | `run_all.sh` | Interactive terminal launcher — asks five questions, then runs |
 | `web_ui.sh` | Browser front end for the same thing |
 | `scripts/` | The evaluation systems and the supporting tools |
-| `models/` | Fine-tuned BERT checkpoints, fitted bag-of-words models and fitted length thresholds, from the BERT, Bag of words and Length only pages — **not in git** |
+| `models/` | Fine-tuned BERT checkpoints, bag-of-words models, length thresholds and fitted LLM prompts, from the four model pages — **not in git** |
 | `datasets/` | The transcript CSVs (`id,label,…,text`) |
 | `knowledge/` | `scam_ontology.json`, `mcq_ontology.json`, `scam_patterns.json` |
 | `policies/` | Three bank policy documents — the corpus the Singh baseline retrieves from |
@@ -225,7 +225,8 @@ the width gets in the way.
 
 Everything `run_all.sh` does, as a form — plus four pages that put one call to
 one model: a fine-tuned BERT, a bag of words, a length threshold, or the local
-LLM.
+LLM. Each of the four fits on a dataset, keeps what it fitted in `models/`,
+and scores itself on held-out calls.
 
 ```bash
 ./web_ui.sh                   # http://localhost:8000, ctrl-c to stop
@@ -471,6 +472,10 @@ load a row from a dataset with the picker at the top), press **Ask the
 model**, and the local LLM says whether it is a scam and gives its reason. No
 retrieval, no ontology, no fine-tuned anything.
 
+With **None** picked under *Fitted prompts* it is exactly that and nothing
+else; with a fitted prompt picked it is that plus worked examples out of a
+dataset — see *Fitting a prompt* below.
+
 It is the `llm_only` control from the Benchmark page asked one call at a time,
 and it shares the benchmark's prompt and verdict parser — so the answer on
 this page is the answer that would have been recorded there for that call.
@@ -482,6 +487,42 @@ is put first, so the page opens on the one the rest of the project uses.
 Ollama holds the model, not the server, so there is nothing to load or unload
 here.
 
+**Fitting a prompt.** The left-hand panel fits a prompt on a dataset, keeps
+it in `models/<name>/`, and lets you pick it from a list — the same shape as
+the other three pages. `scripts/llm_fit.py` does the work
+([section C.13](#13-fit-a-prompt-for-the-llm)).
+
+**It does not fine-tune anything.** The weights Ollama is holding do not move,
+and nothing in this project can move them. A fitted prompt is text prepended
+to every question, made of up to three parts:
+
+| Part | What it is |
+| --- | --- |
+| worked examples | *k* calls from the fitting split with their real answers attached, balanced between the classes and excerpted — a median call in some of these sets is 5,000 tokens and four whole ones would crowd out the call being judged |
+| rubric | what the model itself writes when shown those examples and asked what separates the two classes. One extra call at fit time, then a fixed piece of text |
+| standing instructions | the box below, carried into the profile so a correction survives a page reload |
+
+That is in-context learning, and it is the only kind of training a frozen
+local model can be given from a web page. The other three pages train a model;
+this one writes a better question. The page will not call those the same
+thing.
+
+**The fit scores everything twice.** A longer prompt always *feels* like an
+improvement and often is not, so fitting runs the held-out calls through the
+fitted prompt *and* through the bare one, in the same order, and reports the
+difference. If the fitted prompt did not beat the control it has cost context
+window and bought nothing, and the run says so in those words rather than
+reporting a number that looks fine on its own. That costs two LLM calls per
+held-out call, so the form shows the bill before you press Fit.
+
+**Where the parts sit, and why it matters.** Ollama truncates an overlong
+prompt from the *front*, so the order is worst-to-best: worked examples,
+rubric, transcript, then the rules and answer format. A fitted prompt that
+overflows loses its examples first and decays into the control, rather than
+into a headless wall of transcript with no question attached. The fit counts
+how many held-out prompts this happened to, and the answer card says when it
+happened to the call on screen.
+
 **Standing instructions.** The second box under the transcript is where a
 correction goes when the model gets one wrong — *"a bank asking for the last
 four digits of a card is normal here"* — and it is sent with every question
@@ -491,10 +532,11 @@ transcript is full of people telling each other what to do, and a model that
 cannot tell an instruction from the call it is reading will start taking
 orders from the caller.
 
-It is not training. Nothing is stored and nothing is learned: the text goes
-into the prompt, every time, so the box *is* the model's whole memory and
-closing the page empties it. A verdict reached under instructions comes back
-flagged `guided` and is called out on the page, because at that point it is no
+On its own it is not stored: the text goes into the prompt, every time, so the
+box *is* the model's whole memory and closing the page empties it. Tick *carry
+the standing instructions in* when fitting to make them part of a saved prompt
+instead. A verdict reached under instructions or a fitted prompt comes back
+flagged and is called out on the page, because at that point it is no
 longer the `llm_only` control — with the box empty the prompt is byte for byte
 what `combined_evaluate.py` sends, and with it filled it is not.
 
@@ -818,6 +860,55 @@ The offline checks for it need no dataset and no venv:
 
 ```bash
 python3 scripts/test_length_classify.py
+```
+
+### 13. Fit a prompt for the LLM
+
+The command line behind the **Fit a prompt** panel on the LLM judge page
+([section A](#llm-judge-page)). **It does not fine-tune anything** — see that
+section for what it does instead.
+
+```bash
+# worked examples + a rubric the model writes, measured against the control
+python scripts/llm_fit.py fit --csv datasets/zhi_english_646.csv \
+    --name zhi-prompt --shots 4 --rubric --holdout-calls 20
+
+# what ended up in it
+python scripts/llm_fit.py show --name zhi-prompt
+
+# use it
+python scripts/llm_judge.py --profile zhi-prompt --text "Hello, this is..."
+
+python scripts/llm_fit.py models                    # what is fitted
+python scripts/llm_fit.py delete --name zhi-prompt
+```
+
+`fit` prints which calls it picked as examples, the rubric the model wrote,
+how many tokens the fitted prompt adds to every call, then the holdout scored
+twice — once fitted, once bare — with the difference between them. **The
+difference is the number that matters.** A fitted prompt that does not beat
+the control has cost you context window and bought nothing, and this is the
+only way to find that out.
+
+Each held-out call costs two LLM calls, plus one for the rubric, so
+`--holdout-calls 20 --rubric` is 41 calls to the model. Budget minutes, not
+seconds.
+
+`--shots 0` fits nothing but a rubric and your instructions, `--shot-words`
+trades window for detail in each example, `--guidance-file` carries standing
+instructions into the profile, `--holdout-calls 0` skips the measurement
+entirely (and then you will not know whether it helped), and `--seed` changes
+which calls are drawn as examples. `train` works as an alias for `fit`.
+
+Standard library only, like `llm_judge.py` — no venv needed.
+
+The offline checks run the whole fitting path against a fake Ollama on a spare
+port, so they need neither a GPU nor a model pulled. What they mostly guard is
+the order of the prompt — get that backwards and an overlong fitted prompt
+stops being a prompt at all, silently, while still returning a fluent verdict:
+
+```bash
+python3 scripts/test_llm_fit.py
 ```
 
 Models land in `models/` beside the BERT checkpoints without colliding: a
