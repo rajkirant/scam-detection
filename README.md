@@ -29,7 +29,7 @@ base.
 | `run_all.sh` | Interactive terminal launcher — asks five questions, then runs |
 | `web_ui.sh` | Browser front end for the same thing |
 | `scripts/` | The evaluation systems and the supporting tools |
-| `models/` | Fine-tuned BERT checkpoints and fitted bag-of-words models from the BERT and Bag of words pages — **not in git** |
+| `models/` | Fine-tuned BERT checkpoints, fitted bag-of-words models and fitted length thresholds, from the BERT, Bag of words and Length only pages — **not in git** |
 | `datasets/` | The transcript CSVs (`id,label,…,text`) |
 | `knowledge/` | `scam_ontology.json`, `mcq_ontology.json`, `scam_patterns.json` |
 | `policies/` | Three bank policy documents — the corpus the Singh baseline retrieves from |
@@ -223,8 +223,9 @@ the width gets in the way.
 
 ## A. Browser UI
 
-Everything `run_all.sh` does, as a form — plus a second page that trains a BERT
-and puts the MCQ ontology to it.
+Everything `run_all.sh` does, as a form — plus four pages that put one call to
+one model: a fine-tuned BERT, a bag of words, a length threshold, or the local
+LLM.
 
 ```bash
 ./web_ui.sh                   # http://localhost:8000, ctrl-c to stop
@@ -403,9 +404,69 @@ looks like from the inside. When this page scores near BERT, neither number is
 evidence about understanding scams, and this page shows you why in a way the
 other cannot.
 
+### Length only page
+
+The fourth tab, and the floor. Count the words in the transcript, compare the
+count to one number, call it. Nothing in the call is read — not a word, not an
+entity, not a tone tag. `scripts/length_classify.py` does the work
+([section C.12](#12-fit-a-length-threshold-and-classify-one-call)).
+
+It is the `length` baseline from the Benchmark page, which is
+`trivial_length` in `combined_evaluate.py`: *Fraud if the call is longer than
+45 words*. It has a page of its own because **whatever BERT or the bag of
+words beats this by is the whole of what those models are worth on that
+dataset**, and on several of the datasets here the gap is smaller than the
+write-up would like.
+
+Three things the page is built to show:
+
+- **"Fit" is a sweep, not learning.** There is one parameter, chosen by
+  trying every threshold the fitting calls suggest and keeping the
+  best-scoring one. That overfits a single number to a single dataset without
+  complaint, so the fitting output lists the runner-up thresholds and says out
+  loud when the curve is flat — on `everything_7013.csv`, 209 of 3,896
+  thresholds come within a point of the winner, which means the exact number
+  is meaningless. Tick **pin the threshold** to skip fitting entirely and use
+  the benchmark's own 45.
+- **The direction is not a given.** "Scams are longer" is an assumption about
+  a corpus, not a fact about scams, and the sweep tests both ways round. See
+  the table below — on two of these datasets it points the other way.
+- **No probability is invented.** A threshold cannot say how confident it is.
+  In place of one the page shows a fact about the fitting set: the share of
+  fitting calls on this side of the line that really were scams. Move the
+  threshold on the classify form and that share moves with it. When the share
+  contradicts the verdict, the page says so instead of dressing the number up.
+
+What a fitted threshold actually gets, holdout, alongside what always
+answering the same thing gets:
+
+| Dataset | Fitted rule | Holdout acc | Best constant answer |
+| --- | --- | --- | --- |
+| `zhi_english_646.csv` | longer than 34 words | **85.4%** | 50.0% |
+| `scambait_bank_422.csv` | longer than 130 words | **71.8%** | 50.6% |
+| `everything_7013.csv` | **shorter** than 726 words | **69.8%** | 60.7% |
+| `scamai_full_1000.csv` | **shorter** than 3,574 words | **64.5%** | 50.0% |
+
+Two results in that table are worth carrying into the write-up:
+
+1. On `scamai_full_1000.csv` and `everything_7013.csv` the scam calls are the
+   **shorter** ones. `trivial_length`'s rule points the wrong way on both, so
+   the number the Benchmark page reports for `length` there is worse than the
+   same threshold read backwards.
+2. On `scambait_bank_422.csv`, `trivial_length`'s threshold of 45 calls
+   **every single call a scam** — the shortest call in that set is longer than
+   45 words — so its 49.4% there is the always-scam rate and nothing else. The
+   fitting output prints a note when this happens.
+
+And for the comparison the page exists to make: on `scambait_bank_422.csv`,
+counting the words gets 71.8% from a model that is one integer. BERT and the
+bag of words both get 100% on the same split. The distance between 50% and 72%
+is what counting bought; the distance between 72% and 100% is what reading
+bought.
+
 ### LLM judge page
 
-The third tab, and the simplest thing in the project. Paste a transcript (or
+The last tab, and the simplest thing in the project. Paste a transcript (or
 load a row from a dataset with the picker at the top), press **Ask the
 model**, and the local LLM says whether it is a scam and gives its reason. No
 retrieval, no ontology, no fine-tuned anything.
@@ -713,6 +774,51 @@ model's cut-off, and `--strip-tags` removes the `[curious]` annotations (at
 fit time, at classify time, or both — they are separate flags on the two
 subcommands). There is also a `serve` mode on the same one-JSON-line protocol
 the BERT page uses.
+
+### 12. Fit a length threshold and classify one call
+
+The command line behind the **Length only** page
+([section A](#length-only-page)).
+
+```bash
+# sweep for a threshold and keep it in models/bank-length/
+python scripts/length_classify.py fit --csv datasets/scambait_bank_422.csv \
+    --name bank-length
+
+# no sweep at all - combined_evaluate.py's own rule
+python scripts/length_classify.py fit --csv datasets/scambait_bank_422.csv \
+    --name bank-45 --threshold 45 --direction longer
+
+# scam or not, and the whole of the reasoning
+python scripts/length_classify.py classify --name bank-length \
+    --csv datasets/scambait_bank_422.csv --idx 0
+
+python scripts/length_classify.py models            # what is fitted
+python scripts/length_classify.py delete --name bank-length
+```
+
+`fit` prints the two classes' length distributions, the chosen rule, the five
+runner-up thresholds, a warning when the curve is flat, and the holdout score
+next to what always-scam and never-scam get on the same split — so a rule that
+beats nothing is visible as one.
+
+`classify` prints the verdict, the word count, how far past the line it is,
+and the share of fitting calls on that side of the line that were scams. It
+never prints a probability, because a threshold does not have one.
+
+`--metric acc` makes the sweep maximise accuracy rather than F1,
+`--threshold` pins the line instead of fitting it, `--direction` says which
+side is the scam when it is pinned (a sweep decides this for itself),
+`--holdout 0` uses every call to fit, and `--strip-tags` removes the
+`[curious]` annotations before counting. There is also a `serve` mode on the
+same one-JSON-line protocol the other two pages use, and `train` works as an
+alias for `fit`.
+
+The offline checks for it need no dataset and no venv:
+
+```bash
+python3 scripts/test_length_classify.py
+```
 
 Models land in `models/` beside the BERT checkpoints without colliding: a
 bag-of-words model is a directory with `bow.joblib` in it, a BERT checkpoint

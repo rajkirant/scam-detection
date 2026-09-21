@@ -11,7 +11,7 @@ run_all.sh itself - the shell script stays the single source of truth for
 what a baseline actually does, which model gets unloaded before BERT, and
 how the results table is built.
 
-Four pages:
+Five pages:
 
   Benchmark   the form above, the output of a run, its results table and its
               prediction for every call.
@@ -23,6 +23,10 @@ Four pages:
   Bag of words  TF-IDF into a logistic regression, fitted in about a second
               and readable back exactly - the control the other two are
               measured against. scripts/bow_classify.py does the work.
+  Length only the floor: count the words, compare to one number, call it.
+              Nothing in the call is read. scripts/length_classify.py does
+              the work, and whatever a model beats it by is the whole of
+              what that model is worth.
   LLM judge   one transcript to the local LLM, scam or not, with its reason.
               scripts/llm_judge.py does the work.
 
@@ -800,6 +804,7 @@ import bert_classify
 
 BERT_SCRIPT = PROJECT_DIR / "scripts" / "bert_classify.py"
 BOW_SCRIPT = PROJECT_DIR / "scripts" / "bow_classify.py"
+LENGTH_SCRIPT = PROJECT_DIR / "scripts" / "length_classify.py"
 MODELS_DIR = PROJECT_DIR / "models"
 BERT_NAME_RE = bert_classify.NAME_RE
 
@@ -1017,7 +1022,8 @@ class Slot:
 
 BERT_SLOT = Slot(BERT_SCRIPT, "bert_worker.log")
 BOW_SLOT = Slot(BOW_SCRIPT, "bow_worker.log")
-SLOTS = (BERT_SLOT, BOW_SLOT)
+LENGTH_SLOT = Slot(LENGTH_SCRIPT, "length_worker.log")
+SLOTS = (BERT_SLOT, BOW_SLOT, LENGTH_SLOT)
 
 
 def answerer_for(name, opts):
@@ -1286,8 +1292,173 @@ def start_bow_train_run(form):
     return meta
 
 
+# --------------------------------------------------------------- Length only
+# The fourth page, and the floor. Count the words, compare the count to one
+# number, call it. Nothing in the call is read - not a word of it - so
+# whatever BERT or the bag of words beats this by is the whole of what those
+# models are worth on that dataset.
+#
+# It is the `length` baseline on the Benchmark page, given a page of its own
+# because the number it produces is not the interesting part: the interesting
+# parts are which direction the rule has to point (on two of the datasets
+# here the scam calls are the SHORTER ones, the opposite of what
+# combined_evaluate's threshold of 45 assumes) and how flat the sweep curve
+# is around the chosen threshold.
+import length_classify
+
+LENGTH_TRAIN_FIELDS = {
+    "threshold": ("--threshold", int, 1, 200000, None),
+    "holdout":   ("--holdout", float, 0.0, 0.5, 0.2),
+    "seed":      ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":     ("--limit", int, 0, 100000, 0),
+}
+
+
+def length_config():
+    """Everything the Length only page needs to draw itself once."""
+    return {
+        "datasets": datasets(),
+        "models": length_classify.list_models(),
+        "defaults": {k: v[4] for k, v in LENGTH_TRAIN_FIELDS.items()},
+        "benchmark_threshold": length_classify.BENCHMARK_THRESHOLD,
+        "worker": LENGTH_SLOT.state(),
+    }
+
+
+def length_verdict(form):
+    """Put one transcript to one length-only model."""
+    name = str(form.get("model", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("pick a fitted model first")
+    if not (MODELS_DIR / name / length_classify.MODEL_FILE).exists():
+        raise ValueError("models/%s is not a length-only model" % name)
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("paste a transcript, or load one from a dataset")
+    if len(text) > 400_000:
+        raise ValueError("that is longer than any call in the datasets - "
+                         "paste one call, not a whole file")
+    threshold = numeric(form, {"threshold": ("threshold", int, 1, 200000,
+                                             None)}, "threshold")
+    direction = str(form.get("direction") or "").strip()
+    if direction and direction not in (length_classify.LONGER,
+                                       length_classify.SHORTER):
+        raise ValueError("direction is 'longer' or 'shorter'")
+
+    out = LENGTH_SLOT.for_model(name, []).ask(
+        {"transcript": text, "threshold": threshold,
+         "direction": direction or None,
+         "strip_tags": bool(form.get("strip_tags"))})
+    if not out.get("ok"):
+        raise ValueError(out.get("error") or "the model could not score that")
+    return out
+
+
+def remove_length_model(name):
+    name = (name or "").strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("bad model name")
+    d = MODELS_DIR / name
+    if not (d / length_classify.MODEL_FILE).exists():
+        raise ValueError("no such length-only model: %s" % name)
+    for slot in SLOTS:
+        if slot.worker is not None and slot.worker.name == name:
+            slot.unload()
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_length_train_run(form):
+    """Fit a threshold. Detached and logged like every other run.
+
+    It is one sort of the fitting set, so it finishes faster than the page
+    can ask about it, and like the bag of words it does not take the run lock
+    - there is nothing for it to fight a benchmark over.
+    """
+    name = str(form.get("name", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("a name is letters, digits, dot, dash or underscore")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick replace" % name)
+
+    flags = ["fit", "--csv", ds, "--name", name]
+    pinned = bool(form.get("pin"))
+    for key, (flag, _c, _lo, _hi, _d) in LENGTH_TRAIN_FIELDS.items():
+        # the threshold rides only when the form asked for it to be pinned:
+        # sending it otherwise would turn every fit into a pinned one
+        if key == "threshold" and not pinned:
+            continue
+        val = numeric(form, LENGTH_TRAIN_FIELDS, key)
+        if val is None or (key == "limit" and not val):
+            continue
+        flags += [flag, str(val)]
+    if pinned and "--threshold" not in flags:
+        raise ValueError("pinning the threshold needs a number to pin it to")
+    if pinned:
+        flags += ["--direction", str(form.get("direction")
+                                     or length_classify.LONGER)]
+    metric = str(form.get("metric") or "f1")
+    if metric not in ("f1", "acc"):
+        raise ValueError("the sweep maximises f1 or acc")
+    flags += ["--metric", metric]
+    if form.get("strip_tags"):
+        flags.append("--strip-tags")
+    if overwrite:
+        flags.append("--overwrite")
+        for slot in SLOTS:
+            if slot.worker is not None and slot.worker.name == name:
+                slot.unload()
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_length_" + name
+    log = run_path(run_id, "log")
+
+    # The same venv preamble the other two fits use: run_all.sh is not
+    # involved, and the server's own python is not the one with pandas on it.
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "fit() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> fit\\n"',
+        '  "$PY" -u scripts/length_classify.py ' + quoted
+        + ' || { printf "  fail fit\\n"; return 1; }',
+        '  printf "  ok fit\\n"',
+        "}", "fit",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/length_classify.py " + quoted
+                   + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "length_train",
+            "model_name": name, "label": "fit length · " + name,
+            "dataset": ds, "baseline": "length:" + name, "limit": "-",
+            "model": "one threshold", "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
 # ---------------------------------------------------------------- LLM judge
-# The third page, and the simplest thing in the project: no retrieval, no
+# The last page, and the simplest thing in the project: no retrieval, no
 # ontology, no fine-tuned anything. The transcript goes to the local model,
 # which says Fraud or Normal and gives its reason. It is the llm_only control
 # from the Benchmark page asked one call at a time, using the same prompt and
@@ -1547,6 +1718,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/bow/models":
                 return self._send(200, {"models": bow_classify.list_models(),
                                         "worker": BOW_SLOT.state()})
+            if u.path == "/api/length/config":
+                return self._send(200, length_config())
+            if u.path == "/api/length/models":
+                return self._send(200,
+                                  {"models": length_classify.list_models(),
+                                   "worker": LENGTH_SLOT.state()})
             # ---- the LLM judge page
             if u.path == "/api/llm/config":
                 return self._send(200, llm_config())
@@ -1610,6 +1787,21 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/bow/delete_model":
                 out = remove_bow_model(form.get("name", ""))
                 sys.stderr.write("deleted bow model %s\n" % out["id"])
+                return self._send(200, out)
+            # ---- the Length only page
+            if u.path == "/api/length/train":
+                meta = start_length_train_run(form)
+                sys.stderr.write("started %s  fit length %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/length/classify":
+                return self._send(200, length_verdict(form))
+            if u.path == "/api/length/unload":
+                return self._send(200, LENGTH_SLOT.unload())
+            if u.path == "/api/length/delete_model":
+                out = remove_length_model(form.get("name", ""))
+                sys.stderr.write("deleted length model %s\n" % out["id"])
                 return self._send(200, out)
             # ---- the LLM judge page
             if u.path == "/api/llm/judge":
@@ -1884,6 +2076,37 @@ PAGE = r"""<!doctype html>
   table.opts td, table.opts th { font-size:12.5px; }
   table.opts td.optname { text-align:left; white-space:normal; font-family:inherit; }
   table.opts tr.chosen td { color:var(--ink); font-weight:700; }
+  /* ---- the length axis ----
+     One call against the two fitting distributions, on a log scale because
+     the transcripts here run from a dozen words to sixty thousand. The bands
+     are p10-p90 with the median ticked; the line is the threshold; the
+     diamond is the call being asked about. */
+  .lenaxis { position:relative; height:64px; margin-top:4px;
+             border-bottom:1px solid var(--line); }
+  .lenband { position:absolute; height:14px; border-radius:99px; opacity:.45; }
+  .lenband.legit { top:12px; background:var(--accent); }
+  .lenband.scam { top:34px; background:var(--bad); }
+  .lentick { position:absolute; width:2px; height:14px; }
+  .lentick.legit { top:12px; background:var(--accent); }
+  .lentick.scam { top:34px; background:var(--bad); }
+  .lenline { position:absolute; top:4px; bottom:0; width:0;
+             border-left:2px dashed var(--dim); }
+  .lenhere { position:absolute; top:22px; width:12px; height:12px;
+             margin-left:-6px; transform:rotate(45deg); background:var(--ink);
+             border:2px solid var(--panel); }
+  .lenhere.scam { background:var(--bad); }
+  .lenhere.legitimate { background:var(--accent); }
+  .lenkey { display:inline-block; width:11px; height:7px; border-radius:99px;
+            vertical-align:middle; margin-right:3px; }
+  .lenkey.legit { background:var(--accent); }
+  .lenkey.scam { background:var(--bad); }
+  .lenkey.line { height:0; border-top:2px dashed var(--dim); border-radius:0; }
+  .lenkey.here { background:var(--ink); border-radius:0;
+                 transform:rotate(45deg) scale(.8); width:8px; height:8px; }
+  /* said out loud, not tucked into a hint: the rule has just contradicted
+     the data it was fitted on */
+  .card.warn { border-color:var(--warn); color:var(--ink); font-size:12.5px; }
+
   .note { color:var(--dim); font-size:12.5px; }
   .note p { margin:0 0 10px; }
   .note p:last-child { margin-bottom:0; }
@@ -1903,6 +2126,7 @@ PAGE = r"""<!doctype html>
     <button data-page="bench" class="on">Benchmark</button>
     <button data-page="mcq">BERT</button>
     <button data-page="bow">Bag of words</button>
+    <button data-page="length">Length only</button>
     <button data-page="llm">LLM judge</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
@@ -2381,6 +2605,190 @@ run appears under Recent runs on the Benchmark page like any other.</pre>
         function words: the two halves of that dataset come from different
         recording pipelines, and this is what separating on transcription
         style looks like from the inside.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== page four: Length only ==================== -->
+<div class="wrap" id="page-length" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Fitted thresholds</div>
+      <div class="hint" style="margin-top:0">the rule a call is put to &middot;
+        hover to delete one</div>
+      <div class="hist" id="lenmodels"></div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" id="lenworkerstate" style="flex:1"></span>
+        <button class="link" id="lenunload" hidden>unload it</button>
+      </div>
+      <div class="hint" id="lenmodelerr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Fit a threshold</div>
+
+      <label for="lenname">Name</label>
+      <input type="text" id="lenname" placeholder="e.g. bank-length" spellcheck="false">
+      <div class="hint">saved as models/&lt;name&gt;/ &mdash; a few kilobytes of
+        JSON. It sits beside the BERT checkpoints and the bag-of-words models
+        without colliding: the three are told apart by what is in the
+        directory.</div>
+
+      <label for="lendataset">Dataset</label>
+      <select id="lendataset"></select>
+
+      <div class="grid2">
+        <div><label for="lenmetric">Sweep maximises</label>
+             <select id="lenmetric" style="width:100%">
+               <option value="f1">F1</option>
+               <option value="acc">accuracy</option>
+             </select></div>
+        <div><label for="lenholdout">Held back to score it</label>
+             <input type="text" id="lenholdout" style="width:100%"></div>
+        <div><label for="lenseed">Seed</label>
+             <input type="text" id="lenseed" style="width:100%"></div>
+        <div><label for="lenlimit">Calls (0 = all)</label>
+             <input type="text" id="lenlimit" style="width:100%"></div>
+      </div>
+      <div class="hint">The sweep tries every threshold the fitting calls
+        suggest, in both directions, and keeps the best. That is one number
+        fitted to one dataset &mdash; it overfits happily, which is why the
+        output lists the runner-up thresholds and says when the curve is
+        flat.</div>
+
+      <label class="inline" style="margin-top:14px">
+        <input type="checkbox" id="lenpin">
+        <span><span class="name">Pin the threshold instead of sweeping</span>
+        <span class="note">no fitting at all &mdash; use the benchmark's own
+          rule</span></span>
+      </label>
+      <div class="grid2" id="lenpinrow" hidden>
+        <div><label for="lenthreshold">Words</label>
+             <input type="text" id="lenthreshold" style="width:100%"></div>
+        <div><label for="lendirection">Scam is the</label>
+             <select id="lendirection" style="width:100%">
+               <option value="longer">longer side</option>
+               <option value="shorter">shorter side</option>
+             </select></div>
+      </div>
+
+      <label class="inline">
+        <input type="checkbox" id="lenstriptrain">
+        <span><span class="name">Strip tone tags before counting</span>
+        <span class="note">drops [curious], [long pause] and the rest</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="lenoverwrite">
+        <span><span class="name">Replace a model of that name</span>
+        <span class="note">the old one is overwritten, not kept</span></span>
+      </label>
+
+      <button class="go" id="lenfit">Fit</button>
+      <div class="hint" id="lenfiterr" style="color:var(--bad)"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="row">
+        <strong id="lentitle">No model selected</strong>
+        <span style="flex:1"></span>
+      </div>
+      <div class="hint" id="lensub">Fit one on the left &mdash; it is one sort
+        of the dataset &mdash; then put a transcript to it.</div>
+    </div>
+
+    <div class="tabs" id="lentabs">
+      <button data-ltab="ask" class="on">Classify</button>
+      <button data-ltab="train">Fitting output</button>
+      <button data-ltab="about">How it decides</button>
+    </div>
+
+    <div id="l-ask">
+      <div class="card">
+        <div class="filepick">
+          <select id="lends"></select>
+          <input type="text" id="lenidx" class="num" value="0" spellcheck="false">
+          <button class="link" id="lenload">load that row</button>
+          <span class="hint" id="leninfo"></span>
+        </div>
+        <textarea id="lentranscript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
+        <div class="askrow">
+          <label class="inline" for="lenaskthreshold">Scam past
+            <input type="text" id="lenaskthreshold" class="num" placeholder="fitted"></label>
+          <label class="inline" for="lenaskdirection">on the
+            <select id="lenaskdirection" style="width:auto">
+              <option value="">fitted side</option>
+              <option value="longer">longer side</option>
+              <option value="shorter">shorter side</option>
+            </select></label>
+          <label class="inline"><input type="checkbox" id="lenstrip">
+            strip tone tags</label>
+        </div>
+        <button class="go" id="lengo">Classify this call</button>
+        <div class="hint" id="lenaskerr" style="color:var(--bad)"></div>
+      </div>
+      <div id="lenanswer"></div>
+    </div>
+
+    <div id="l-train" hidden>
+      <pre class="log" id="lentrainlog">No fitting run selected.
+
+Fill in the form on the left and press Fit. It is one sort of the dataset, and
+the run appears under Recent runs on the Benchmark page like any other.</pre>
+    </div>
+
+    <div id="l-about" hidden>
+      <div class="card note">
+        <p><strong>What it is.</strong> The number of words in the transcript,
+        compared to one other number. That is the whole model. It is the
+        <code>length</code> baseline on the Benchmark page, which is
+        <code>trivial_length</code> in <code>combined_evaluate.py</code>:
+        <em>Fraud if the call is longer than 45 words</em>.</p>
+
+        <p><strong>Why it has a page.</strong> Not because the accuracy is
+        interesting &mdash; because it is the floor. Nothing in the call is
+        read: not a word, not an entity, not a tone tag. Whatever BERT or the
+        bag of words beats this by is the whole of what those models are
+        worth on that dataset, and on several of the datasets here the gap is
+        smaller than the write-up would like.</p>
+
+        <p><strong>&ldquo;Fit&rdquo; is a sweep, not learning.</strong> There
+        is one parameter and it is chosen by trying every threshold the
+        fitting calls suggest and keeping the best-scoring one. That will
+        overfit a single number to a single dataset without complaint, so the
+        fitting output lists the runner-up thresholds and says out loud when
+        the curve is flat &mdash; when a couple of hundred thresholds come
+        within a point of the winner, the exact number means nothing. Tick
+        <em>pin the threshold</em> to skip the fitting entirely and use the
+        benchmark's own 45.</p>
+
+        <p><strong>The direction is not a given.</strong> &ldquo;Scams are
+        longer&rdquo; is an assumption about a corpus, not a fact about
+        scams, and the sweep tests both ways round. On
+        <code>scambait_bank_422.csv</code> and
+        <code>zhi_english_646.csv</code> the scam calls are the longer ones.
+        On <code>scamai_full_1000.csv</code> and
+        <code>everything_7013.csv</code> they are the <em>shorter</em> ones
+        &mdash; so <code>trivial_length</code>'s rule is pointing the wrong
+        way on those two, and the number it reports there is worse than the
+        same threshold read backwards.</p>
+
+        <p><strong>There is no probability here, so none is invented.</strong>
+        A threshold cannot say how confident it is. What is shown in place of
+        one is a fact about the fitting set: the share of fitting calls on
+        this side of the line that really were scams. When that share
+        contradicts the verdict &mdash; the rule calls a call a scam, but most
+        fitting calls on that side were not &mdash; the page says so rather
+        than dressing the number up.</p>
+
+        <p><strong>Read this next to the other pages.</strong> On
+        <code>scambait_bank_422.csv</code> a fitted threshold reaches about
+        72% held out. BERT and the bag of words both reach 100% on the same
+        split. The distance between 72% and 100% is what reading the words
+        bought; the distance between 50% and 72% is what counting them
+        bought, from a model that is one integer.</p>
       </div>
     </div>
   </div>
@@ -3277,7 +3685,7 @@ function markHistory() {
 // the first one. The only thing the two share is the run machinery on the
 // server: a training run is a detached run like any other, which is why it
 // also turns up under Recent runs.
-const PAGES = ['bench', 'mcq', 'bow', 'llm'];
+const PAGES = ['bench', 'mcq', 'bow', 'length', 'llm'];
 const pageInUrl = () => PAGES.includes(location.hash.slice(1))
   ? location.hash.slice(1) : 'bench';
 
@@ -3300,12 +3708,14 @@ function showPage(name) {
   $('page-bench').hidden = name !== 'bench';
   $('page-mcq').hidden = name !== 'mcq';
   $('page-bow').hidden = name !== 'bow';
+  $('page-length').hidden = name !== 'length';
   $('page-llm').hidden = name !== 'llm';
   // drawn on first visit rather than at boot: someone who only ever runs
   // benchmarks should not be made to wait for a directory scan of models/,
   // nor for ollama to be asked what it has pulled
   if (name === 'mcq' && !MCQ) mcqBoot();
   if (name === 'bow' && !BOW) bowBoot();
+  if (name === 'length' && !LEN) lenBoot();
   if (name === 'llm' && !LLM) llmBoot();
 }
 
@@ -3831,6 +4241,249 @@ function bowPaint(a) {
   </div>
   <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.dataset || '?')}
     · ${a.model.features || '?'} features · ${a.elapsed_ms} ms</div>`;
+}
+
+// =========================================================== Length only
+// The floor. Same shape as the other two - fit, then classify - but the
+// model is one integer, so the answer is the comparison itself: where the
+// call falls against the line, against the two fitting distributions, and
+// what share of fitting calls on that side of the line really were scams.
+let LEN = null, lenModel = null, lenModels = [], lenTimer = null, lenRun = null;
+const LFIELDS2 = {lenholdout: 'holdout', lenseed: 'seed', lenlimit: 'limit',
+                  lenthreshold: 'threshold'};
+
+async function lenBoot() {
+  const cfg = await api('/api/length/config');
+  if (cfg.error || !cfg.datasets) {
+    $('lenmodelerr').textContent = cfg.error
+      || 'unexpected reply from /api/length/config';
+    return;
+  }
+  LEN = cfg;
+  $('lendataset').innerHTML = $('lends').innerHTML = cfg.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  for (const [id, key] of Object.entries(LFIELDS2))
+    if (cfg.defaults[key] !== undefined && cfg.defaults[key] !== null)
+      $(id).value = cfg.defaults[key];
+  // the pinned box opens on the benchmark's own rule, since that is the only
+  // reason to pin it rather than sweep
+  $('lenthreshold').value = cfg.benchmark_threshold;
+
+  $('lenpin').onchange = () => { $('lenpinrow').hidden = !$('lenpin').checked; };
+  $('lenload').onclick = lenLoadRow;
+  forgetRowOnEdit('lentranscript', 'leninfo');
+  $('lengo').onclick = lenAsk;
+  $('lenfit').onclick = lenFit;
+  $('lenunload').onclick = async () => {
+    await api('/api/length/unload', {}); await lenRefresh();
+  };
+  for (const b of $('lentabs').querySelectorAll('button'))
+    b.onclick = () => lenTab(b.dataset.ltab);
+  await lenRefresh();
+}
+
+function lenTab(name) {
+  for (const b of $('lentabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.ltab === name);
+  $('l-ask').hidden = name !== 'ask';
+  $('l-train').hidden = name !== 'train';
+  $('l-about').hidden = name !== 'about';
+}
+
+const lenRule = m => `${m.direction || '?'} than ${m.threshold} words`;
+
+async function lenRefresh() {
+  const r = await api('/api/length/models');
+  if (r.error) { $('lenmodelerr').textContent = r.error; return; }
+  lenModels = r.models || [];
+  const w = r.worker || {};
+  $('lenworkerstate').textContent = w.loaded
+    ? `models/${w.model} is loaded` : '';
+  $('lenunload').hidden = !w.loaded;
+
+  if (!lenModels.length) {
+    $('lenmodels').innerHTML = '<div class="muted">nothing fitted yet</div>';
+    lenModel = null;
+  } else {
+    if (!lenModels.some(m => m.name === lenModel)) lenModel = lenModels[0].name;
+    $('lenmodels').innerHTML = lenModels.map(m => {
+      const acc = m.holdout && m.holdout.acc;
+      return `<div class="row">
+        <a href="#length" data-len="${esc(m.name)}"
+           class="${m.name === lenModel ? 'on' : ''}">
+          <strong>${esc(m.name)}</strong>
+          <span class="muted">${esc(m.dataset || '')}
+            · ${esc(lenRule(m))}${m.swept === false ? ' · pinned' : ''}${acc
+              ? ' · holdout acc ' + (100 * acc).toFixed(1) + '%' : ''}</span>
+        </a>
+        <button class="link" data-lendel="${esc(m.name)}">delete</button>
+      </div>`;
+    }).join('');
+    for (const a of $('lenmodels').querySelectorAll('a'))
+      a.onclick = e => { e.preventDefault(); lenModel = a.dataset.len; lenRefresh(); };
+    for (const b of $('lenmodels').querySelectorAll('[data-lendel]'))
+      b.onclick = async () => {
+        if (!confirm('Delete models/' + b.dataset.lendel + '?')) return;
+        const r = await api('/api/length/delete_model', {name: b.dataset.lendel});
+        if (r.error) { $('lenmodelerr').textContent = r.error; return; }
+        await lenRefresh();
+      };
+  }
+  const m = lenModels.find(x => x.name === lenModel);
+  $('lentitle').textContent = m ? m.name : 'No model selected';
+  $('lensub').textContent = m
+    ? [m.dataset, (m.rows || '?') + ' calls', lenRule(m),
+       m.swept === false ? 'pinned, not swept' : 'swept',
+       m.holdout && m.holdout.acc
+         ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%' : null,
+      ].filter(Boolean).join(' · ')
+    : 'Fit one on the left — it is one sort of the dataset — then put a '
+      + 'transcript to it.';
+}
+
+async function lenLoadRow() {
+  $('leninfo').textContent = 'loading…';
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('lends').value)}`
+                    + `&idx=${encodeURIComponent($('lenidx').value || 0)}`);
+  if (r.error) { $('leninfo').textContent = r.error; return; }
+  $('lentranscript').value = r.text;
+  $('lenidx').value = r.idx;
+  $('leninfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
+}
+
+async function lenFit() {
+  $('lenfiterr').textContent = '';
+  const body = {name: $('lenname').value, dataset: $('lendataset').value,
+                metric: $('lenmetric').value,
+                pin: $('lenpin').checked,
+                direction: $('lendirection').value,
+                strip_tags: $('lenstriptrain').checked,
+                overwrite: $('lenoverwrite').checked};
+  for (const [id, key] of Object.entries(LFIELDS2)) body[key] = $(id).value;
+  const res = await api('/api/length/train', body);
+  if (res.error) { $('lenfiterr').textContent = res.error; return; }
+  lenRun = res.id;
+  lenTab('train');
+  lenPoll();
+}
+
+async function lenPoll() {
+  if (!lenRun) return;
+  const r = await api(`/api/log?id=${encodeURIComponent(lenRun)}&offset=0`);
+  if (!r.error) $('lentrainlog').textContent = r.text || '(no output yet)';
+  clearTimeout(lenTimer);
+  if (r.error || r.done) { await lenRefresh(); return; }
+  lenTimer = setTimeout(lenPoll, 900);
+}
+
+async function lenAsk() {
+  $('lenaskerr').textContent = '';
+  if (!lenModel) { $('lenaskerr').textContent = 'fit a threshold first - '
+                                              + 'there is nothing to ask'; return; }
+  const text = $('lentranscript').value.trim();
+  if (!text) { $('lenaskerr').textContent = 'paste a transcript, or load one '
+                                          + 'from a dataset above'; return; }
+  $('lengo').disabled = true;
+  $('lengo').textContent = 'Classifying…';
+  const res = await api('/api/length/classify', {
+    model: lenModel, transcript: text,
+    threshold: $('lenaskthreshold').value,
+    direction: $('lenaskdirection').value,
+    strip_tags: $('lenstrip').checked,
+  });
+  $('lengo').disabled = false;
+  $('lengo').textContent = 'Classify this call';
+  if (res.error) {
+    $('lenaskerr').textContent = res.error;
+    $('lenanswer').innerHTML = '';
+    return;
+  }
+  lenPaint(res);
+  await lenRefresh();
+}
+
+// Where this call sits on a log scale between the two fitting distributions,
+// with the line drawn through it. Lengths here run from a dozen words to
+// sixty thousand, so a linear axis would put every short call on the same
+// pixel.
+function lenScale(a) {
+  const d = a.dist || {};
+  const pts = [a.words, a.threshold];
+  for (const k of ['scam', 'legit'])
+    if (d[k]) for (const p of ['p10', 'p50', 'p90']) pts.push(d[k][p]);
+  const lo = Math.max(1, Math.min(...pts.filter(x => x > 0)) * 0.7);
+  const hi = Math.max(...pts) * 1.3;
+  const L = Math.log(lo), H = Math.log(hi);
+  return x => 100 * (Math.log(Math.max(1, x)) - L) / Math.max(0.0001, H - L);
+}
+
+function lenPaint(a) {
+  const d = a.dist || {}, at = lenScale(a);
+  const span = (k, cls) => d[k] ? `
+    <div class="lenband ${cls}" style="left:${at(d[k].p10)}%;
+      width:${Math.max(0.6, at(d[k].p90) - at(d[k].p10))}%"></div>
+    <div class="lentick ${cls}" style="left:${at(d[k].p50)}%"></div>` : '';
+
+  const rate = a.prob_scam === null || a.prob_scam === undefined
+    ? '<span class="muted">not known</span>'
+    : `${(100 * a.prob_scam).toFixed(1)}%`;
+
+  $('lenanswer').innerHTML = `
+  <div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">Verdict</div>
+        <div class="big ${a.verdict}">${a.verdict.toUpperCase()}</div>
+        <div class="hint">${esc(a.direction)} than ${a.threshold} words${
+          a.moved ? ' · moved from the fitted rule' : ''}</div>
+      </div>
+      <div>
+        <div class="cap">This call</div>
+        <div class="big">${a.words}</div>
+        <div class="hint">words · ${a.margin > 0 ? '+' : ''}${a.margin} past
+          the line</div>
+      </div>
+      <div style="flex:1; min-width:230px">
+        <div class="cap">Of the fitting calls on this side</div>
+        <div style="font-weight:600">${rate} were scams</div>
+        <div class="hint">${a.side_n} calls ${a.side === 'above'
+          ? 'longer than' : 'at or under'} ${a.threshold} words${
+          a.stripped_tags ? ' · tone tags stripped' : ''}</div>
+      </div>
+    </div>
+  </div>
+
+  ${a.rate_disagrees ? `<div class="card warn">Most fitting calls on this side
+    of the line were <strong>not</strong> what the rule just called this one.
+    The threshold is past the point where it carries anything — the verdict is
+    the rule being applied, not evidence.</div>` : ''}
+
+  <div class="card">
+    <div class="qp">Where it falls</div>
+    <div class="lenaxis">
+      ${span('legit', 'legit')}
+      ${span('scam', 'scam')}
+      <div class="lenline" style="left:${at(a.threshold)}%"></div>
+      <div class="lenhere ${a.verdict}" style="left:${at(a.words)}%"></div>
+    </div>
+    <div class="hint" style="margin-top:10px">
+      <span class="lenkey legit"></span> legitimate calls in the fitting set
+        (p10–p90, median marked)${d.legit
+          ? ` — median ${d.legit.p50} words` : ''}
+      &nbsp;&nbsp;<span class="lenkey scam"></span> scam calls${d.scam
+          ? ` — median ${d.scam.p50} words` : ''}
+      &nbsp;&nbsp;<span class="lenkey line"></span> the threshold
+      &nbsp;&nbsp;<span class="lenkey here"></span> this call.
+      Log scale: calls here run from a dozen words to tens of thousands.</div>
+  </div>
+
+  <div class="card hint">Nothing in the call was read — not a word of it, only
+    how much of it there was. models/${esc(a.model.name)} ·
+    ${esc(a.model.dataset || '?')} ·
+    ${a.model.swept === false ? 'threshold pinned' : 'threshold swept'} ·
+    ${a.elapsed_ms} ms</div>`;
 }
 
 // ============================================================== LLM judge
