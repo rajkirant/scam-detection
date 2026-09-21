@@ -11,7 +11,7 @@ run_all.sh itself - the shell script stays the single source of truth for
 what a baseline actually does, which model gets unloaded before BERT, and
 how the results table is built.
 
-Three pages:
+Four pages:
 
   Benchmark   the form above, the output of a run, its results table and its
               prediction for every call.
@@ -20,6 +20,9 @@ Three pages:
               probability that the call is a scam. Long calls are scored in
               windows, because BERT reads 512 tokens at most.
               scripts/bert_classify.py does the work; this is its front end.
+  Bag of words  TF-IDF into a logistic regression, fitted in about a second
+              and readable back exactly - the control the other two are
+              measured against. scripts/bow_classify.py does the work.
   LLM judge   one transcript to the local LLM, scam or not, with its reason.
               scripts/llm_judge.py does the work.
 
@@ -796,6 +799,7 @@ def csv_page(run_id, name, offset, limit):
 import bert_classify
 
 BERT_SCRIPT = PROJECT_DIR / "scripts" / "bert_classify.py"
+BOW_SCRIPT = PROJECT_DIR / "scripts" / "bow_classify.py"
 MODELS_DIR = PROJECT_DIR / "models"
 BERT_NAME_RE = bert_classify.NAME_RE
 
@@ -872,25 +876,29 @@ def numeric(form, fields, key):
 
 
 class Answerer:
-    """One `bert_classify.py serve` process, kept alive between questions.
+    """One model-serving subprocess, kept alive between questions.
 
     Loading a checkpoint takes seconds and answering it takes a fraction of
     one, so the model stays in memory between clicks rather than being loaded
     per question. It answers on the CPU unless the page asks otherwise: a
     benchmark run wants the whole GPU, and this page is meant to stay usable
     while one is going.
+
+    The script is a parameter because the BERT page and the bag-of-words page
+    speak the same one-JSON-line-per-request protocol to different programs.
     """
 
-    def __init__(self, name, opts):
+    def __init__(self, name, opts, script=None, log="worker.log"):
         self.name, self.opts = name, opts
+        self.script = str(script or BERT_SCRIPT)
         self.lock = threading.Lock()
         self.last = time.time()
         self.lines = queue.Queue()
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         # transformers writes progress bars and load reports to stderr; they
         # go to a file so they neither fill the pipe nor reach the replies
-        self.errlog = open(RUNS_DIR / "mcq_worker.log", "ab", buffering=0)
-        argv = ([venv_python(), "-u", str(BERT_SCRIPT), "serve", "--name", name]
+        self.errlog = open(RUNS_DIR / log, "ab", buffering=0)
+        argv = ([venv_python(), "-u", self.script, "serve", "--name", name]
                 + opts)
         self.proc = subprocess.Popen(
             argv, cwd=str(PROJECT_DIR), stdin=subprocess.PIPE,
@@ -959,49 +967,76 @@ class Answerer:
 
 # One answerer at a time. Two would be two copies of BERT in memory for no
 # gain: the page only ever asks about the model that is selected.
-WORKER = None
-WORKER_LOCK = threading.Lock()
+class Slot:
+    """One held-open worker, and the lock that guards swapping it.
+
+    There is one of these per page rather than one for the whole server: a
+    bag-of-words model is a few hundred kilobytes, and making it evict a
+    half-gigabyte BERT checkpoint - or the other way round - every time
+    someone switches tab would be a reload nobody asked for.
+    """
+
+    def __init__(self, script, log):
+        self.script, self.log = script, log
+        self.worker = None
+        self.lock = threading.Lock()
+
+    def for_model(self, name, opts):
+        """The live worker for that model, started - or restarted - if the
+        model or the settings it was loaded with have changed."""
+        with self.lock:
+            w = self.worker
+            if w is not None and (w.name != name or w.opts != opts
+                                  or w.proc.poll() is not None):
+                w.close()
+                self.worker = None
+            if self.worker is None:
+                self.worker = Answerer(name, opts, self.script, self.log)
+            return self.worker
+
+    def unload(self):
+        with self.lock:
+            if self.worker is None:
+                return {"unloaded": False, "note": "nothing was loaded"}
+            name = self.worker.name
+            self.worker.close()
+            self.worker = None
+            return {"unloaded": True, "model": name}
+
+    def state(self):
+        w = self.worker
+        if w is None or w.proc.poll() is not None:
+            return {"loaded": False}
+        return {"loaded": True, "model": w.name, "device": w.device,
+                "idle_s": int(time.time() - w.last), "idle_limit": WORKER_IDLE}
+
+    def reap(self):
+        if self.worker is not None and time.time() - self.worker.last > WORKER_IDLE:
+            self.unload()
+
+
+BERT_SLOT = Slot(BERT_SCRIPT, "bert_worker.log")
+BOW_SLOT = Slot(BOW_SCRIPT, "bow_worker.log")
+SLOTS = (BERT_SLOT, BOW_SLOT)
 
 
 def answerer_for(name, opts):
-    """The live answerer for that checkpoint, started - or restarted - if the
-    model or the settings it was loaded with have changed."""
-    global WORKER
-    with WORKER_LOCK:
-        if WORKER is not None and (WORKER.name != name or WORKER.opts != opts
-                                   or WORKER.proc.poll() is not None):
-            WORKER.close()
-            WORKER = None
-        if WORKER is None:
-            WORKER = Answerer(name, opts)
-        return WORKER
+    return BERT_SLOT.for_model(name, opts)
 
 
 def unload_answerer():
-    global WORKER
-    with WORKER_LOCK:
-        if WORKER is None:
-            return {"unloaded": False, "note": "nothing was loaded"}
-        name = WORKER.name
-        WORKER.close()
-        WORKER = None
-        return {"unloaded": True, "model": name}
+    return BERT_SLOT.unload()
 
 
 def worker_state():
-    w = WORKER
-    if w is None or w.proc.poll() is not None:
-        return {"loaded": False}
-    return {"loaded": True, "model": w.name, "device": w.device,
-            "idle_s": int(time.time() - w.last), "idle_limit": WORKER_IDLE}
+    return BERT_SLOT.state()
 
 
 def worker_reaper():
     while True:
         time.sleep(30)
-        w = WORKER
-        if w is not None and time.time() - w.last > WORKER_IDLE:
-            unload_answerer()
+        for slot in SLOTS:
+            slot.reap()
 
 
 def bert_config():
@@ -1102,6 +1137,155 @@ def bert_verdict(form):
     return out
 
 
+# -------------------------------------------------------------- Bag of words
+# The third page, and the control the other two are measured against. Same
+# shape as the BERT page on purpose: train a model on a dataset, keep it, put
+# a transcript to it, get a probability. TF-IDF over unigrams and bigrams into
+# a logistic regression - the same vectoriser and classifier the `bow`
+# baseline cross-validates on the Benchmark page.
+#
+# It trains in about a second and it can be read back exactly, which is the
+# reason it earns a page rather than a row in a table: if it scores near a
+# fine-tuned BERT, the dataset is separable on vocabulary and neither number
+# is about understanding scams.
+import bow_classify
+
+BOW_TRAIN_FIELDS = {
+    "ngram_max": ("--ngram-max", int, 1, 3, 2),
+    "min_df":    ("--min-df", int, 1, 50, 2),
+    "holdout":   ("--holdout", float, 0.0, 0.5, 0.2),
+    "seed":      ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":     ("--limit", int, 0, 100000, 0),
+}
+
+
+def bow_config():
+    """Everything the Bag of words page needs to draw itself once."""
+    return {
+        "datasets": datasets(),
+        "models": bow_classify.list_models(),
+        "defaults": {k: v[4] for k, v in BOW_TRAIN_FIELDS.items()},
+        "worker": BOW_SLOT.state(),
+    }
+
+
+def bow_verdict(form):
+    """Put one transcript to one bag-of-words model."""
+    name = str(form.get("model", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("pick a trained model first")
+    if not (MODELS_DIR / name / bow_classify.MODEL_FILE).exists():
+        raise ValueError("models/%s is not a bag-of-words model" % name)
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("paste a transcript, or load one from a dataset")
+    if len(text) > 400_000:
+        raise ValueError("that is longer than any call in the datasets - "
+                         "paste one call, not a whole file")
+    threshold = numeric(form, {"threshold": ("threshold", float, 0.0, 1.0,
+                                             None)}, "threshold")
+    top = numeric(form, {"top": ("top", int, 3, 50, None)}, "top")
+
+    # Nothing here changes how the model reads, so it all rides with the
+    # request and no toggle costs a reload.
+    out = BOW_SLOT.for_model(name, []).ask(
+        {"transcript": text, "threshold": threshold, "top": top,
+         "strip_tags": bool(form.get("strip_tags"))})
+    if not out.get("ok"):
+        raise ValueError(out.get("error") or "the model could not score that")
+    return out
+
+
+def remove_bow_model(name):
+    name = (name or "").strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("bad model name")
+    d = MODELS_DIR / name
+    if not (d / bow_classify.MODEL_FILE).exists():
+        raise ValueError("no such bag-of-words model: %s" % name)
+    for slot in SLOTS:
+        if slot.worker is not None and slot.worker.name == name:
+            slot.unload()
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_bow_train_run(form):
+    """Fit a bag-of-words model. Detached and logged like every other run.
+
+    It finishes in about a second, so unlike BERT training it does not take
+    the run lock - there is nothing for it to fight a benchmark over. No GPU,
+    no VRAM, no epochs.
+    """
+    name = str(form.get("name", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("a name is letters, digits, dot, dash or underscore")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick replace" % name)
+
+    flags = ["train", "--csv", ds, "--name", name]
+    for key, (flag, _c, _lo, _hi, _d) in BOW_TRAIN_FIELDS.items():
+        val = numeric(form, BOW_TRAIN_FIELDS, key)
+        if val is None or (key == "limit" and not val):
+            continue
+        flags += [flag, str(val)]
+    if form.get("strip_tags"):
+        flags.append("--strip-tags")
+    if overwrite:
+        flags.append("--overwrite")
+        for slot in SLOTS:
+            if slot.worker is not None and slot.worker.name == name:
+                slot.unload()
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_bow_" + name
+    log = run_path(run_id, "log")
+
+    # The same venv preamble start_train_run uses, for the same reason:
+    # run_all.sh is not involved, and the server's own python is not the one
+    # with sklearn on it.
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "fit() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> fit\\n"',
+        '  "$PY" -u scripts/bow_classify.py ' + quoted
+        + ' || { printf "  fail fit\\n"; return 1; }',
+        '  printf "  ok fit\\n"',
+        "}", "fit",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/bow_classify.py " + quoted
+                   + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "bow_train",
+            "model_name": name, "label": "fit bag of words \u00b7 " + name,
+            "dataset": ds, "baseline": "bow:" + name, "limit": "-",
+            "model": "tfidf+logreg", "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
 # ---------------------------------------------------------------- LLM judge
 # The third page, and the simplest thing in the project: no retrieval, no
 # ontology, no fine-tuned anything. The transcript goes to the local model,
@@ -1189,8 +1373,9 @@ def remove_model(name):
     d = MODELS_DIR / name
     if not d.is_dir() or d.resolve().parent != MODELS_DIR.resolve():
         raise ValueError("no such model: %s" % name)
-    if WORKER is not None and WORKER.name == name:
-        unload_answerer()           # cannot delete a checkpoint that is open
+    for slot in SLOTS:              # cannot delete a model that is open
+        if slot.worker is not None and slot.worker.name == name:
+            slot.unload()
     shutil.rmtree(d)
     return {"deleted": True, "id": name}
 
@@ -1229,8 +1414,9 @@ def start_train_run(form):
     if overwrite:
         flags.append("--overwrite")
         # the checkpoint is about to be rewritten underneath anything holding it
-        if WORKER is not None and WORKER.name == name:
-            unload_answerer()
+        for slot in SLOTS:
+            if slot.worker is not None and slot.worker.name == name:
+                slot.unload()
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime("%Y%m%d_%H%M%S") + "_train_" + name
@@ -1355,6 +1541,12 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/dataset/context":
                 return self._send(200,
                                   dataset_context(q.get("dataset", [""])[0]))
+            # ---- the Bag of words page
+            if u.path == "/api/bow/config":
+                return self._send(200, bow_config())
+            if u.path == "/api/bow/models":
+                return self._send(200, {"models": bow_classify.list_models(),
+                                        "worker": BOW_SLOT.state()})
             # ---- the LLM judge page
             if u.path == "/api/llm/config":
                 return self._send(200, llm_config())
@@ -1403,6 +1595,21 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/bert/delete_model":
                 out = remove_model(form.get("name", ""))
                 sys.stderr.write("deleted checkpoint %s\n" % out["id"])
+                return self._send(200, out)
+            # ---- the Bag of words page
+            if u.path == "/api/bow/train":
+                meta = start_bow_train_run(form)
+                sys.stderr.write("started %s  fit bow %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/bow/classify":
+                return self._send(200, bow_verdict(form))
+            if u.path == "/api/bow/unload":
+                return self._send(200, BOW_SLOT.unload())
+            if u.path == "/api/bow/delete_model":
+                out = remove_bow_model(form.get("name", ""))
+                sys.stderr.write("deleted bow model %s\n" % out["id"])
                 return self._send(200, out)
             # ---- the LLM judge page
             if u.path == "/api/llm/judge":
@@ -1695,6 +1902,7 @@ PAGE = r"""<!doctype html>
   <nav class="pages" id="pages">
     <button data-page="bench" class="on">Benchmark</button>
     <button data-page="mcq">BERT</button>
+    <button data-page="bow">Bag of words</button>
     <button data-page="llm">LLM judge</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
@@ -2035,6 +2243,144 @@ shows up in Recent runs on the Benchmark page too.</pre>
         HarperValleyBank corpus, so the two are separable on recording
         pipeline alone. Compare against the bag-of-words baseline on the
         Benchmark page before believing any of it.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== page three: Bag of words ==================== -->
+<div class="wrap" id="page-bow" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Fitted models</div>
+      <div class="hint" style="margin-top:0">the model a call is put to ·
+        hover to delete one</div>
+      <div class="hist" id="bowmodels"></div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" id="bowworkerstate" style="flex:1"></span>
+        <button class="link" id="bowunload" hidden>unload it</button>
+      </div>
+      <div class="hint" id="bowmodelerr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Fit a model</div>
+
+      <label for="bowname">Name</label>
+      <input type="text" id="bowname" placeholder="e.g. bank-bow" spellcheck="false">
+      <div class="hint">saved as models/&lt;name&gt;/ — a few hundred KB, and
+        gitignored. It sits beside the BERT checkpoints without colliding:
+        they are told apart by what is in the directory.</div>
+
+      <label for="bowdataset">Dataset</label>
+      <select id="bowdataset"></select>
+
+      <div class="grid2">
+        <div><label for="bowngram">N-grams up to</label>
+             <input type="text" id="bowngram" style="width:100%"></div>
+        <div><label for="bowmindf">Least calls per term</label>
+             <input type="text" id="bowmindf" style="width:100%"></div>
+        <div><label for="bowholdout">Held back to score it</label>
+             <input type="text" id="bowholdout" style="width:100%"></div>
+        <div><label for="bowseed">Seed</label>
+             <input type="text" id="bowseed" style="width:100%"></div>
+      </div>
+      <div class="hint">2 and 2 are what the <code>bow</code> baseline on the
+        Benchmark page cross-validates with, so leave them there if you want
+        the two numbers to be about the same model.</div>
+
+      <label class="inline" style="margin-top:14px">
+        <input type="checkbox" id="bowstriptrain">
+        <span><span class="name">Strip tone tags before fitting</span>
+        <span class="note">drops [curious], [long pause] and the rest</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="bowoverwrite">
+        <span><span class="name">Replace a model of that name</span>
+        <span class="note">the old one is overwritten, not kept</span></span>
+      </label>
+
+      <button class="go" id="bowtrain">Fit</button>
+      <div class="hint" id="bowtrainerr" style="color:var(--bad)"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="row">
+        <strong id="bowtitle">No model selected</strong>
+        <span style="flex:1"></span>
+      </div>
+      <div class="hint" id="bowsub">Fit one on the left — it takes about a
+        second — then put a transcript to it.</div>
+    </div>
+
+    <div class="tabs" id="bowtabs">
+      <button data-btab="ask" class="on">Classify</button>
+      <button data-btab="train">Fitting output</button>
+      <button data-btab="about">How it decides</button>
+    </div>
+
+    <div id="b-ask">
+      <div class="card">
+        <div class="filepick">
+          <select id="bowds"></select>
+          <input type="text" id="bowidx" class="num" value="0" spellcheck="false">
+          <button class="link" id="bowload">load that row</button>
+          <span class="hint" id="bowinfo"></span>
+        </div>
+        <textarea id="bowtranscript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
+        <div class="askrow">
+          <label class="inline" for="bowthreshold">Scam at
+            <input type="text" id="bowthreshold" class="num" placeholder="0.5"></label>
+          <label class="inline" for="bowtop">Terms to show
+            <input type="text" id="bowtop" class="num" placeholder="12"></label>
+          <label class="inline"><input type="checkbox" id="bowstrip">
+            strip tone tags</label>
+        </div>
+        <button class="go" id="bowgo">Classify this call</button>
+        <div class="hint" id="bowaskerr" style="color:var(--bad)"></div>
+      </div>
+      <div id="bowanswer"></div>
+    </div>
+
+    <div id="b-train" hidden>
+      <pre class="log" id="bowtrainlog">No fitting run selected.
+
+Fill in the form on the left and press Fit. It takes about a second, and the
+run appears under Recent runs on the Benchmark page like any other.</pre>
+    </div>
+
+    <div id="b-about" hidden>
+      <div class="card note">
+        <p><strong>What it is.</strong> TF-IDF over word unigrams and bigrams
+        into a logistic regression — the same vectoriser and classifier the
+        <code>bow</code> baseline on the Benchmark page cross-validates. No
+        embeddings, no attention, no GPU. It fits in about a second.</p>
+
+        <p><strong>It reads the whole call.</strong> BERT takes 512 tokens, so
+        that page cuts a long transcript into windows. TF-IDF has no length
+        limit: every word is counted. So on a long call the two pages are not
+        being asked the same question, and this is the one that saw all of
+        it.</p>
+
+        <p><strong>Why it can be read back exactly.</strong> A linear model
+        over TF-IDF decomposes: the score is the intercept plus, for every
+        term in the call, its TF-IDF weight times its coefficient. The terms
+        listed under a verdict are those products, largest first, and they sum
+        to the score shown. This is arithmetic, not a story told about the
+        model afterwards — and it is the thing BERT cannot give you.</p>
+
+        <p><strong>Read the terms, not the accuracy.</strong> If this scores
+        near a fine-tuned BERT on a dataset, that dataset is separable on
+        vocabulary and neither number is evidence about understanding scams.
+        On <code>scambait_bank_422.csv</code> it reaches 100% held-out in a
+        tenth of a second — the same as BERT — and the terms doing the work
+        are <code>so</code>, <code>me</code>, <code>yes</code>,
+        <code>to</code>, <code>is</code>, <code>what</code>. Those are
+        function words: the two halves of that dataset come from different
+        recording pipelines, and this is what separating on transcription
+        style looks like from the inside.</p>
       </div>
     </div>
   </div>
@@ -2931,7 +3277,7 @@ function markHistory() {
 // the first one. The only thing the two share is the run machinery on the
 // server: a training run is a detached run like any other, which is why it
 // also turns up under Recent runs.
-const PAGES = ['bench', 'mcq', 'llm'];
+const PAGES = ['bench', 'mcq', 'bow', 'llm'];
 const pageInUrl = () => PAGES.includes(location.hash.slice(1))
   ? location.hash.slice(1) : 'bench';
 
@@ -2953,11 +3299,13 @@ function showPage(name) {
     b.classList.toggle('on', b.dataset.page === name);
   $('page-bench').hidden = name !== 'bench';
   $('page-mcq').hidden = name !== 'mcq';
+  $('page-bow').hidden = name !== 'bow';
   $('page-llm').hidden = name !== 'llm';
   // drawn on first visit rather than at boot: someone who only ever runs
   // benchmarks should not be made to wait for a directory scan of models/,
   // nor for ollama to be asked what it has pulled
   if (name === 'mcq' && !MCQ) mcqBoot();
+  if (name === 'bow' && !BOW) bowBoot();
   if (name === 'llm' && !LLM) llmBoot();
 }
 
@@ -3285,6 +3633,204 @@ function paintAnswer(a) {
   <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
     · ${a.max_length} tokens per window · ${a.elapsed_ms} ms on
     ${esc(a.device)}</div>`;
+}
+
+// ========================================================== Bag of words
+// The control page. Same shape as BERT - fit, then classify - but the model
+// is a few hundred kilobytes and can be read back exactly, so the answer is
+// the terms that decided it rather than a window profile.
+let BOW = null, bowModel = null, bowModels = [], bowTimer = null, bowRun = null;
+const BFIELDS = {bowngram: 'ngram_max', bowmindf: 'min_df',
+                 bowholdout: 'holdout', bowseed: 'seed'};
+
+async function bowBoot() {
+  const cfg = await api('/api/bow/config');
+  if (cfg.error || !cfg.datasets) {
+    $('bowmodelerr').textContent = cfg.error || 'unexpected reply from /api/bow/config';
+    return;
+  }
+  BOW = cfg;
+  $('bowdataset').innerHTML = $('bowds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  for (const [id, key] of Object.entries(BFIELDS))
+    if (cfg.defaults[key] !== undefined) $(id).value = cfg.defaults[key];
+
+  $('bowload').onclick = bowLoadRow;
+  forgetRowOnEdit('bowtranscript', 'bowinfo');
+  $('bowgo').onclick = bowAsk;
+  $('bowtrain').onclick = bowFit;
+  $('bowunload').onclick = async () => {
+    await api('/api/bow/unload', {}); await bowRefresh();
+  };
+  for (const b of $('bowtabs').querySelectorAll('button'))
+    b.onclick = () => bowTab(b.dataset.btab);
+  await bowRefresh();
+}
+
+function bowTab(name) {
+  for (const b of $('bowtabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.btab === name);
+  $('b-ask').hidden = name !== 'ask';
+  $('b-train').hidden = name !== 'train';
+  $('b-about').hidden = name !== 'about';
+}
+
+async function bowRefresh() {
+  const r = await api('/api/bow/models');
+  if (r.error) { $('bowmodelerr').textContent = r.error; return; }
+  bowModels = r.models || [];
+  const w = r.worker || {};
+  $('bowworkerstate').textContent = w.loaded
+    ? `models/${w.model} is in memory` : '';
+  $('bowunload').hidden = !w.loaded;
+
+  if (!bowModels.length) {
+    $('bowmodels').innerHTML = '<div class="muted">nothing fitted yet</div>';
+    bowModel = null;
+  } else {
+    if (!bowModels.some(m => m.name === bowModel)) bowModel = bowModels[0].name;
+    $('bowmodels').innerHTML = bowModels.map(m => {
+      const acc = m.holdout && m.holdout.acc;
+      return `<div class="row">
+        <a href="#bow" data-bow="${esc(m.name)}"
+           class="${m.name === bowModel ? 'on' : ''}">
+          <strong>${esc(m.name)}</strong>
+          <span class="muted">${esc(m.dataset || '')}
+            · ${m.features || '?'} features${acc
+              ? ' · holdout acc ' + (100 * acc).toFixed(1) + '%' : ''}</span>
+        </a>
+        <button class="link" data-bowdel="${esc(m.name)}">delete</button>
+      </div>`;
+    }).join('');
+    for (const a of $('bowmodels').querySelectorAll('a'))
+      a.onclick = e => { e.preventDefault(); bowModel = a.dataset.bow; bowRefresh(); };
+    for (const b of $('bowmodels').querySelectorAll('[data-bowdel]'))
+      b.onclick = async () => {
+        if (!confirm('Delete models/' + b.dataset.bowdel + '?')) return;
+        const r = await api('/api/bow/delete_model', {name: b.dataset.bowdel});
+        if (r.error) { $('bowmodelerr').textContent = r.error; return; }
+        await bowRefresh();
+      };
+  }
+  const m = bowModels.find(x => x.name === bowModel);
+  $('bowtitle').textContent = m ? m.name : 'No model selected';
+  $('bowsub').textContent = m
+    ? [m.dataset, (m.rows || '?') + ' calls', (m.features || '?') + ' features',
+       'n-grams to ' + (m.ngram_max || '?'),
+       m.holdout && m.holdout.acc
+         ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%' : null,
+       m.elapsed_s !== undefined ? 'fitted in ' + m.elapsed_s + 's' : null,
+      ].filter(Boolean).join(' · ')
+    : 'Fit one on the left — it takes about a second — then put a transcript to it.';
+}
+
+async function bowLoadRow() {
+  $('bowinfo').textContent = 'loading…';
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('bowds').value)}`
+                    + `&idx=${encodeURIComponent($('bowidx').value || 0)}`);
+  if (r.error) { $('bowinfo').textContent = r.error; return; }
+  $('bowtranscript').value = r.text;
+  $('bowidx').value = r.idx;
+  $('bowinfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
+}
+
+async function bowFit() {
+  $('bowtrainerr').textContent = '';
+  const body = {name: $('bowname').value, dataset: $('bowdataset').value,
+                strip_tags: $('bowstriptrain').checked,
+                overwrite: $('bowoverwrite').checked};
+  for (const [id, key] of Object.entries(BFIELDS)) body[key] = $(id).value;
+  const res = await api('/api/bow/train', body);
+  if (res.error) { $('bowtrainerr').textContent = res.error; return; }
+  bowRun = res.id;
+  bowTab('train');
+  bowPoll();
+}
+
+// It finishes in about a second, so this polls briefly rather than streaming.
+async function bowPoll() {
+  if (!bowRun) return;
+  const r = await api(`/api/log?id=${encodeURIComponent(bowRun)}&offset=0`);
+  if (!r.error) $('bowtrainlog').textContent = r.text || '(no output yet)';
+  clearTimeout(bowTimer);
+  if (r.error || r.done) { await bowRefresh(); return; }
+  bowTimer = setTimeout(bowPoll, 900);
+}
+
+async function bowAsk() {
+  $('bowaskerr').textContent = '';
+  if (!bowModel) { $('bowaskerr').textContent = 'fit a model first - there is '
+                                              + 'nothing to ask'; return; }
+  const text = $('bowtranscript').value.trim();
+  if (!text) { $('bowaskerr').textContent = 'paste a transcript, or load one '
+                                          + 'from a dataset above'; return; }
+  $('bowgo').disabled = true;
+  $('bowgo').textContent = 'Classifying…';
+  const res = await api('/api/bow/classify', {
+    model: bowModel, transcript: text, threshold: $('bowthreshold').value,
+    top: $('bowtop').value, strip_tags: $('bowstrip').checked,
+  });
+  $('bowgo').disabled = false;
+  $('bowgo').textContent = 'Classify this call';
+  if (res.error) {
+    $('bowaskerr').textContent = res.error;
+    $('bowanswer').innerHTML = '';
+    return;
+  }
+  bowPaint(res);
+  await bowRefresh();
+}
+
+function bowPaint(a) {
+  const pct = x => (100 * x).toFixed(1) + '%';
+  const terms = (list, cls) => list.length ? list.map(t => `
+    <tr><td class="optname">${esc(t.term)}</td>
+        <td class="${cls}">${t.contribution > 0 ? '+' : ''}${t.contribution.toFixed(4)}</td>
+        <td style="width:55%"><div class="bar" style="margin:0"><i
+          style="width:${Math.min(100, Math.abs(t.contribution) * 100 / Math.max(
+            0.0001, Math.abs((list[0] || {}).contribution || 1)))}%;
+          background:var(${cls === 'up' ? '--bad' : '--accent'})"></i></div></td>
+    </tr>`).join('') : '<tr><td class="optname muted">nothing</td><td></td><td></td></tr>';
+
+  $('bowanswer').innerHTML = `
+  <div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">Verdict</div>
+        <div class="big ${a.verdict}">${a.verdict.toUpperCase()}</div>
+        <div class="hint">scam at ${a.threshold}</div>
+      </div>
+      <div>
+        <div class="cap">prob_scam</div>
+        <div class="big ${a.verdict}">${pct(a.prob_scam)}</div>
+        <div class="hint">score ${a.score > 0 ? '+' : ''}${a.score.toFixed(3)}</div>
+      </div>
+      <div style="flex:1; min-width:230px">
+        <div class="cap">What it could see</div>
+        <div style="font-weight:600">${a.vocab_known} of ${a.vocab_distinct}
+          distinct words known · ${a.matched} features matched</div>
+        <div class="hint">${a.words} words${a.stripped_tags
+          ? ' · tone tags stripped' : ''}</div>
+      </div>
+    </div>
+  </div>
+  <div class="card hint">The score is the intercept
+    (${a.intercept > 0 ? '+' : ''}${a.intercept.toFixed(3)}) plus every term's
+    TF-IDF weight times its coefficient. The terms below are those products,
+    largest first — they sum to
+    ${(a.score - a.intercept) > 0 ? '+' : ''}${(a.score - a.intercept).toFixed(3)},
+    which with the intercept is the score. This is the arithmetic, not a story
+    about it.</div>
+  <div class="card">
+    <div class="qp">Towards SCAM</div>
+    <div class="scroll"><table class="opts">${terms(a.toward_scam, 'up')}</table></div>
+    <div class="qp" style="margin-top:18px">Towards LEGITIMATE</div>
+    <div class="scroll"><table class="opts">${terms(a.toward_legit, 'down')}</table></div>
+  </div>
+  <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.dataset || '?')}
+    · ${a.model.features || '?'} features · ${a.elapsed_ms} ms</div>`;
 }
 
 // ============================================================== LLM judge

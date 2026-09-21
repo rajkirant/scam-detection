@@ -29,7 +29,7 @@ base.
 | `run_all.sh` | Interactive terminal launcher — asks five questions, then runs |
 | `web_ui.sh` | Browser front end for the same thing |
 | `scripts/` | The evaluation systems and the supporting tools |
-| `models/` | Fine-tuned BERT checkpoints from the BERT page — **not in git** |
+| `models/` | Fine-tuned BERT checkpoints and fitted bag-of-words models from the BERT and Bag of words pages — **not in git** |
 | `datasets/` | The transcript CSVs (`id,label,…,text`) |
 | `knowledge/` | `scam_ontology.json`, `mcq_ontology.json`, `scam_patterns.json` |
 | `policies/` | Three bank policy documents — the corpus the Singh baseline retrieves from |
@@ -359,6 +359,50 @@ stays usable while a benchmark run has the VRAM. The checkpoint is held in
 memory between calls and let go after ten idle minutes, or when you press
 *unload it*.
 
+### Bag of words page
+
+The third tab, and the control the other two are measured against. Same shape
+as the BERT page on purpose: fit a model on a dataset, keep it, put a
+transcript to it, get a probability. `scripts/bow_classify.py` does the work
+([section C.11](#11-fit-a-bag-of-words-model-and-classify-one-call)).
+
+Under it is TF-IDF over word unigrams and bigrams into a logistic regression —
+the same vectoriser and classifier the `bow` baseline cross-validates on the
+Benchmark page. No embeddings, no attention, no GPU. It fits in about a
+second.
+
+Two differences from the BERT page matter when reading them side by side:
+
+- **It reads the whole call.** BERT takes 512 tokens, so that page scores a
+  long transcript in windows. TF-IDF has no length limit — every word is
+  counted. On a long call the two pages are not being asked the same
+  question, and this is the one that saw all of it.
+- **It can be read back exactly.** A linear model over TF-IDF decomposes: the
+  score is the intercept plus, for every term in the call, its TF-IDF weight
+  times its coefficient. The terms under a verdict are those products, largest
+  first, and they sum to the score shown. That is arithmetic, not a story told
+  about the model afterwards — and it is what BERT cannot give you.
+
+**Read the terms, not the accuracy.** On `scambait_bank_422.csv` this reaches
+**100% held out in 0.06 seconds** — the same score a fine-tuned BERT takes 63
+seconds on a GPU to reach. The terms doing the work on a real scam call from
+that set are:
+
+| Towards scam | Towards legitimate |
+| --- | --- |
+| `computer` +0.110 | `is` −0.047 |
+| `so` +0.060 | `what` −0.028 |
+| `tell` +0.060 | `can` −0.028 |
+| `me` +0.059 | `hello` −0.023 |
+| `yes` +0.047 | `company` −0.019 |
+
+Those are function words and discourse markers. The two halves of that dataset
+come from different recording pipelines — YouTube scam-baiting and the
+HarperValleyBank corpus — and this is what separating on transcription style
+looks like from the inside. When this page scores near BERT, neither number is
+evidence about understanding scams, and this page shows you why in a way the
+other cannot.
+
 ### LLM judge page
 
 The third tab, and the simplest thing in the project. Paste a transcript (or
@@ -639,6 +683,42 @@ recorded for that call. It talks to Ollama over plain HTTP with nothing but
 the standard library, so it runs outside the venv as well as in it.
 `OLLAMA_URL` (or `OLLAMA_HOST`) points it at another machine and `SCAM_MODEL`
 sets the default model.
+
+### 11. Fit a bag-of-words model and classify one call
+
+The command line behind the **Bag of words** page
+([section A](#bag-of-words-page)).
+
+```bash
+# fit on a whole dataset and keep it in models/bank-bow/
+python scripts/bow_classify.py train --csv datasets/scambait_bank_422.csv \
+    --name bank-bow
+
+# scam or not, and the terms that decided it
+python scripts/bow_classify.py classify --name bank-bow \
+    --csv datasets/scambait_bank_422.csv --idx 0
+
+python scripts/bow_classify.py models               # what is fitted
+python scripts/bow_classify.py delete --name bank-bow
+```
+
+`classify` prints the verdict, `prob_scam`, and the decomposition: the score,
+the intercept, and the terms pushing each way with what each contributed.
+Those contributions are exact — TF-IDF weight times coefficient — and they sum
+to the score.
+
+`--ngram-max 1` drops bigrams, `--min-df` changes how rare a term may be,
+`--top` sets how many terms are listed each way, `--threshold` overrides the
+model's cut-off, and `--strip-tags` removes the `[curious]` annotations (at
+fit time, at classify time, or both — they are separate flags on the two
+subcommands). There is also a `serve` mode on the same one-JSON-line protocol
+the BERT page uses.
+
+Models land in `models/` beside the BERT checkpoints without colliding: a
+bag-of-words model is a directory with `bow.joblib` in it, a BERT checkpoint
+is one with `config.json`, and each listing skips the other kind.
+
+---
 
 ---
 
