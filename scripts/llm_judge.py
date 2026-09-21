@@ -253,12 +253,22 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
         "guidance": guidance,
         "words": len(text.split()),
         "prompt_tokens_estimated": prompt_tokens,
-        # what Ollama says it actually read, which is the only number here
-        # that is not a guess. Short of the estimate means a prefix was
-        # already cached; level with the window means the window was filled,
-        # and the front of the prompt is what fell off the edge.
+        # What Ollama says it actually read: the only number here that is not
+        # a guess, and the one that shows how much of the call survived.
+        #
+        # It does NOT come back level with the window when a prompt overflows.
+        # Measured on qwen2.5:14b, an overlong prompt reads back at exactly
+        # num_ctx/2 + 2 - 4098 of 8192, 1026 of 2048 - because Ollama keeps
+        # about half the window and throws the rest away, from the front. So
+        # a window merely close to the prompt size is not enough: missing by
+        # one token costs half the window, not one token.
         "prompt_tokens_read": read,
-        "window_full": bool(read and num_ctx and read >= int(num_ctx) - 8),
+        "prompt_kept_pct": (round(100.0 * read / prompt_tokens, 1)
+                            if read and prompt_tokens else None),
+        # Certain when the prompt could not have fitted. A prompt that did fit
+        # can also read short, which is a cached prefix rather than a loss.
+        "prompt_truncated": bool(read and num_ctx and prompt_tokens > num_ctx
+                                 and read < prompt_tokens),
         "num_ctx": num_ctx,
         # the failure that looks like a bad model rather than a bad setting:
         # over the window, ollama drops the FRONT of the prompt, instructions
@@ -316,13 +326,20 @@ def print_result(r):
               "%d.\n             Ollama drops the FRONT of an overlong "
               "prompt, instructions\n             and all - raise --num-ctx."
               % (r["prompt_tokens_estimated"], r["num_ctx"]))
-    if r["window_full"]:
-        print("  WARNING    ollama read %d tokens into a %d window - it is "
-              "full, so the\n             front of this prompt was cut off. "
-              "Raise --num-ctx." % (r["prompt_tokens_read"], r["num_ctx"]))
+    if r["prompt_truncated"]:
+        print("  TRUNCATED  ollama read %d of the ~%d tokens sent - %.0f%% of "
+              "this call was\n             thrown away, from the beginning. "
+              "The verdict above is about\n             whatever was left, "
+              "which on a long call is the goodbyes.\n"
+              "             Note it read about half the %d window, not all of "
+              "it: a window\n             merely close to the prompt is no "
+              "use, it has to exceed it."
+              % (r["prompt_tokens_read"], r["prompt_tokens_estimated"],
+                 100 - (r["prompt_kept_pct"] or 0), r["num_ctx"]))
     print("  %d words, ~%d prompt tokens estimated%s, window %d, %d ms"
           % (r["words"], r["prompt_tokens_estimated"],
-             (", %d read by ollama" % r["prompt_tokens_read"])
+             (", %d read by ollama (%.0f%%)"
+              % (r["prompt_tokens_read"], r["prompt_kept_pct"] or 0))
              if r["prompt_tokens_read"] else "",
              r["num_ctx"], r["elapsed_ms"]))
     print(bar)
