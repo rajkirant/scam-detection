@@ -672,6 +672,65 @@ sets the default model.
 
 ---
 
+## The context window
+
+Ollama's context window defaults to **2048 tokens** unless the model's
+Modelfile raises it, and a prompt longer than the window is truncated **from
+the front** — where the instructions are. It does not error, does not warn and
+does not come back empty. It comes back as a fluent, plausible verdict on the
+first ~1,500 words of the call, with the question that was asked about it cut
+off.
+
+How much that matters depends entirely on the dataset:
+
+| Dataset | Median tokens | p90 | Max | Over 2048 |
+| --- | --- | --- | --- | --- |
+| `scamai_hard_subset.csv` | ~5,290 | ~11,400 | ~56,500 | **96%** |
+| `scamai_full_1000.csv` | ~4,350 | ~8,000 | ~8,500 | **86%** |
+| `everything_7013.csv` | ~435 | ~3,200 | ~8,500 | **27%** |
+| `scambait_bank_422.csv` | ~180 | ~300 | ~430 | 0% |
+| `scambait_synthetic_196.csv` | ~140 | ~190 | ~250 | 0% |
+| `zhi_english_646.csv` | ~57 | ~96 | ~360 | 0% |
+
+So a number measured on the bank, synthetic or Zhi sets is unaffected. A
+number measured on the two `scamai` sets before this was fixed was mostly
+measured on truncated calls — on `scamai_hard_subset.csv`, only **3.6%** of
+the calls fit the 2048 default at all.
+
+### Picking `SCAM_NUM_CTX`
+
+For `scamai_hard_subset.csv`, the share of calls that fit the window:
+
+| `SCAM_NUM_CTX` | Calls that fit | |
+| --- | --- | --- |
+| 2048 | 3.6% | Ollama's default — what it used to be |
+| 8192 | 76.2% | the default here |
+| 16384 | 97.4% | |
+| 32768 | 99.7% | `qwen2.5`'s own maximum |
+
+The single longest call in that set is ~56,500 tokens and fits no `qwen2.5`
+window at all. Those calls will warn on every run, which is the point — they
+need a decision (drop them, split them, or summarise them first), not a
+silent truncation.
+
+Every Ollama client in the project now routes its window through
+`scripts/ollama_ctx.py`, which sizes it to the prompt, floors it at Ollama's
+own 2048, caps it at `SCAM_NUM_CTX` (default 8192) and **says so on stderr**
+when even the cap is not enough. `combined_evaluate.py` prints a summary of
+any overflows directly under the results table, because an overflow
+invalidates the rows above it.
+
+It is a ceiling rather than a fixed size because the window costs VRAM:
+`qwen2.5:14b` is already ~9.5 GB of an 11.4 GB card, so a short call asks for
+a small window and only a long one pays for a big one. Check `nvidia-smi` has
+the headroom before raising it:
+
+```bash
+SCAM_NUM_CTX=16384 ./run_all.sh -d datasets/scamai_hard_subset.csv -b llm_only
+```
+
+---
+
 ## Datasets
 
 Every CSV in `datasets/` shows up in the launcher menus automatically. All of
@@ -699,6 +758,7 @@ the row count — the launcher parses them as CSV instead.
 | `TAVILY_API_KEY` | — | read from `.env`; only `harvest_patterns.py` needs it |
 | `WEBRAG_MIN_SIMILARITY` | `0.35` | cosine floor before the LLM relevance gate |
 | `WEBRAG_LLM_GATE` | `1` | `0` ablates the LLM relevance check |
+| `SCAM_NUM_CTX` | `8192` | ceiling on the Ollama context window every LLM system asks for — see [the context window](#the-context-window) |
 | `QWEN_NUM_CTX`, `QWEN_BATCH_SIZE`, `QWEN_N_RETRIEVE`, `QWEN_MIN_SIMILARITY`, `QWEN_EXAMPLE_CHARS` | see `scripts/combined_evaluate.py` | Qwen-KB tuning |
 | `HEARTBEAT_SECS` | `60` | how often `run_all.sh` checks for silence |
 | `SCAM_BASH` | `bash` | the bash the web UI shells out to |
@@ -711,6 +771,13 @@ the row count — the launcher parses them as CSV instead.
 `ollama serve`, or pick a baseline that needs no LLM (`trivial`, `bert`).
 
 **`<model> is not pulled here`** — `ollama pull qwen2.5:14b`.
+
+**`WARNING [llm_only] prompt is about N tokens, window is M`** — the call did
+not fit the context window, so Ollama cut the *front* off it and the model
+answered without its instructions. Raise `SCAM_NUM_CTX` and re-run; any result
+printed under that warning was measured on truncated calls. See
+[the context window](#the-context-window) for why this is a ceiling rather
+than a fixed size.
 
 **`Collection bank_policies does not exist` / `scam_patterns does not exist`** —
 you skipped [setup step 6](#6-build-the-vector-index). Run

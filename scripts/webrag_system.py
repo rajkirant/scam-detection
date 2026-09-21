@@ -110,12 +110,26 @@ W_TRUST, W_RECENCY, W_CORROB = 0.5, 0.3, 0.2
 # LOCAL LLM
 # =========================================================================
 
-def call_ollama(prompt, max_tokens=300, temperature=0.0):
+def call_ollama(prompt, max_tokens=300, temperature=0.0, num_ctx=None,
+                where="webrag"):
+    """The window is sized to the prompt rather than left to Ollama's 2048
+    default, which truncates from the FRONT and takes the instructions with
+    it without erroring. See ollama_ctx.py."""
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import ollama_ctx
+
+    if num_ctx:
+        ollama_ctx.check_num_ctx(prompt, num_ctx, max_tokens, where)
+    else:
+        num_ctx = ollama_ctx.fit_num_ctx(prompt, max_tokens, where=where)
     payload = {
         "model": OLLAMA_MODEL,
         "prompt": prompt,
         "stream": False,
-        "options": {"temperature": temperature, "num_predict": max_tokens},
+        "options": {"temperature": temperature, "num_predict": max_tokens,
+                    "num_ctx": int(num_ctx)},
     }
     try:
         r = requests.post(OLLAMA_URL, json=payload, timeout=180)

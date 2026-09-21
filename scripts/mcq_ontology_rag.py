@@ -161,7 +161,8 @@ def label_turns(transcript, ask_fn, min_fidelity=0.92, max_tokens=900, debug=Fal
     otherwise faithful labelling.
     """
     try:
-        raw = ask_fn(LABEL_PROMPT.format(text=transcript), max_tokens=max_tokens)
+        raw = ask_fn(LABEL_PROMPT.format(text=transcript),
+                     max_tokens=max_tokens, where="mcq label_turns")
     except Exception as exc:
         return transcript, False, "request failed: %s" % exc
 
@@ -235,9 +236,10 @@ class MCQOntologyDetector:
         self.stats = DetectionStats()
         self._branches = {o["id"]: o for o in self.ont["options"]}
 
-    def _ask(self, prompt, max_tokens=None):
+    def _ask(self, prompt, max_tokens=None, where="mcq"):
         import credibility as C
-        return C.call_ollama(prompt, max_tokens=max_tokens or self.max_tokens)
+        return C.call_ollama(prompt, max_tokens=max_tokens or self.max_tokens,
+                             where=where)
 
     def _routing_prompt(self, transcript):
         lines = ["You are classifying a phone call transcript.", "",
@@ -256,7 +258,8 @@ class MCQOntologyDetector:
         return "\n".join(lines)
 
     def _route(self, transcript):
-        raw = self._ask(self._routing_prompt(transcript), max_tokens=60)
+        raw = self._ask(self._routing_prompt(transcript), max_tokens=60,
+                        where="mcq route")
         data = extract_json(raw)
         cid = (data or {}).get("call_type")
         if cid in self._branches:
@@ -373,7 +376,9 @@ class MCQOntologyDetector:
                 if self.debug and label_reason:
                     print("      labelling rejected: %s" % label_reason)
 
-        raw = self._ask(self._questions_prompt(text_for_questions, branch, was_labelled))
+        raw = self._ask(self._questions_prompt(text_for_questions, branch,
+                                               was_labelled),
+                        where="mcq questions")
         data = extract_json(raw)
         if data is None:
             self.stats.answers_unread += 1
