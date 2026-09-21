@@ -97,6 +97,15 @@ check("a long prompt gets a window that fits it", need <= want <= ollama_ctx.DEF
 check("a prompt past the cap is capped, not grown",
       ollama_ctx.fit_num_ctx(HUGE, 300, where="t") == ollama_ctx.DEFAULT_CAP)
 
+# The estimate runs low against a real tokenizer - 15,933 read against 15,293
+# estimated, measured on qwen2.5:14b - and missing the window costs half of
+# it, so the window has to carry headroom over the estimate, not just round up.
+check("the window carries headroom over the estimate",
+      ollama_ctx.fit_num_ctx(LONG, 300, where="t")
+      >= ollama_ctx.estimate_tokens(LONG) * 1.1 + 300,
+      "estimate %d, window %d" % (ollama_ctx.estimate_tokens(LONG),
+                                  ollama_ctx.fit_num_ctx(LONG, 300, where="t")))
+
 digits = "4539 1488 0343 6467 " * 200
 check("the estimate errs high on digit-heavy text",
       ollama_ctx.estimate_tokens(digits) >= len(digits) // 4,

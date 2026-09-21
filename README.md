@@ -740,9 +740,19 @@ discarded (the front): "responding to the health insurance application
 
 At both 8192 and 2048 the model answered **Normal** — "a legitimate benefits
 coordinator helping to finalize the application" — which is a fair reading of
-the goodbyes it was given, and a false negative on the call. That is the
-failure this whole section exists to make impossible to miss: fluent,
-confident, and wrong, with no error anywhere.
+the goodbyes it was given, and a false negative on the call. At 32768, with
+the whole call in front of it, the same model on the same transcript answered
+**Fraud**: *"repeatedly asked for sensitive information such as credit card
+details and social security numbers."*
+
+Same model, same prompt, same row. Only the window changed. That is the
+failure this section exists to make impossible to miss: fluent, confident,
+and wrong, with no error anywhere.
+
+One detail from that run worth keeping: Ollama read **15,933** tokens where
+this project estimated 15,293 — the heuristic runs a few percent low against a
+real tokenizer. Since missing the window costs half of it, `fit_num_ctx` sizes
+windows with 15% headroom over the estimate rather than trusting it.
 
 A third run is the one that matters for the thesis: the same rows through the
 benchmark at both windows. If the verdicts move, every earlier number on that
