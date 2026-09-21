@@ -11,15 +11,17 @@ run_all.sh itself - the shell script stays the single source of truth for
 what a baseline actually does, which model gets unloaded before BERT, and
 how the results table is built.
 
-Two pages:
+Three pages:
 
   Benchmark   the form above, the output of a run, its results table and its
               prediction for every call.
-  BERT + MCQ  fine-tune a BERT on one of the datasets and keep the
-              checkpoint, then put knowledge/mcq_ontology.json to it one
-              transcript at a time - the same question set the mcq baseline
-              puts to the LLM, answered instead by a model trained on this
-              data. scripts/bert_mcq.py does the work; this is its front end.
+  BERT        fine-tune a BERT on one of the datasets and keep the
+              checkpoint, then put a transcript to it and get back the
+              probability that the call is a scam. Long calls are scored in
+              windows, because BERT reads 512 tokens at most.
+              scripts/bert_classify.py does the work; this is its front end.
+  LLM judge   one transcript to the local LLM, scam or not, with its reason.
+              scripts/llm_judge.py does the work.
 
 Over SSH, forward the port rather than binding to 0.0.0.0:
 
@@ -782,21 +784,20 @@ def csv_page(run_id, name, offset, limit):
             "offset": offset, "total": total}
 
 
-# --------------------------------------------------------------- BERT + MCQ
+# ---------------------------------------------------------------------- BERT
 # The second page. Fine-tune a BERT on one of the datasets, keep the
-# checkpoint, then make that checkpoint answer knowledge/mcq_ontology.json for
-# a single transcript - the same question set the mcq baseline puts to the LLM,
-# put instead to a model trained on this data.
+# checkpoint, then put a transcript to it and get back the one thing training
+# actually fits: the probability that this call is a scam.
 #
-# bert_mcq is imported rather than shelled out to for the cheap questions -
-# listing checkpoints, reading the ontology. Its module level is standard
-# library only (torch and transformers are imported inside the functions that
-# need them), so this server still starts on a machine with neither installed.
-import bert_mcq
+# bert_classify is imported rather than shelled out to for the cheap questions
+# - listing checkpoints. Its module level is standard library only (torch and
+# transformers are imported inside the functions that need them), so this
+# server still starts on a machine with neither installed.
+import bert_classify
 
-MCQ_SCRIPT = PROJECT_DIR / "scripts" / "bert_mcq.py"
+BERT_SCRIPT = PROJECT_DIR / "scripts" / "bert_classify.py"
 MODELS_DIR = PROJECT_DIR / "models"
-MCQ_NAME_RE = bert_mcq.NAME_RE
+BERT_NAME_RE = bert_classify.NAME_RE
 
 # What training can start from. Any model on the Hub works from the command
 # line; the menu offers the four worth comparing that fit on one GPU.
@@ -808,7 +809,8 @@ BASE_MODELS = [
 ]
 
 # Bounds on the training form. Each is (flag, cast, low, high, default) and the
-# defaults are bert_mcq.py's own, repeated here only so the form can show them.
+# defaults are bert_classify.py's own, repeated here only so the form can
+# show them.
 TRAIN_FIELDS = {
     "epochs":     ("--epochs", int, 1, 20, 4),
     "batch_size": ("--batch-size", int, 1, 64, 8),
@@ -820,12 +822,14 @@ TRAIN_FIELDS = {
 }
 # The same idea for the answering side. These change how options are matched,
 # so changing one restarts the answerer.
+# The same idea for the scoring side. BERT reads 512 tokens at most and these
+# checkpoints are trained at 256 - about 180 words - so a long call is cut
+# into windows of that size and every one is scored. Changing any of these
+# restarts the worker.
 ANSWER_FIELDS = {
-    "window":         ("--window", int, 10, 400, 45),
-    "stride":         ("--stride", int, 5, 400, 15),
-    "max_length":     ("--max-length", int, 64, 512, 256),
-    "min_confidence": ("--min-confidence", float, 0.0, 0.95, 0.30),
-    "min_margin":     ("--min-margin", float, 0.0, 0.95, 0.04),
+    "window":     ("--window", int, 20, 400, 180),
+    "stride":     ("--stride", int, 10, 400, 90),
+    "max_length": ("--max-length", int, 64, 512, 256),
 }
 
 # How long an answerer sits in memory with nothing asked of it before it is
@@ -868,7 +872,7 @@ def numeric(form, fields, key):
 
 
 class Answerer:
-    """One `bert_mcq.py serve` process, kept alive between questions.
+    """One `bert_classify.py serve` process, kept alive between questions.
 
     Loading a checkpoint takes seconds and answering it takes a fraction of
     one, so the model stays in memory between clicks rather than being loaded
@@ -886,7 +890,7 @@ class Answerer:
         # transformers writes progress bars and load reports to stderr; they
         # go to a file so they neither fill the pipe nor reach the replies
         self.errlog = open(RUNS_DIR / "mcq_worker.log", "ab", buffering=0)
-        argv = ([venv_python(), "-u", str(MCQ_SCRIPT), "serve", "--name", name]
+        argv = ([venv_python(), "-u", str(BERT_SCRIPT), "serve", "--name", name]
                 + opts)
         self.proc = subprocess.Popen(
             argv, cwd=str(PROJECT_DIR), stdin=subprocess.PIPE,
@@ -1000,19 +1004,12 @@ def worker_reaper():
             unload_answerer()
 
 
-def mcq_config():
-    """Everything the BERT + MCQ page needs to draw itself once."""
-    onto = bert_mcq.load_ontology()
+def bert_config():
+    """Everything the BERT page needs to draw itself once."""
     return {
         "datasets": datasets(),
         "bases": [{"id": k, "note": n} for k, n in BASE_MODELS],
-        "models": bert_mcq.list_models(),
-        "branches": [{"id": o["id"], "text": o.get("text", ""),
-                      "questions": len(o.get("questions", []))}
-                     for o in onto["options"]],
-        "ontology": {"prompt": onto.get("prompt", ""),
-                     "bands": onto.get("bands"),
-                     "scoring": onto.get("scoring")},
+        "models": bert_classify.list_models(),
         "defaults": {k: v[4] for k, v in
                      list(TRAIN_FIELDS.items()) + list(ANSWER_FIELDS.items())},
         "worker": worker_state(),
@@ -1062,10 +1059,10 @@ def dataset_row(path, idx):
             "dataset": path}
 
 
-def mcq_answer(form):
-    """Put the ontology to one checkpoint for one transcript."""
+def bert_verdict(form):
+    """Put one transcript to one checkpoint."""
     name = str(form.get("model", "")).strip()
-    if not MCQ_NAME_RE.match(name):
+    if not BERT_NAME_RE.match(name):
         raise ValueError("pick a trained model first")
     if not (MODELS_DIR / name / "config.json").exists():
         raise ValueError("models/%s is not a trained checkpoint" % name)
@@ -1075,38 +1072,33 @@ def mcq_answer(form):
     if len(text) > 400_000:
         raise ValueError("that is longer than any call in the datasets - "
                          "paste one call, not a whole file")
-    branch = str(form.get("branch") or "auto")
-    try:
-        cutoff = float(form.get("cutoff") or 0.0)
-    except (TypeError, ValueError):
-        raise ValueError("the scam cut-off must be a number")
+    threshold = numeric(form, {"threshold": ("threshold", float, 0.0, 1.0,
+                                             None)}, "threshold")
 
     opts = []
     for key in ANSWER_FIELDS:
         val = numeric(form, ANSWER_FIELDS, key)
         if val is not None:
             opts += [ANSWER_FIELDS[key][0], str(val)]
+    aggregate = str(form.get("aggregate") or "max")
+    if aggregate not in ("max", "mean"):
+        raise ValueError("aggregate must be max or mean")
     if form.get("gpu"):
         # the one thing that would actually fight a benchmark for VRAM
         if any(r["status"] == "running" for r in all_runs()):
-            raise ValueError("a run is going, and answering on the GPU would "
-                             "fight it for VRAM. Untick \"answer on the GPU\", "
+            raise ValueError("a run is going, and scoring on the GPU would "
+                             "fight it for VRAM. Untick \"score on the GPU\", "
                              "or stop the run first.")
         opts.append("--gpu")
-    # The comparison the thesis wants: the same questions matched in the
-    # checkpoint's own hidden states rather than in a sentence-similarity
-    # space. Worth running once to see the difference; not the default,
-    # because a binary classification objective never built a space that can
-    # tell one option from another.
-    if form.get("self_encoder"):
-        opts += ["--encoder", "self"]
-    if form.get("raw_text"):
-        opts.append("--raw")
 
+    # aggregate, threshold and strip_tags ride with the request rather than
+    # the worker's argv: they change what is done with the window scores, not
+    # how the model reads, and a toggle should not cost a model reload.
     out = answerer_for(name, opts).ask(
-        {"transcript": text, "branch": branch, "cutoff": cutoff})
+        {"transcript": text, "threshold": threshold, "aggregate": aggregate,
+         "strip_tags": bool(form.get("strip_tags"))})
     if not out.get("ok"):
-        raise ValueError(out.get("error") or "the answerer could not answer that")
+        raise ValueError(out.get("error") or "the model could not score that")
     return out
 
 
@@ -1192,7 +1184,7 @@ def remove_model(name):
     """Delete one checkpoint. Several hundred megabytes each, so the page asks
     first and this says exactly what went."""
     name = (name or "").strip()
-    if not MCQ_NAME_RE.match(name):
+    if not BERT_NAME_RE.match(name):
         raise ValueError("bad model name")
     d = MODELS_DIR / name
     if not d.is_dir() or d.resolve().parent != MODELS_DIR.resolve():
@@ -1207,7 +1199,7 @@ def start_train_run(form):
     """Fine-tune a checkpoint. Detached and logged like every other run, so it
     appears in Recent runs and can be stopped with the same button."""
     name = str(form.get("name", "")).strip()
-    if not MCQ_NAME_RE.match(name):
+    if not BERT_NAME_RE.match(name):
         raise ValueError("the model needs a name: letters, digits, dot, dash "
                          "or underscore, starting with a letter or digit")
     ds = form.get("dataset", "")
@@ -1254,7 +1246,7 @@ def start_train_run(form):
         '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
         '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
         '  printf "\\n==> train\\n"',
-        '  "$PY" -u scripts/bert_mcq.py ' + quoted
+        '  "$PY" -u scripts/bert_classify.py ' + quoted
         + ' || { printf "  fail train\\n"; return 1; }',
         '  printf "  ok train\\n"',
         "}", "train",
@@ -1265,7 +1257,7 @@ def start_train_run(form):
     env["TERM"] = "dumb"
 
     with open(log, "wb") as out:
-        out.write(("$ python scripts/bert_mcq.py " + quoted + "\n\n").encode())
+        out.write(("$ python scripts/bert_classify.py " + quoted + "\n\n").encode())
         out.flush()
         proc = subprocess.Popen(
             [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
@@ -1351,13 +1343,13 @@ class Handler(BaseHTTPRequestHandler):
                     q.get("id", [""])[0], q.get("name", [""])[0],
                     int(q.get("offset", ["0"])[0]),
                     min(200, int(q.get("limit", ["50"])[0]))))
-            # ---- the BERT + MCQ page
-            if u.path == "/api/mcq/config":
-                return self._send(200, mcq_config())
-            if u.path == "/api/mcq/models":
-                return self._send(200, {"models": bert_mcq.list_models(),
+            # ---- the BERT page
+            if u.path == "/api/bert/config":
+                return self._send(200, bert_config())
+            if u.path == "/api/bert/models":
+                return self._send(200, {"models": bert_classify.list_models(),
                                         "worker": worker_state()})
-            if u.path == "/api/mcq/sample":
+            if u.path == "/api/dataset/sample":
                 return self._send(200, dataset_row(
                     q.get("dataset", [""])[0], int(q.get("idx", ["0"])[0])))
             if u.path == "/api/dataset/context":
@@ -1398,17 +1390,17 @@ class Handler(BaseHTTPRequestHandler):
                        else delete_run(form.get("id", "")))
                 sys.stderr.write("deleted %s\n" % json.dumps(out))
                 return self._send(200, out)
-            # ---- the BERT + MCQ page
-            if u.path == "/api/mcq/train":
+            # ---- the BERT page
+            if u.path == "/api/bert/train":
                 meta = start_train_run(form)
                 sys.stderr.write("started %s  train %s on %s\n"
                                  % (meta["id"], meta["model"], meta["dataset"]))
                 return self._send(200, meta)
-            if u.path == "/api/mcq/answer":
-                return self._send(200, mcq_answer(form))
-            if u.path == "/api/mcq/unload":
+            if u.path == "/api/bert/classify":
+                return self._send(200, bert_verdict(form))
+            if u.path == "/api/bert/unload":
                 return self._send(200, unload_answerer())
-            if u.path == "/api/mcq/delete_model":
+            if u.path == "/api/bert/delete_model":
                 out = remove_model(form.get("name", ""))
                 sys.stderr.write("deleted checkpoint %s\n" % out["id"])
                 return self._send(200, out)
@@ -1639,7 +1631,7 @@ PAGE = r"""<!doctype html>
   nav.pages button.on { background:var(--accent); border-color:var(--accent);
                         color:#fff; }
 
-  /* ---- BERT + MCQ ---- */
+  /* ---- BERT ---- */
   textarea { width:100%; padding:10px 12px; border:1px solid var(--line);
              border-radius:6px; background:var(--panel); color:var(--ink);
              font:12.5px/1.6 var(--mono); resize:vertical; min-height:150px; }
@@ -1656,9 +1648,9 @@ PAGE = r"""<!doctype html>
   details.adv[open] > summary::before { content:"\25be "; }
   details.adv .advbody { padding-bottom:12px; }
 
-  /* the headline: what the ontology made of the call, and what the trained
-     head made of it, side by side - they are different claims and the page
-     should never let them be read as one number */
+  /* the headline: the verdict, the probability behind it, and how it moved
+     across the call - side by side, because the interesting case is the one
+     where reading only the opening would have said something else */
   .verdict { display:flex; gap:30px; flex-wrap:wrap; align-items:flex-end; }
   .big { font-size:30px; font-weight:700; line-height:1.05; letter-spacing:-.02em;
          font-variant-numeric:tabular-nums; }
@@ -1668,25 +1660,13 @@ PAGE = r"""<!doctype html>
   .cap { font-size:11px; font-weight:700; letter-spacing:.08em; margin-bottom:5px;
          text-transform:uppercase; color:var(--dim); }
 
-  /* one answered question */
-  .q { border-top:1px solid var(--line); padding:14px 0; }
-  .q:first-child { border-top:none; padding-top:0; }
-  .q:last-child { padding-bottom:0; }
   .qp { font-weight:600; margin-bottom:8px; }
-  .qa { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .qa .pick { flex:1; min-width:220px; }
-  .chip { font-size:12px; font-weight:700; padding:2px 9px; border-radius:99px;
-          border:1px solid var(--line); font-variant-numeric:tabular-nums;
-          white-space:nowrap; }
-  .chip.pos  { color:var(--bad); border-color:var(--bad); }
-  .chip.neg  { color:var(--accent); border-color:var(--accent); }
-  .chip.zero { color:var(--dim); }
   .bar { height:5px; background:var(--line); border-radius:99px; margin-top:9px;
          overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--accent); border-radius:99px; }
   .bar.low i { background:var(--warn); }
-  /* the stretch of transcript the chosen option actually matched against -
-     without it an answer is a claim with nothing behind it */
+  /* the stretch of the call that scored highest - without it a probability
+     is a claim with nothing behind it */
   .ev { margin-top:9px; color:var(--dim); font-size:12.5px; font-style:italic;
         border-left:2px solid var(--line); padding-left:11px; }
   table.opts td, table.opts th { font-size:12.5px; }
@@ -1709,7 +1689,7 @@ PAGE = r"""<!doctype html>
   <h1>scam-detection</h1>
   <nav class="pages" id="pages">
     <button data-page="bench" class="on">Benchmark</button>
-    <button data-page="mcq">BERT + MCQ</button>
+    <button data-page="mcq">BERT</button>
     <button data-page="llm">LLM judge</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
@@ -1864,13 +1844,13 @@ results table, and the prediction it made for every single call.</pre>
   </div>
 </div>
 
-<!-- ==================== page two: BERT + MCQ ==================== -->
+<!-- ==================== page two: BERT ==================== -->
 <div class="wrap" id="page-mcq" hidden>
   <div class="side">
     <div class="sect">
       <div class="secthead">Trained models</div>
-      <div class="hint" style="margin-top:0">the checkpoint the questions are
-        put to · hover to delete one</div>
+      <div class="hint" style="margin-top:0">the checkpoint a call is put to ·
+        hover to delete one</div>
       <div class="hist" id="mcqmodels"></div>
       <div class="row" style="margin-top:8px">
         <span class="hint" id="workerstate" style="flex:1"></span>
@@ -1936,14 +1916,14 @@ results table, and the prediction it made for every single call.</pre>
         <span style="flex:1"></span>
         <button class="stop" id="trainstop" hidden>Stop</button>
       </div>
-      <div class="hint" id="mcqsub">Train one on the left, then put the
-        ontology's questions to it.</div>
+      <div class="hint" id="mcqsub">Train one on the left, then put a
+        transcript to it.</div>
     </div>
 
     <div class="tabs" id="mcqtabs">
-      <button data-mtab="ask" class="on">Ask</button>
+      <button data-mtab="ask" class="on">Classify</button>
       <button data-mtab="train">Training output</button>
-      <button data-mtab="about">How it answers</button>
+      <button data-mtab="about">How it decides</button>
     </div>
 
     <!-- ask -->
@@ -1957,15 +1937,18 @@ results table, and the prediction it made for every single call.</pre>
         </div>
         <textarea id="transcript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
         <div class="askrow">
-          <label class="inline" for="branch">Branch
-            <select id="branch"></select></label>
-          <label class="inline" for="cutoff">Scam cut-off
-            <input type="text" id="cutoff" class="num" value="0"></label>
+          <label class="inline" for="aggregate">Combine windows by
+            <select id="aggregate">
+              <option value="max">the strongest stretch</option>
+              <option value="mean">the average</option>
+            </select></label>
+          <label class="inline" for="threshold">Scam at
+            <input type="text" id="threshold" class="num" placeholder="0.5"></label>
           <label class="inline"><input type="checkbox" id="agpu">
-            answer on the GPU</label>
+            score on the GPU</label>
         </div>
         <details class="adv">
-          <summary>How the options are matched</summary>
+          <summary>How the call is read</summary>
           <div class="advbody">
             <div class="grid2">
               <div><label for="awindow">Window (words)</label>
@@ -1974,37 +1957,30 @@ results table, and the prediction it made for every single call.</pre>
                    <input type="text" id="astride" style="width:100%"></div>
               <div><label for="amaxlen">Tokens per window</label>
                    <input type="text" id="amaxlen" style="width:100%"></div>
-              <div><label for="aminconf">Abstain below</label>
-                   <input type="text" id="aminconf" style="width:100%"></div>
-              <div><label for="aminmargin">Least margin</label>
-                   <input type="text" id="aminmargin" style="width:100%"></div>
             </div>
-            <div class="hint">The transcript is cut into overlapping windows and
-              an option scores its best match against any one of them. The
-              margin is how far the best option is clear of the runner-up, in
-              raw cosine; under it the question abstains rather than picking
-              between scores that are the same number twice. Changing any of
-              these reloads the model, so the next answer is slower.</div>
+            <div class="hint">BERT reads 512 tokens at most and these
+              checkpoints are trained at 256 — about 180 words. A call longer
+              than that is cut into overlapping windows of the size training
+              used, each is scored, and the call takes the strongest (or the
+              average). Handing it the whole transcript instead would score
+              the first two minutes and ignore the rest. Changing any of these
+              reloads the model, so the next answer is slower.</div>
             <div style="margin-top:11px">
-              <label class="inline"><input type="checkbox" id="aself">
-                match in the checkpoint's own hidden states</label>
-              <div class="hint">Off by default. Fine-tuning fits a binary
-                scam/legitimate head and never asks the encoder to tell "a
-                courier" from "a customs agency", so matching there gives
-                every option nearly the same score and the winner is decided
-                by noise. Tick it to see that happen.</div>
-            </div>
-            <div style="margin-top:9px">
-              <label class="inline"><input type="checkbox" id="araw">
-                match against the raw transcript</label>
-              <div class="hint">Off by default. Normally the tone tags
-                ([curious], [long pause]) come out and the apostrophes ASR
-                dropped go back in, because "i m" and "don t" are not words
-                any encoder was trained on.</div>
+              <label class="inline"><input type="checkbox" id="astrip">
+                strip the tone tags first</label>
+              <div class="hint">Off by default. Takes out
+                <code>[curious]</code>, <code>[long pause]</code> and the rest
+                — nobody said them out loud, but training read them, so this
+                asks the model about text of a kind it never saw. Worth one
+                run both ways: in
+                <code>scamai_full_1000.csv</code>, <code>[satisfied]</code>
+                sits on 54.8% of legitimate calls and 31.0% of scams, so a
+                score that moves a lot here was partly reading the annotation
+                style rather than the call.</div>
             </div>
           </div>
         </details>
-        <button class="go" id="askgo">Answer the questions</button>
+        <button class="go" id="askgo">Classify this call</button>
         <div class="hint" id="askerr" style="color:var(--bad)"></div>
       </div>
       <div id="answer"></div>
@@ -2022,56 +1998,38 @@ shows up in Recent runs on the Benchmark page too.</pre>
     <!-- about -->
     <div id="m-about" hidden>
       <div class="card note">
-        <p><strong>Two different claims, kept apart.</strong> Training fits a
-        binary scam/legitimate classifier, and <code>prob_scam</code> is that
-        head speaking — it is the only number the model was directly trained to
-        produce. The MCQ score beside it is the ontology's: the sum of the
-        values of the options chosen below, banded by the cut-offs in
-        <code>knowledge/mcq_ontology.json</code>. They can disagree, and when
-        they do that is worth reading, not averaging.</p>
+        <p><strong>One number, and it is the one training fits.</strong> The
+        checkpoint is a binary classifier: it was shown labelled calls and
+        fitted to separate scam from legitimate. <code>prob_scam</code> is
+        that head speaking. Nothing else on this page is inferred, weighted or
+        scored — the model was trained to produce this and only this.</p>
 
-        <p><strong>How a question gets answered without MCQ labels.</strong>
-        By similarity. The transcript is cut into overlapping word windows;
-        each window and each option text is mean-pooled into a vector; an
-        option scores the best cosine similarity it reaches against any
-        window. The mean direction of the whole option corpus is subtracted
-        from both sides first — sentence vectors out of any BERT sit in a
-        narrow cone, so two unrelated phrases still score .85 against each
-        other, and taking that shared direction out is what gives the options
-        room to differ.</p>
+        <p><strong>Why the call is cut into windows.</strong> BERT reads 512
+        tokens at most, and these checkpoints are trained at 256 — roughly 180
+        words. Some calls in <code>datasets/</code> run past ten thousand.
+        Handing the whole transcript to the tokenizer scores its opening and
+        silently drops the rest, which on a long call means judging it by the
+        hellos. So the transcript is cut into overlapping windows the size
+        training used, every window is scored, and the call takes either the
+        strongest window or the average of them.</p>
 
-        <p><strong>Why the options are not matched in the checkpoint.</strong>
-        They were, and it was the reason the answers looked arbitrary.
-        Fine-tuning fits a binary scam/legitimate head; nothing in that
-        objective asks the encoder to tell "a courier" from "a customs
-        agency", which is the distinction every question here turns on. Every
-        option came back within a few hundredths of every other, and a softmax
-        over noise still has to hand its probability to somebody. So the match
-        runs in <code>all-MiniLM-L6-v2</code> — the model that already indexes
-        the policy KB — and the checkpoint keeps the job it was trained for,
-        which is <code>prob_scam</code>. The tickbox under <em>How the options
-        are matched</em> puts it back the old way if you want to see the
-        difference.</p>
+        <p><strong>Strongest or average.</strong> <em>Strongest</em> says a
+        scam signal anywhere is a scam signal, which suits calls that are
+        mostly small talk around one telling exchange. <em>Average</em> is
+        steadier but dilutes that exchange in a long friendly call. Both are
+        shown whichever you pick, along with <strong>first window</strong> —
+        what a single truncated read would have said. When those three
+        disagree, the disagreement is the finding.</p>
 
-        <p><strong>The margin is the number to read.</strong> A question is
-        only answered when its best option is clear of the runner-up by the
-        margin you set, in raw cosine. Confidence cannot carry that on its
-        own: four scores that are the same number twice still produce a
-        confident-looking softmax. Under the margin the question abstains to
-        its "not stated" answer and contributes nothing to the score —
-        not knowing whether the caller asked for anything is not evidence that
-        they asked for nothing.</p>
-
-        <p><strong>Where it is weak.</strong> Similarity reads subject matter,
-        not negation — "I will <em>not</em> ask for your PIN" sits close to the
-        option about asking for a PIN. That is the honest limit of matching
-        rather than reasoning, and it is the gap the LLM-driven
-        <code>mcq</code> baseline on the other page exists to close.</p>
-
-        <p><strong>The evidence line</strong> under each answer is the window
-        that scored highest for the chosen option — the stretch of the call the
-        answer actually came from. Open <em>all options</em> to see what every
-        other option scored, and what it would have contributed.</p>
+        <p><strong>What the holdout number is not.</strong> The accuracy
+        beside a trained model is a stratified slice of its own training file,
+        kept back. It says the checkpoint learnt something; it does not say
+        the something is scam detection. On
+        <code>scambait_bank_422.csv</code> a checkpoint reaches 100% — the
+        scam side is YouTube scam-baiting and the legitimate side is the
+        HarperValleyBank corpus, so the two are separable on recording
+        pipeline alone. Compare against the bag-of-words baseline on the
+        Benchmark page before believing any of it.</p>
       </div>
     </div>
   </div>
@@ -2962,7 +2920,7 @@ function markHistory() {
     a.classList.toggle('on', a.dataset.id === current);
 }
 
-// ============================================================ BERT + MCQ
+// ================================================================ BERT
 // The second page keeps its own state throughout - its own selected run, its
 // own poller - so switching pages never disturbs a benchmark streaming into
 // the first one. The only thing the two share is the run machinery on the
@@ -2975,11 +2933,10 @@ const pageInUrl = () => PAGES.includes(location.hash.slice(1))
 let MCQ = null, model = null, MODELS = [];
 let trainRun = null, mtimer = null, moffset = 0;
 
-// form field -> the key /api/mcq/config sends its default under
+// form field -> the key /api/bert/config sends its default under
 const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
                  tlr: 'lr', tseed: 'seed', tlimit: 'limit', tholdout: 'holdout',
-                 awindow: 'window', astride: 'stride', amaxlen: 'max_length',
-                 aminconf: 'min_confidence', aminmargin: 'min_margin'};
+                 awindow: 'window', astride: 'stride', amaxlen: 'max_length'};
 
 // The page is in the URL, so #mcq can be bookmarked, reloaded, and sent to
 // someone - and reloading while reading an answer comes back to the answer
@@ -3000,9 +2957,9 @@ function showPage(name) {
 }
 
 async function mcqBoot() {
-  const cfg = await api('/api/mcq/config');
-  if (cfg.error || !cfg.branches) {
-    $('modelerr').textContent = cfg.error || 'unexpected reply from /api/mcq/config';
+  const cfg = await api('/api/bert/config');
+  if (cfg.error || !cfg.bases) {
+    $('modelerr').textContent = cfg.error || 'unexpected reply from /api/bert/config';
     return;
   }
   MCQ = cfg;
@@ -3012,13 +2969,8 @@ async function mcqBoot() {
   ).join('');
   $('tbase').innerHTML = MCQ.bases.map(b =>
     `<option value="${b.id}">${b.id}</option>`).join('');
-  // "auto" is the interesting setting - forcing a branch is for checking what
-  // the questions of another branch would have made of the same call
-  $('branch').innerHTML =
-    '<option value="auto">let the model route it</option>' +
-    MCQ.branches.map(b => `<option value="${b.id}">${esc(b.text)}` +
-      ` (${b.questions} question${b.questions === 1 ? '' : 's'})</option>`).join('');
-  for (const [id, key] of Object.entries(MFIELDS)) $(id).value = MCQ.defaults[key];
+  for (const [id, key] of Object.entries(MFIELDS))
+    if ($(id) && MCQ.defaults[key] !== undefined) $(id).value = MCQ.defaults[key];
 
   $('tbase').onchange = onBase;
   onBase();
@@ -3052,7 +3004,7 @@ function showMtab(name) {
 
 // ------------------------------------------------------- trained models
 async function refreshModels() {
-  const r = await api('/api/mcq/models');
+  const r = await api('/api/bert/models');
   if (r.error) { $('modelerr').textContent = r.error; return; }
   $('modelerr').textContent = '';
   paintModels(r.models || [], r.worker || {loaded: false});
@@ -3119,8 +3071,8 @@ function paintMcqHeader(status) {
     $('mcqsub').textContent = bits.join(' · ');
   } else {
     $('mcqtitle').textContent = 'No model selected';
-    $('mcqsub').textContent = "Train one on the left, then put the ontology's "
-                            + 'questions to it.';
+    $('mcqsub').textContent = 'Train one on the left, then put a transcript '
+                            + 'to it.';
   }
   const st = status || (trainRun && RUNS[trainRun] && RUNS[trainRun].status);
   const pill = $('mcqpill');
@@ -3135,14 +3087,14 @@ async function delModel(name) {
              + `${m ? kb(m.bytes) + ' on disk. ' : ''}It cannot be recovered - `
              + `it would have to be trained again. Nothing else is touched.`)) return;
   $('modelerr').textContent = '';
-  const r = await api('/api/mcq/delete_model', {name});
+  const r = await api('/api/bert/delete_model', {name});
   if (r.error) { $('modelerr').textContent = r.error; return; }
   if (model === name) { model = null; $('answer').innerHTML = ''; }
   await refreshModels();
 }
 
 async function unloadModel() {
-  const r = await api('/api/mcq/unload', {});
+  const r = await api('/api/bert/unload', {});
   if (r.error) { $('modelerr').textContent = r.error; return; }
   await refreshModels();
 }
@@ -3151,7 +3103,7 @@ async function unloadModel() {
 async function train() {
   $('trainerr').textContent = '';
   $('traingo').disabled = true;
-  const res = await api('/api/mcq/train', {
+  const res = await api('/api/bert/train', {
     name: $('tname').value, dataset: $('tdataset').value, base: $('tbase').value,
     epochs: $('tepochs').value, batch_size: $('tbatch').value,
     max_length: $('tmaxlen').value, lr: $('tlr').value, seed: $('tseed').value,
@@ -3199,7 +3151,7 @@ async function mpoll() {
 // ----------------------------------------------------------- asking it
 async function loadSample() {
   $('sampleinfo').textContent = 'loading…';
-  const r = await api(`/api/mcq/sample?dataset=${encodeURIComponent($('sampleds').value)}`
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('sampleds').value)}`
                     + `&idx=${encodeURIComponent($('sampleidx').value || 0)}`);
   if (r.error) { $('sampleinfo').textContent = r.error; return; }
   $('transcript').value = r.text;
@@ -3212,25 +3164,24 @@ async function loadSample() {
 async function ask() {
   $('askerr').textContent = '';
   if (!model) { $('askerr').textContent = 'train a model first - there is '
-                                        + 'nothing to put the questions to'; return; }
+                                        + 'nothing to ask'; return; }
   const text = $('transcript').value.trim();
   if (!text) { $('askerr').textContent = 'paste a transcript, or load one from '
                                        + 'a dataset above'; return; }
   $('askgo').disabled = true;
-  $('askgo').textContent = 'Answering…';
-  $('answer').innerHTML = '<div class="card muted">putting the questions to '
+  $('askgo').textContent = 'Classifying…';
+  $('answer').innerHTML = '<div class="card muted">putting the call to '
     + esc(model) + '… the first one after a model or a setting changes also '
     + 'loads the checkpoint, which takes a few seconds</div>';
-  const res = await api('/api/mcq/answer', {
-    model: model, transcript: text, branch: $('branch').value,
-    cutoff: $('cutoff').value, gpu: $('agpu').checked,
+  const res = await api('/api/bert/classify', {
+    model: model, transcript: text, gpu: $('agpu').checked,
+    aggregate: $('aggregate').value, threshold: $('threshold').value,
+    strip_tags: $('astrip').checked,
     window: $('awindow').value, stride: $('astride').value,
-    max_length: $('amaxlen').value, min_confidence: $('aminconf').value,
-    min_margin: $('aminmargin').value, self_encoder: $('aself').checked,
-    raw_text: $('araw').checked,
+    max_length: $('amaxlen').value,
   });
   $('askgo').disabled = false;
-  $('askgo').textContent = 'Answer the questions';
+  $('askgo').textContent = 'Classify this call';
   if (res.error) {
     $('askerr').textContent = res.error;
     $('answer').innerHTML = '';
@@ -3241,101 +3192,77 @@ async function ask() {
 }
 
 function paintAnswer(a) {
-  const v = a.score.verdict;
-  const p = a.classifier.prob_scam;
-  const cls = p >= a.classifier.threshold ? 'scam' : 'legitimate';
-  const sum = (a.score.sum > 0 ? '+' : '') + a.score.sum.toFixed(2);
+  const pct = x => (100 * x).toFixed(1) + '%';
+  const cls = a.verdict;
 
-  // The two numbers side by side and never combined: one is the sum of the
-  // options chosen below, the other is the head that was actually trained.
+  // The three numbers side by side, because the interesting case is when they
+  // disagree: "first window" is what a single truncated read would have said,
+  // and on a long call that is a verdict on the hellos.
   const head = `
   <div class="card">
     <div class="verdict">
       <div>
-        <div class="cap">MCQ score</div>
-        <div class="big ${v}">${sum}</div>
-        <div class="hint">${esc(v)}${a.score.cutoff
-            ? ' · cut-off ' + a.score.cutoff : ''}</div>
+        <div class="cap">Verdict</div>
+        <div class="big ${cls}">${a.verdict.toUpperCase()}</div>
+        <div class="hint">scam at ${a.threshold}</div>
       </div>
       <div>
-        <div class="cap">Trained head</div>
-        <div class="big ${cls}">${(100 * p).toFixed(1)}%</div>
-        <div class="hint">prob_scam · ${cls} at ${a.classifier.threshold}</div>
+        <div class="cap">prob_scam</div>
+        <div class="big ${cls}">${pct(a.prob_scam)}</div>
+        <div class="hint">${a.aggregate === 'max' ? 'strongest of'
+          : 'average over'} ${a.windows} window${a.windows === 1 ? '' : 's'}</div>
       </div>
       <div style="flex:1; min-width:210px">
-        <div class="cap">Routed to</div>
-        <div style="font-weight:600">${esc(a.route.chosen_text)}</div>
-        <div class="hint">${a.route.forced ? 'the branch you chose'
-          : (100 * a.route.confidence).toFixed(0) + '% confident'} · ${
-          a.questions.length} question${a.questions.length === 1 ? '' : 's'}</div>
+        <div class="cap">Across the call</div>
+        <div style="font-weight:600">max ${pct(a.max)} · mean ${pct(a.mean)}
+          · first ${pct(a.first_window)}</div>
+        <div class="hint">${a.words} words · ${a.window_words}-word windows,
+          stride ${a.stride}</div>
       </div>
     </div>
-    ${a.route.legit_contrast ? `<div class="ev" style="font-style:normal; margin-top:15px">
-      <strong>A real call of this kind:</strong> ${esc(a.route.legit_contrast)}</div>` : ''}
   </div>`;
 
-  const body = a.questions.length
-    ? '<div class="card">' + a.questions.map(qBlock).join('') + '</div>'
-    : '<div class="card muted">that branch asks no questions, so there is '
-      + 'nothing to score - the call did not look like any of the kinds the '
-      + 'ontology covers</div>';
+  const notes = [];
+  if (a.windows > 1 && Math.abs(a.max - a.first_window) >= 0.2)
+    notes.push(`The opening of this call scores ${pct(a.first_window)} and its `
+      + `strongest stretch ${pct(a.max)}. Reading only the first `
+      + `${a.window_words} words — which is what a single pass through the `
+      + `tokenizer does — would have said something else.`);
+  if (a.stripped_tags)
+    notes.push('Tone tags were stripped before scoring. Training read them, so '
+      + 'this is the model being asked about text of a kind it never saw — a '
+      + 'useful experiment, not a like-for-like number.');
+  if (a.windows === 1)
+    notes.push('This call fits in one window, so there was nothing to combine '
+      + 'and all three numbers are the same read.');
 
-  const m = a.matching || {};
-  $('answer').innerHTML = head + body + `
-    <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
-      · ${a.windows} window${a.windows === 1 ? '' : 's'} · ${a.elapsed_ms} ms
-      on ${esc(a.device)}${m.encoder ? `<br>options matched in
-      ${esc(m.encoder === 'self' ? "the checkpoint's own hidden states"
-        : m.encoder)}${m.centred ? ', centred' : ', uncentred'}${
-        m.normalised ? '' : ', raw transcript'} · answered ${m.answered} of
-      ${m.asked} question${m.asked === 1 ? '' : 's'}` : ''}</div>`;
-}
-
-function qBlock(q) {
-  const pct = Math.round(100 * q.confidence);
-  const chip = q.recorded
-    ? '<span class="chip zero">recorded</span>'
-    : `<span class="chip ${q.contributes > 0 ? 'pos'
-        : q.contributes < 0 ? 'neg' : 'zero'}">${
-        q.contributes > 0 ? '+' : ''}${q.contributes.toFixed(1)}</span>`;
-  const val = o => (o.value === null || o.value === undefined) ? '—'
-    : (o.value > 0 ? '+' : '') + o.value.toFixed(1);
-  const rows = q.options.map(o => `
-    <tr class="${o.id === q.chosen ? 'chosen' : ''}">
-      <td class="optname">${esc(o.text)}</td>
-      <td>${val(o)}</td>
-      <td>${(100 * o.confidence).toFixed(0)}%</td>
-      <td>${o.similarity.toFixed(3)}</td>
+  const bars = a.profile.map((s, i) => `
+    <tr class="${i === a.hottest.index ? 'chosen' : ''}">
+      <td class="optname">window ${i + 1}</td>
+      <td>${pct(s)}</td>
+      <td style="width:60%"><div class="bar ${s < 0.5 ? 'low' : ''}"
+        style="margin:0"><i style="width:${Math.max(2, 100 * s)}%"></i></div></td>
     </tr>`).join('');
-  const ev = q.evidence
-    ? `<div class="ev">…${esc(q.evidence.slice(0, 320))}${
-        q.evidence.length > 320 ? '…' : ''}</div>` : '';
-  return `
-  <div class="q">
-    <div class="qp">${esc(q.prompt)}</div>
-    <div class="qa">
-      <span class="pick">${esc(q.chosen_text)}${q.abstained
-        ? ' <span class="hint">— abstained</span>' : ''}</span>
-      ${chip}<span class="hint">${pct}%${q.margin === undefined ? ''
-        : ' · margin ' + q.margin.toFixed(3)}</span>
-    </div>
-    ${q.abstained && q.why_abstained ? `<div class="hint">${esc(q.why_abstained)}${
-      q.best_text ? ' — the best option was “' + esc(q.best_text) + '”' : ''}</div>` : ''}
-    <div class="bar ${q.abstained || q.confidence < 0.4 ? 'low' : ''}">
-      <i style="width:${Math.max(2, pct)}%"></i></div>
-    ${ev}
-    <details class="adv" style="margin-bottom:0">
-      <summary>all ${q.options.length} options${q.recorded
-        ? ' · recorded for the explanation, scores nothing' : ''}</summary>
-      <div class="advbody">
-        <div class="scroll"><table class="opts">
-          <tr><th>option</th><th>value</th><th>confidence</th><th>similarity</th></tr>
-          ${rows}
-        </table></div>
-        ${q.note ? `<div class="hint" style="margin-top:11px">${esc(q.note)}</div>` : ''}
-      </div>
+
+  $('answer').innerHTML = head
+    + notes.map(n => `<div class="card hint">${n}</div>`).join('')
+    + `
+  <div class="card">
+    <div class="qp">Strongest stretch — window ${a.hottest.index + 1} of
+      ${a.windows}, ${pct(a.hottest.prob)}</div>
+    <div class="ev">…${esc(a.hottest.text.slice(0, 400))}${
+      a.hottest.text.length > 400 ? '…' : ''}</div>
+    <details class="adv" style="margin-bottom:0; margin-top:14px">
+      <summary>every window</summary>
+      <div class="advbody"><div class="scroll"><table class="opts">
+        <tr><th>window</th><th>prob_scam</th><th></th></tr>
+        ${bars}
+      </table></div></div>
     </details>
-  </div>`;
+  </div>
+  <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
+    · ${a.max_length} tokens per window · ${a.elapsed_ms} ms on
+    ${esc(a.device)}</div>`;
 }
 
 // ============================================================== LLM judge
@@ -3415,7 +3342,7 @@ function llmSize() {
 
 async function llmLoadRow() {
   $('llminfo').textContent = 'loading…';
-  const r = await api(`/api/mcq/sample?dataset=${encodeURIComponent($('llmds').value)}`
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('llmds').value)}`
                     + `&idx=${encodeURIComponent($('llmidx').value || 0)}`);
   if (r.error) { $('llminfo').textContent = r.error; return; }
   $('llmtranscript').value = r.text;

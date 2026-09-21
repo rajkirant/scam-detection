@@ -29,7 +29,7 @@ base.
 | `run_all.sh` | Interactive terminal launcher — asks five questions, then runs |
 | `web_ui.sh` | Browser front end for the same thing |
 | `scripts/` | The evaluation systems and the supporting tools |
-| `models/` | Fine-tuned BERT checkpoints from the BERT + MCQ page — **not in git** |
+| `models/` | Fine-tuned BERT checkpoints from the BERT page — **not in git** |
 | `datasets/` | The transcript CSVs (`id,label,…,text`) |
 | `knowledge/` | `scam_ontology.json`, `mcq_ontology.json`, `scam_patterns.json` |
 | `policies/` | Three bank policy documents — the corpus the Singh baseline retrieves from |
@@ -296,83 +296,67 @@ same lock a benchmark does — the index cannot be rebuilt underneath a run that
 is reading it. The update streams into the same Output pane and lands in
 "Recent runs" like any other run.
 
-### BERT + MCQ page
+### BERT page
 
 The second tab in the header. It does two things `run_all.sh` has no mode for:
-fine-tune a BERT and *keep* the checkpoint, then put every question in
-`knowledge/mcq_ontology.json` to that checkpoint, one transcript at a time.
-`scripts/bert_mcq.py` does the work and can be used on its own
-([section C.9](#9-train-a-bert-and-answer-the-mcq-ontology-with-it)).
+fine-tune a BERT and *keep* the checkpoint, then put a transcript to that
+checkpoint and get back the probability that the call is a scam.
+`scripts/bert_classify.py` does the work and can be used on its own
+([section C.9](#9-train-a-bert-and-classify-one-call-with-it)).
 
 **Train a model** (left) is `bert_baseline.py`'s training loop pointed at the
 whole dataset rather than at k folds, saving to `models/<name>/` with a
-`mcq_meta.json` recording the dataset, the hyperparameters and a stratified
+`meta.json` recording the dataset, the hyperparameters and a stratified
 holdout score. `models/` is gitignored — each checkpoint is a few hundred MB.
 The run is detached and logged exactly like a benchmark run, streams into the
 **Training output** tab, and appears under *Recent runs* on the other page. It
 takes the same lock a benchmark does, so it cannot start while one is going.
 
-**Ask** (right) puts the ontology to the selected checkpoint: it routes the
-call to a branch, answers that branch's questions, and sums the values of the
-chosen options into the ontology's verdict. Paste a transcript, or pull one out
-of a dataset by row. Each answer shows its confidence, what it contributed to
-the score, the stretch of the call it was matched against, and — under *all N
-options* — what every other option scored.
+**Classify** (right) puts one call to the selected checkpoint. Paste a
+transcript, or pull one out of a dataset by row.
 
-Two numbers sit side by side at the top and are deliberately never combined:
+The number it gives is `prob_scam` — the binary head, which is the one thing
+training directly fits. Nothing on this page is inferred, weighted or scored
+on top of it.
 
-| | Where it comes from |
+**Why the call is read in windows.** BERT takes 512 tokens at most and these
+checkpoints are trained at 256 — about 180 words. Calls in
+`scamai_hard_307_ordered.csv` run past ten thousand. Handing the whole
+transcript to the tokenizer scores its opening and silently drops the rest,
+which on a long call means judging it by the hellos — the same failure the
+Ollama context window had ([the context window](#the-context-window)). So the
+transcript is cut into overlapping windows of the size training used, every
+window is scored, and the call takes either the strongest window or the
+average:
+
+| | |
 | --- | --- |
-| **MCQ score** | the sum of the option values chosen below, banded by the cut-offs in `mcq_ontology.json` |
-| **prob_scam** | the binary classification head — the only thing training directly fits |
+| **strongest** | a scam signal anywhere is a scam signal — suits calls that are mostly small talk around one telling exchange |
+| **average** | steadier, but dilutes that exchange in a long friendly call |
 
-The questions themselves have no labels to train on, so they are answered by
-similarity: the transcript is cut into overlapping windows, each window and
-each option text is mean-pooled into a vector, and an option scores the best
-cosine similarity it reaches against any window.
+Both are shown whichever you pick, next to **first window** — what a single
+truncated read would have said. When the three disagree, the disagreement is
+the finding, and the page says so. Under *every window* is the score of each
+one, so you can see where in the call the signal is.
 
-Four things about that matching decide whether the answers mean anything, and
-each of them was, at one point, the reason they did not:
+**Strip the tone tags** (under *How the call is read*) takes `[curious]`,
+`[long pause]` and the rest out before scoring. It is off by default and it is
+an experiment, not a correction: training read those tags, so a checkpoint
+asked about text without them is being asked about text of a kind it never
+saw. Worth one run each way — in `scamai_full_1000.csv`, `[satisfied]` sits on
+54.8% of legitimate calls and 31.0% of scams, so a score that moves a lot here
+was partly reading the annotation style rather than the call.
 
-- **The encoder.** Options are matched in `all-MiniLM-L6-v2` — already this
-  project's embedding model — not in the fine-tuned checkpoint's own hidden
-  states. A binary scam/legitimate objective never asks an encoder to tell "a
-  courier" from "a customs agency", which is the distinction every question
-  here turns on. Matched in the checkpoint, every option of a question came
-  back within a few hundredths of every other and the winner was decided by
-  noise. `--encoder self` puts it back for comparison.
-- **The key.** An option is embedded as its own text. Prefixing the question
-  prompt, which is identical across that question's options, made the strings
-  being compared about 90% the same characters.
-- **Centring.** The mean direction of the whole option corpus is subtracted
-  from both sides before the cosine. BERT sentence vectors sit in a narrow
-  cone, so two unrelated phrases still score .85 against each other; removing
-  that shared direction is what gives the options room to differ.
-  `--no-center` disables it.
-- **The gate.** A question is answered only when its best option is clear of
-  the runner-up by `--min-margin` in raw cosine. A softmax over four
-  near-identical scores still has to hand its probability to somebody, so
-  confidence alone cannot tell a real answer from a coin flip. Below the
-  margin the question abstains and contributes **nothing** — not knowing
-  whether the caller asked for anything is not evidence that they asked for
-  nothing.
+**The holdout number beside a trained model is not a result.** It is a
+stratified slice of that model's own training file. On
+`scambait_bank_422.csv` a checkpoint reaches 100%, because the scam side is
+YouTube scam-baiting and the legitimate side is the HarperValleyBank corpus —
+separable on recording pipeline alone. Compare against the bag-of-words
+baseline on the Benchmark page before believing any of it.
 
-Transcripts are repaired first: the tone tags (`[curious]`, `[long pause]`)
-come out, redacted entities keep their word (`[CARD]` → "card number"), and
-the apostrophes ASR dropped go back in, because "i m" and "don t" are not
-words any encoder was trained on. `--raw` disables it. Note that the tone tags
-also reach `bert_baseline.py`, which is worth knowing about: in
-`scamai_full_1000.csv`, `[satisfied]` appears on 54.8% of legitimate calls and
-31.0% of scams, so a classifier reading them can score off the labelling
-convention rather than off the call.
-
-What training changes is therefore `prob_scam`, and the MCQ answers are
-zero-shot. The **How it answers** tab says this on the page, including where
-the method is weak (similarity reads subject matter, not negation).
-
-Answering happens on the CPU unless *answer on the GPU* is ticked, so the page
+Scoring happens on the CPU unless *score on the GPU* is ticked, so the page
 stays usable while a benchmark run has the VRAM. The checkpoint is held in
-memory between questions and let go after ten idle minutes, or when you press
+memory between calls and let go after ten idle minutes, or when you press
 *unload it*.
 
 ### LLM judge page
@@ -590,52 +574,38 @@ so idx 19 here is the same call as idx 19 in a prior `--limit 40` run.
 between calls. Use `--raw-row` for a row by its position in the CSV as it sits
 on disk.
 
-### 9. Train a BERT and answer the MCQ ontology with it
+### 9. Train a BERT and classify one call with it
 
-The command line behind the **BERT + MCQ** page
-([section A](#bert--mcq-page)). Unlike `bert_baseline.py`, which trains per
-fold and throws each model away, this keeps the checkpoint.
+The command line behind the **BERT** page ([section A](#bert-page)). Unlike
+`bert_baseline.py`, which trains per fold and throws each model away, this
+keeps the checkpoint.
 
 ```bash
 # fine-tune on a whole dataset and keep it in models/zhi-bert/
-python scripts/bert_mcq.py train --csv datasets/zhi_english_646.csv \
+python scripts/bert_classify.py train --csv datasets/zhi_english_646.csv \
     --name zhi-bert --epochs 4 --holdout 0.2
 
-# put every question in knowledge/mcq_ontology.json to that checkpoint
-python scripts/bert_mcq.py answer --name zhi-bert --text "Hello, this is..."
-python scripts/bert_mcq.py answer --name zhi-bert \
-    --csv datasets/zhi_english_646.csv --idx 3 --json
+# scam or not, for one call
+python scripts/bert_classify.py classify --name zhi-bert --text "Hello, this is..."
+python scripts/bert_classify.py classify --name zhi-bert \
+    --csv datasets/scambait_bank_422.csv --idx 3 --json
 
-# the numbers behind every pick, when the answers look arbitrary
-python scripts/bert_mcq.py diagnose --name zhi-bert \
-    --csv datasets/zhi_english_646.csv --idx 3 --control
-
-python scripts/bert_mcq.py models              # what is in models/
-python scripts/bert_mcq.py delete --name zhi-bert
+python scripts/bert_classify.py models              # what is in models/
+python scripts/bert_classify.py delete --name zhi-bert
 ```
 
-`diagnose` prints the raw cosine behind every option, the margin between the
-best two, and the spread across each question — read those before trusting a
-verdict. `--control` answers a word-shuffled copy of the same call as well.
-Shuffling keeps every word and destroys every phrase, so any answer that
-survives it was reading the vocabulary rather than the call; a low agreement
-count is the good result. The knobs worth moving are `--min-margin` (raise it
-until only the questions the call really answers come through), `--encoder`
-(`self` matches in the checkpoint, which is the old behaviour) and
-`--no-center`.
+`classify` prints the verdict and `prob_scam`, then the three numbers that
+matter on a long call: the strongest window, the average, and what the first
+window alone would have said. When the first disagrees with the strongest by
+a wide margin it says so — that gap is the difference between reading the call
+and reading its opening.
 
-`answer` prints the branch it routed to, the option it chose for each question
-with a confidence, the summed score and the verdict, and `prob_scam` from the
-trained classification head beside it for contrast. `--json` gives the whole
-thing including every option's score and the transcript window each answer was
-matched against — the shape the web UI renders.
-
-Answering is on the CPU unless `--gpu` is passed, so it does not compete with a
-benchmark for VRAM. `--branch <id>` forces a branch instead of routing to one,
-`--cutoff` moves the scam threshold (RQ2), and `--window` / `--stride` /
-`--min-confidence` control how options are matched. There is also a `serve`
-mode — one JSON request per line on stdin — which is how the web UI keeps a
-checkpoint loaded between questions.
+`--aggregate mean` averages the windows instead of taking the strongest,
+`--threshold` overrides the checkpoint's own cut-off, `--window` / `--stride`
+change how the call is cut up, and `--strip-tags` removes the `[curious]`
+annotations first (an experiment — training read them). There is also a
+`serve` mode — one JSON request per line on stdin — which is how the web UI
+keeps a checkpoint loaded between calls.
 
 ### 10. Ask the LLM about one call
 
