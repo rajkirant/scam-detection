@@ -130,6 +130,76 @@ def datasets():
     return out
 
 
+# dataset path -> (mtime, stats). Scanning everything_7013.csv takes a moment
+# and the answer only changes when the file does.
+_CTX_STATS = {}
+CTX_STEPS = (2048, 4096, 8192, 16384, 32768, 65536, 131072)
+
+
+def dataset_context(path):
+    """How big a context window this dataset's calls need.
+
+    The Benchmark page fills its Context window box from this when a dataset
+    is picked, so the window is right before the run rather than after a
+    warning. Worth doing because missing the window is not a near miss:
+    Ollama keeps about half of it and discards the rest from the front, so a
+    verdict on an overlong call is a verdict on its goodbyes.
+    """
+    import csv
+    import ollama_ctx
+
+    if path not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    p = PROJECT_DIR / path
+    mtime = p.stat().st_mtime
+    hit = _CTX_STATS.get(path)
+    if hit and hit[0] == mtime:
+        return hit[1]
+
+    csv.field_size_limit(sys.maxsize)
+    with open(p, newline="", encoding="utf-8", errors="replace") as f:
+        reader = csv.DictReader(f)
+        cols = {c.lower(): c for c in (reader.fieldnames or [])}
+        tcol = next((cols[c] for c in ("transcript", "text", "call",
+                                       "conversation", "dialogue", "content",
+                                       "body") if c in cols), None)
+        if tcol is None:
+            raise ValueError("no transcript column in that dataset")
+        toks = sorted(ollama_ctx.estimate_tokens(r.get(tcol) or "")
+                      for r in reader)
+    if not toks:
+        raise ValueError("that dataset has no rows")
+
+    n = len(toks)
+    # the prompt is the transcript plus the question and answer format, and
+    # the reply needs room too
+    overhead = 400
+    p90 = toks[int(0.9 * n) - 1] + overhead
+    biggest = toks[-1] + overhead
+    fits = lambda need: next((s for s in CTX_STEPS
+                              if s >= need * ollama_ctx.SAFETY), CTX_STEPS[-1])
+    # Cover every call when that is affordable, and only fall back to the p90
+    # when covering the longest would need a window no local model will give
+    # (qwen2.5 tops out at 32768, and the KV cache for one is VRAM the weights
+    # also want). Recommending the p90 by default would leave a tenth of the
+    # dataset silently answered on its goodbyes, which is the whole failure.
+    covers_all = fits(biggest)
+    recommended = covers_all if covers_all <= 32768 else fits(p90)
+    stats = {
+        "dataset": path, "rows": n,
+        "median": toks[n // 2] + overhead, "p90": p90, "max": biggest,
+        "recommended": recommended,
+        "covers_all": covers_all,
+        "over_default": sum(1 for t in toks if t + overhead > 8192),
+        # what is still too long even at the recommendation - the calls that
+        # need a decision rather than a bigger number
+        "over_recommended": sum(1 for t in toks
+                                if t + overhead > recommended),
+    }
+    _CTX_STATS[path] = (mtime, stats)
+    return stats
+
+
 def idx_pool(default=40):
     """The --limit whose ordering an idx:<n> is counted against.
 
@@ -1290,6 +1360,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/mcq/sample":
                 return self._send(200, dataset_row(
                     q.get("dataset", [""])[0], int(q.get("idx", ["0"])[0])))
+            if u.path == "/api/dataset/context":
+                return self._send(200,
+                                  dataset_context(q.get("dataset", [""])[0]))
             # ---- the LLM judge page
             if u.path == "/api/llm/config":
                 return self._send(200, llm_config())
@@ -1687,13 +1760,11 @@ PAGE = r"""<!doctype html>
         <select id="model"></select>
         <label for="numctx">Context window</label>
         <input type="text" id="numctx" placeholder="8192" spellcheck="false">
-        <div class="hint">How many tokens the model may read. Ollama cuts an
-          overlong prompt from the <em>front</em> — instructions first — and
-          keeps only about half the window, so a call that does not fit comes
-          back as a confident verdict on its last few minutes. Leave it blank
-          for 8192. <code>scamai_hard_subset.csv</code> needs 16384 to cover
-          97% of its calls and 32768 for all but one; both cost VRAM on top of
-          the model.</div>
+        <div class="hint" id="ctxhint">How many tokens the model may read.
+          Ollama cuts an overlong prompt from the <em>front</em> —
+          instructions first — and keeps only about half the window, so a call
+          that does not fit comes back as a confident verdict on its last few
+          minutes.</div>
       </div>
 
       <button class="go" id="go">Run</button>
@@ -2160,6 +2231,8 @@ async function boot() {
   $('dataset').innerHTML = CFG.datasets.map(d =>
     `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
   ).join('');
+  $('dataset').addEventListener('change', sizeContext);
+  sizeContext();
 
   // "all" is not offered as a box of its own - ticking every box is "all",
   // and the select-all link is a clearer way to say it
@@ -2230,6 +2303,34 @@ function setAll(on) {
 
 // The model question only matters if something that calls an LLM is ticked,
 // and there is nothing to run until at least one box is.
+// Ask how long this dataset's calls are and fill the window in before the
+// run, rather than letting it start at 8192 and warn afterwards. Missing the
+// window is not a near miss - Ollama keeps about half of it and drops the
+// front - so the default being wrong costs a whole run.
+async function sizeContext() {
+  const ds = $('dataset').value;
+  if (!ds) return;
+  $('ctxhint').textContent = 'measuring this dataset…';
+  const r = await api('/api/dataset/context?dataset=' + encodeURIComponent(ds));
+  if (r.error) { $('ctxhint').textContent = r.error; return; }
+  $('numctx').value = r.recommended;
+  const n = x => x.toLocaleString();
+  $('ctxhint').innerHTML = !r.over_default
+    ? `Every call here fits the 8192 default — longest is about ${n(r.max)} `
+      + `tokens. Nothing to change.`
+    : `<strong>${n(r.over_default)} of ${n(r.rows)} calls here do not fit the `
+      + `8192 default.</strong> Longest is about ${n(r.max)} tokens, 90% are `
+      + `under ${n(r.p90)}. <strong>${n(r.recommended)}</strong> is filled in `
+      + `above — ` + (r.over_recommended
+          ? `it still leaves ${n(r.over_recommended)} call`
+            + `${r.over_recommended === 1 ? '' : 's'} too long for any window `
+            + `a local model will give, and those need a decision (drop, `
+            + `split, or summarise) rather than a bigger number.`
+          : `enough for every call in the set.`)
+      + ` A call that overflows loses about half the window, from the front, `
+      + `and comes back as a confident verdict on its goodbyes.`;
+}
+
 function onBaselines() {
   const sel = chosen();
   $('modelbox').hidden = !sel.some(k =>
