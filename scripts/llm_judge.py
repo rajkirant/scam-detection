@@ -106,8 +106,21 @@ def list_models():
 
 def ask(prompt, model=None, max_tokens=DEFAULT_MAX_TOKENS, temperature=0.0,
         num_ctx=DEFAULT_NUM_CTX, timeout=300):
-    """One completion out of ollama. Temperature 0 by default: this is a
-    judgement, and the benchmark asks for it the same way."""
+    """The model's reply, as text."""
+    return (generate(prompt, model, max_tokens, temperature, num_ctx,
+                     timeout).get("response") or "").strip()
+
+
+def generate(prompt, model=None, max_tokens=DEFAULT_MAX_TOKENS,
+             temperature=0.0, num_ctx=DEFAULT_NUM_CTX, timeout=300):
+    """One completion out of ollama, whole. Temperature 0 by default: this is
+    a judgement, and the benchmark asks for it the same way.
+
+    The reply carries prompt_eval_count, which is how many tokens the model
+    actually read. That number is the only non-guessed way to tell whether a
+    prompt was truncated: everything else here is an estimate, and Ollama
+    truncates without saying so.
+    """
     payload = {
         "model": model or DEFAULT_MODEL,
         "prompt": prompt,
@@ -132,7 +145,7 @@ def ask(prompt, model=None, max_tokens=DEFAULT_MAX_TOKENS, temperature=0.0,
             "ollama did not answer within %ds. A 14B model on CPU is far "
             "slower than on a GPU - check `nvidia-smi`, or raise the "
             "timeout." % timeout)
-    return (out.get("response") or "").strip()
+    return out
 
 
 MAX_GUIDANCE = 20_000
@@ -204,8 +217,10 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
     prompt = build_prompt(text, guidance)
 
     t0 = time.time()
-    raw = ask(prompt, model=model, max_tokens=max_tokens,
-              temperature=temperature, num_ctx=num_ctx, timeout=timeout)
+    out = generate(prompt, model=model, max_tokens=max_tokens,
+                   temperature=temperature, num_ctx=num_ctx, timeout=timeout)
+    raw = (out.get("response") or "").strip()
+    read = out.get("prompt_eval_count")
     verdict = CE.parse_verdict(raw)
     reason = CE.parse_reason(raw)
     truncated = CE.looks_truncated(raw)
@@ -238,6 +253,12 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
         "guidance": guidance,
         "words": len(text.split()),
         "prompt_tokens_estimated": prompt_tokens,
+        # what Ollama says it actually read, which is the only number here
+        # that is not a guess. Short of the estimate means a prefix was
+        # already cached; level with the window means the window was filled,
+        # and the front of the prompt is what fell off the edge.
+        "prompt_tokens_read": read,
+        "window_full": bool(read and num_ctx and read >= int(num_ctx) - 8),
         "num_ctx": num_ctx,
         # the failure that looks like a bad model rather than a bad setting:
         # over the window, ollama drops the FRONT of the prompt, instructions
@@ -295,7 +316,15 @@ def print_result(r):
               "%d.\n             Ollama drops the FRONT of an overlong "
               "prompt, instructions\n             and all - raise --num-ctx."
               % (r["prompt_tokens_estimated"], r["num_ctx"]))
-    print("  %d words, %d ms" % (r["words"], r["elapsed_ms"]))
+    if r["window_full"]:
+        print("  WARNING    ollama read %d tokens into a %d window - it is "
+              "full, so the\n             front of this prompt was cut off. "
+              "Raise --num-ctx." % (r["prompt_tokens_read"], r["num_ctx"]))
+    print("  %d words, ~%d prompt tokens estimated%s, window %d, %d ms"
+          % (r["words"], r["prompt_tokens_estimated"],
+             (", %d read by ollama" % r["prompt_tokens_read"])
+             if r["prompt_tokens_read"] else "",
+             r["num_ctx"], r["elapsed_ms"]))
     print(bar)
 
 
