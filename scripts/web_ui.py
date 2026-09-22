@@ -66,7 +66,8 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # the two baselines that never call an LLM must not ask for a model.
 BASELINES = [
     ("all",      "all",                   "every system below, in one run",       True),
-    ("trivial",  "length + bag-of-words", "trivial references, no LLM",           False),
+    ("length",   "Length only",           "word count against one threshold, no LLM", False),
+    ("bow",      "Bag of words",          "TF-IDF into logistic regression, no LLM", False),
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
@@ -3643,7 +3644,7 @@ async function boot() {
   ).join('');
 
   if (!o.up) {
-    $('ollama').textContent = 'Ollama is not answering — only the trivial and BERT baselines can run';
+    $('ollama').textContent = 'Ollama is not answering — only the length, bag-of-words and BERT baselines can run';
     $('ollama').style.color = 'var(--bad)';
   } else if (o.loaded.length) {
     $('ollama').textContent = 'Ollama up · holding ' + o.loaded.join(', ') + ' in VRAM';
