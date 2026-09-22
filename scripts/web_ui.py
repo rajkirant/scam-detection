@@ -1900,16 +1900,63 @@ EVAL_FIELDS = {
 
 
 def eval_result(run_id):
-    """The metrics a finished evaluate run wrote, or nothing yet."""
-    path = run_path(checked_run_id(run_id), "metrics.json")
-    if not path.exists():
-        return {"ready": False}
+    """The metrics a finished evaluate run wrote, or why there are none.
+
+    "Not ready" is three different things - still going, finished and wrote
+    nothing, crashed - and a page that cannot tell them apart can only say
+    "no output", which is what it said. So the reason and the tail of the run
+    come back with the answer, and the page prints them where the numbers
+    would have been rather than leaving someone to go and find a log.
+    """
+    run_id = checked_run_id(run_id)
+    path = run_path(run_id, "metrics.json")
+    meta = load_run(run_id)
+    status = (meta or {}).get("status")
+
+    if path.exists():
+        try:
+            out = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            return {"ready": False, "status": status,
+                    "why": "the results file is there but could not be read "
+                           "(%s)" % e, "tail": log_tail(run_id)}
+        out["ready"] = True
+        out["status"] = status
+        return out
+
+    if status == "running":
+        return {"ready": False, "status": status, "why": "still going"}
+    return {
+        "ready": False,
+        "status": status,
+        "why": ("the run stopped before it scored anything"
+                if status == "stopped" else
+                "the run ended without writing a score" if status == "done"
+                else "the run failed"),
+        "tail": log_tail(run_id),
+    }
+
+
+def log_tail(run_id, lines=30):
+    """The last few meaningful lines of a run's log.
+
+    Blank lines are dropped from the end: read_log strips the exit marker and
+    leaves its newlines behind, so a log shown scrolled to the bottom can be
+    all whitespace - which is exactly how a crash comes to look like no
+    output at all.
+    """
+    log = run_path(run_id, "log")
+    if not log.exists():
+        return ("(the run left no log at all - the process could not be "
+                "started, or something removed it)")
     try:
-        out = json.loads(path.read_text(encoding="utf-8"))
+        text = log.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
-        return {"ready": False, "error": "could not read the results: %s" % e}
-    out["ready"] = True
-    return out
+        return "(could not read the log: %s)" % e
+    text = ANSI.sub("", text)
+    text = re.sub(re.escape(EXIT_MARK) + r"\s+\d+\s*", "", text)
+    kept = [ln for ln in text.rstrip().split("\n")]
+    return "\n".join(kept[-lines:])
 
 
 def start_eval_run(page, form):
@@ -3451,6 +3498,10 @@ const $ = id => document.getElementById(id);
 // until the tab is closed while its pane sits on "scoring…" forever.
 const runOver = r => !!(r.status && r.status !== 'running');
 
+// poller name -> how many polls in a row have failed, so a dropped request
+// does not end a watch that is still worth keeping
+const POLL_FAILS = {};
+
 // Always resolves to an object. A fetch that fails, or a reply that is not
 // JSON - a proxy's error page, say - used to reject and take the whole poll
 // down with it, leaving a blank panel and no clue why.
@@ -4757,7 +4808,18 @@ async function bowPoll() {
   const r = await api(`/api/log?id=${encodeURIComponent(bowRun)}&offset=0`);
   if (!r.error) $('bowtrainlog').textContent = r.text || '(no output yet)';
   clearTimeout(bowTimer);
-  if (r.error || runOver(r)) { await bowRefresh(); return; }
+  // A failed poll is not a finished run. Retry a few times before giving up,
+  // rather than concluding the run ended because one request did not land.
+  if (r.error) {
+    if ((POLL_FAILS['bowPoll'] = (POLL_FAILS['bowPoll'] || 0) + 1) < 5) {
+      bowTimer = setTimeout(bowPoll, 2000);
+    } else {
+      $('bowtrainlog').textContent = 'lost contact with the run: ' + r.error;
+    }
+    return;
+  }
+  POLL_FAILS['bowPoll'] = 0;
+  if (runOver(r)) { await bowRefresh(); return; }
   bowTimer = setTimeout(bowPoll, 900);
 }
 
@@ -4868,22 +4930,55 @@ async function evalPoll(page) {
   const st = EVAL[page];
   if (!st || !st.run) return;
   const r = await api(`/api/log?id=${encodeURIComponent(st.run)}&offset=0`);
-  if (!r.error) {
+  if (r.error) {
+    // A failed poll is not a finished run. Treating it as one is what turned
+    // a blocked or dropped request into "the run finished without writing a
+    // score", with an empty log pane under it and no way to tell that the
+    // run was in fact still going. So: say so, keep trying, and only give up
+    // after several in a row.
+    st.fails = (st.fails || 0) + 1;
+    $(st.ids.log).textContent = 'could not read the run log (attempt '
+      + st.fails + '): ' + r.error;
+    if (st.fails < 5) {
+      st.timer = setTimeout(() => evalPoll(page), 2000);
+      return;
+    }
+  } else {
+    st.fails = 0;
     // the tail is the interesting part while it runs - a 7,000-call log is
-    // 7,000 lines and the browser should not be asked to lay all of them out
-    const lines = (r.text || '').split('\n');
+    // 7,000 lines and the browser should not be asked to lay all of them out.
+    // Trailing blank lines go: read_log strips the exit marker and leaves its
+    // newlines, and a pane scrolled to the bottom of those is a blank box.
+    const text = (r.text || '').replace(/\s+$/, '');
+    const lines = text.split('\n');
     $(st.ids.log).textContent = lines.length > 400
       ? '… ' + (lines.length - 400) + ' earlier lines\n'
         + lines.slice(-400).join('\n')
-      : (r.text || '(no output yet)');
+      : (text || '(no output yet)');
     $(st.ids.log).scrollTop = $(st.ids.log).scrollHeight;
   }
   clearTimeout(st.timer);
   if (r.error || runOver(r)) {
     const m = await api(`/api/eval/result?id=${encodeURIComponent(st.run)}`);
+    // the result endpoint knows whether the run is still going even when the
+    // log could not be read, so a run that is merely unreachable keeps being
+    // waited on rather than being declared over
+    if (!m.error && !m.ready && m.status === 'running') {
+      st.timer = setTimeout(() => evalPoll(page), 2000);
+      return;
+    }
     if (m.error || !m.ready) {
-      $(st.ids.out).innerHTML = '<div class="card hint">The run finished '
-        + 'without writing a score. The output below says why.</div>';
+      // Say what went wrong here, not "see the log": the log pane is below
+      // the fold and is scrolled to its end, where a stripped exit marker
+      // leaves blank lines - so a crash used to look like no output at all.
+      $(st.ids.out).innerHTML = `<div class="card">
+        <div class="qp">No score — ${esc(m.error || m.why || 'the run did not finish')}</div>
+        <div class="hint">The run is <code>${esc(st.run)}</code>${
+          m.status ? ' and its status is <code>' + esc(m.status) + '</code>' : ''}.
+          ${m.error ? 'The server could not be asked for the result.'
+                    : 'This is the end of what it printed:'}</div>
+        ${m.tail ? `<pre class="log" style="margin-top:12px">${esc(m.tail)}</pre>`
+                 : ''}</div>`;
       return;
     }
     $(st.ids.out).innerHTML = evalCard(m);
@@ -5123,7 +5218,18 @@ async function lenPoll() {
   const r = await api(`/api/log?id=${encodeURIComponent(lenRun)}&offset=0`);
   if (!r.error) $('lentrainlog').textContent = r.text || '(no output yet)';
   clearTimeout(lenTimer);
-  if (r.error || runOver(r)) { await lenRefresh(); return; }
+  // A failed poll is not a finished run. Retry a few times before giving up,
+  // rather than concluding the run ended because one request did not land.
+  if (r.error) {
+    if ((POLL_FAILS['lenPoll'] = (POLL_FAILS['lenPoll'] || 0) + 1) < 5) {
+      lenTimer = setTimeout(lenPoll, 2000);
+    } else {
+      $('lentrainlog').textContent = 'lost contact with the run: ' + r.error;
+    }
+    return;
+  }
+  POLL_FAILS['lenPoll'] = 0;
+  if (runOver(r)) { await lenRefresh(); return; }
   lenTimer = setTimeout(lenPoll, 900);
 }
 
@@ -5430,7 +5536,18 @@ async function llmFitPoll() {
   const r = await api(`/api/log?id=${encodeURIComponent(llmFitRun)}&offset=0`);
   if (!r.error) $('llmfitlog').textContent = r.text || '(no output yet)';
   clearTimeout(llmFitTimer);
-  if (r.error || runOver(r)) { await llmProfiles(); return; }
+  // A failed poll is not a finished run. Retry a few times before giving up,
+  // rather than concluding the run ended because one request did not land.
+  if (r.error) {
+    if ((POLL_FAILS['llmFitPoll'] = (POLL_FAILS['llmFitPoll'] || 0) + 1) < 5) {
+      llmFitTimer = setTimeout(llmFitPoll, 2000);
+    } else {
+      $('llmfitlog').textContent = 'lost contact with the run: ' + r.error;
+    }
+    return;
+  }
+  POLL_FAILS['llmFitPoll'] = 0;
+  if (runOver(r)) { await llmProfiles(); return; }
   llmFitTimer = setTimeout(llmFitPoll, 1500);
 }
 
