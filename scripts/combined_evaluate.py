@@ -380,6 +380,26 @@ def trivial_length(data, threshold=45):
             for t, lab in data]
 
 
+def _bow_oof(build, min_df, texts, y, splits):
+    """Out-of-fold predictions, one model a fold, and a line about each.
+
+    cross_val_predict would do the same arithmetic in one call, but silently:
+    the run then prints a single accuracy with nothing to show it came from
+    five held-out folds rather than from scoring the training data. That is
+    the one thing about a baseline people need to be able to check, and BERT
+    already prints it, so this prints it too.
+    """
+    import numpy as np
+    pred = np.zeros(len(y), dtype=int)
+    for k, (tr, te) in enumerate(splits, 1):
+        model = build(min_df).fit([texts[i] for i in tr], y[tr])
+        pred[te] = model.predict([texts[i] for i in te])
+        acc = float((pred[te] == y[te]).mean())
+        print("    fold %d/%d  train %d  test %d   acc %5.1f%%"
+              % (k, len(splits), len(tr), len(te), 100 * acc), flush=True)
+    return pred
+
+
 def trivial_bow(data, folds=5, show_features=False):
     """TF-IDF + LogisticRegression, properly cross-validated.
 
@@ -412,12 +432,13 @@ def trivial_bow(data, folds=5, show_features=False):
             LogisticRegression(max_iter=2000))
 
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    splits = list(cv.split(texts, y))
     try:
-        pred = cross_val_predict(build(2), texts, y, cv=cv)
+        pred = _bow_oof(build, 2, texts, y, splits)
     except ValueError:
         # min_df=2 can empty the vocabulary on very small folds
         print("  (min_df=2 left no vocabulary in a fold, falling back to min_df=1)")
-        pred = cross_val_predict(build(1), texts, y, cv=cv)
+        pred = _bow_oof(build, 1, texts, y, splits)
 
     if show_features:
         _bow_top_features(texts, y)
@@ -467,10 +488,15 @@ def trivial_bow_paired(data, data_s, folds=5):
     def run(min_df):
         pf = np.zeros(len(y), dtype=int)
         ps = np.zeros(len(y), dtype=int)
-        for tr, te in splits:
+        for k, (tr, te) in enumerate(splits, 1):
             model = build(min_df).fit([texts[i] for i in tr], y[tr])
             pf[te] = model.predict([texts[i] for i in te])
             ps[te] = model.predict([texts_s[i] for i in te])
+            print("    fold %d/%d  train %d  test %d   acc %5.1f%%   "
+                  "stripped %5.1f%%"
+                  % (k, len(splits), len(tr), len(te),
+                     100 * float((pf[te] == y[te]).mean()),
+                     100 * float((ps[te] == y[te]).mean())), flush=True)
         return pf, ps
 
     try:
