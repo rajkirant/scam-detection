@@ -536,7 +536,7 @@ def _bow_top_features(texts, y, k=15):
 
 
 # --------------------------------------------------- LLM systems (need Ollama)
-def run_llm_only(data, max_tokens=300, debug=False):
+def run_llm_only(data, max_tokens=300, debug=False, pass_label=""):
     """Control: model decides alone, no retrieval."""
     stats = VerdictStats("llm_only")
     out, raws, reasons = [], [], []
@@ -550,12 +550,12 @@ def run_llm_only(data, max_tokens=300, debug=False):
         raws.append(raw)
         reasons.append(why)
         if i % 20 == 0:
-            print("    LLM-only: %d/%d" % (i, len(data)))
+            print("    LLM-only%s: %d/%d" % (pass_label, i, len(data)))
     stats.report()
     return out, raws, reasons
 
 
-def run_singh(data, max_tokens=300, debug=False):
+def run_singh(data, max_tokens=300, debug=False, pass_label=""):
     """Singh baseline: policy-compliance check vs bank_policies collection."""
     import chromadb
     from chromadb.utils import embedding_functions
@@ -579,12 +579,12 @@ def run_singh(data, max_tokens=300, debug=False):
         raws.append(raw)
         reasons.append(why)
         if i % 20 == 0:
-            print("    Singh: %d/%d" % (i, len(data)))
+            print("    Singh%s: %d/%d" % (pass_label, i, len(data)))
     stats.report()
     return out, raws, reasons
 
 
-def run_webrag(data, debug=False):
+def run_webrag(data, debug=False, pass_label=""):
     """Web-RAG system, KB-only (use_web=False).
 
     NOTE: this delegates to webrag_system.detect(), which does its own
@@ -610,7 +610,7 @@ def run_webrag(data, debug=False):
         if res["gate_note"] == "unreadable":
             gate["judge_unreadable"] += 1
         if i % 20 == 0:
-            print("    WebRAG: %d/%d" % (i, len(data)))
+            print("    WebRAG%s: %d/%d" % (pass_label, i, len(data)))
 
     # How often retrieval actually contributed. If with_evidence is ~100% the
     # gate is not biting and the Fraud prior is back; if it is ~0% this is the
@@ -1325,7 +1325,9 @@ def main():
     print("  LLM max_tokens: %d" % args.max_tokens)
     if data_s is not None:
         print("  stripped copy: built in memory from this dataset")
-        print("  Every system is scored on both copies. Learning systems are")
+        print("  Every system is scored on both copies, so each LLM system")
+        print("  makes TWO passes over the dataset and takes twice as long.")
+        print("  Learning systems are")
         print("  trained on the original text only; a <system>__stripped row is")
         print("  that same model scoring the stripped copy of each call.")
     print("  Compare every LLM system against the trivial baselines below.")
@@ -1389,7 +1391,8 @@ def main():
             t0 = time.time()
             print("    stripped copy, %d calls ..." % len(data_s), flush=True)
             (results["llm_only" + S], raw_log["llm_only" + S],
-             reasons["llm_only" + S]) = run_llm_only(data_s, args.max_tokens, args.debug)
+             reasons["llm_only" + S]) = run_llm_only(
+                data_s, args.max_tokens, args.debug, " (stripped)")
             show("llm_only" + S, metrics(results["llm_only" + S]))
             print("    (%.0fs)" % (time.time() - t0))
 
@@ -1405,7 +1408,8 @@ def main():
             t0 = time.time()
             print("    stripped copy, %d calls ..." % len(data_s), flush=True)
             (results["singh" + S], raw_log["singh" + S],
-             reasons["singh" + S]) = run_singh(data_s, args.max_tokens, args.debug)
+             reasons["singh" + S]) = run_singh(
+                data_s, args.max_tokens, args.debug, " (stripped)")
             show("singh" + S, metrics(results["singh" + S]))
             print("    (%.0fs)" % (time.time() - t0))
 
@@ -1421,7 +1425,7 @@ def main():
             t0 = time.time()
             print("    stripped copy, %d calls ..." % len(data_s), flush=True)
             (results["webrag" + S], raw_log["webrag" + S],
-             reasons["webrag" + S]) = run_webrag(data_s, args.debug)
+             reasons["webrag" + S]) = run_webrag(data_s, args.debug, " (stripped)")
             show("webrag" + S, metrics(results["webrag" + S]))
             print("    (%.0fs)" % (time.time() - t0))
 
