@@ -1712,6 +1712,10 @@ class Handler(BaseHTTPRequestHandler):
             # default - these two endpoints were the only ones carrying the
             # word "log", and the only ones that never arrived there. The old
             # paths stay as aliases so a page left open somewhere still works.
+            # Two names for one endpoint. The page must ask for /api/output:
+            # ad blockers and Edge tracking prevention block "/api/log" as a
+            # telemetry path, and a blocked poll leaves a run looking hung or
+            # failed. /api/log stays for anything already pointed at it.
             if u.path in ("/api/output", "/api/log"):
                 rid = q.get("id", [""])[0]
                 off = int(q.get("offset", ["0"])[0])
@@ -3493,7 +3497,7 @@ let page = 0, PAGE_SIZE = 50;
 
 const $ = id => document.getElementById(id);
 
-// A run is over when /api/log stops calling it running. The field is
+// A run is over when the output endpoint stops calling it running. The field is
 // `status`; there is no `done` key, and a poller that waits for one polls
 // until the tab is closed while its pane sits on "scoring…" forever.
 const runOver = r => !!(r.status && r.status !== 'running');
@@ -3501,6 +3505,21 @@ const runOver = r => !!(r.status && r.status !== 'running');
 // poller name -> how many polls in a row have failed, so a dropped request
 // does not end a watch that is still worth keeping
 const POLL_FAILS = {};
+
+// Every poller reads a run's output through here, and it asks for
+// /api/output rather than /api/log on purpose.
+//
+// The two are the same endpoint. But ad blockers and privacy extensions ship
+// rules against paths that look like telemetry, and "/api/log" looks exactly
+// like one: uBlock and Edge tracking prevention both refuse it, the fetch
+// fails with a bare "Failed to fetch", and the page is left polling something
+// that will never answer. That is not hypothetical - it is what happened on
+// the Bag of words page, where a blocked poll meant a finished run reported
+// no score at all.
+//
+// Do not "tidy" this back to /api/log.
+const runLog = (id, offset) =>
+  api(`/api/output?id=${encodeURIComponent(id)}&offset=${offset || 0}`);
 
 // Always resolves to an object. A fetch that fails, or a reply that is not
 // JSON - a proxy's error page, say - used to reject and take the whole poll
@@ -4805,7 +4824,7 @@ async function bowFit() {
 // It finishes in about a second, so this polls briefly rather than streaming.
 async function bowPoll() {
   if (!bowRun) return;
-  const r = await api(`/api/log?id=${encodeURIComponent(bowRun)}&offset=0`);
+  const r = await runLog(bowRun);
   if (!r.error) $('bowtrainlog').textContent = r.text || '(no output yet)';
   clearTimeout(bowTimer);
   // A failed poll is not a finished run. Retry a few times before giving up,
@@ -4929,7 +4948,7 @@ async function evalRun(page, ids, body) {
 async function evalPoll(page) {
   const st = EVAL[page];
   if (!st || !st.run) return;
-  const r = await api(`/api/log?id=${encodeURIComponent(st.run)}&offset=0`);
+  const r = await runLog(st.run);
   if (r.error) {
     // A failed poll is not a finished run. Treating it as one is what turned
     // a blocked or dropped request into "the run finished without writing a
@@ -5215,7 +5234,7 @@ async function lenFit() {
 
 async function lenPoll() {
   if (!lenRun) return;
-  const r = await api(`/api/log?id=${encodeURIComponent(lenRun)}&offset=0`);
+  const r = await runLog(lenRun);
   if (!r.error) $('lentrainlog').textContent = r.text || '(no output yet)';
   clearTimeout(lenTimer);
   // A failed poll is not a finished run. Retry a few times before giving up,
@@ -5533,7 +5552,7 @@ async function llmFit() {
 
 async function llmFitPoll() {
   if (!llmFitRun) return;
-  const r = await api(`/api/log?id=${encodeURIComponent(llmFitRun)}&offset=0`);
+  const r = await runLog(llmFitRun);
   if (!r.error) $('llmfitlog').textContent = r.text || '(no output yet)';
   clearTimeout(llmFitTimer);
   // A failed poll is not a finished run. Retry a few times before giving up,
