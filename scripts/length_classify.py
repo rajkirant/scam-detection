@@ -570,6 +570,71 @@ def print_result(r):
 
 
 # ---------------------------------------------------------------------------
+# evaluate - the whole dataset, not one call
+# ---------------------------------------------------------------------------
+
+def run_evaluate(args):
+    """Score every call in a dataset against one fitted threshold.
+
+    Cheap enough that this is the honest way to read this baseline: a
+    threshold fitted on one corpus and run over another is the clearest test
+    there is of whether call length carries anything general, and the answer
+    is usually no. The run reports the direction as well as the number,
+    because a threshold pointing the wrong way scores worse than its own
+    mirror image and that is worth seeing rather than inferring.
+    """
+    import eval_common as EC
+
+    clf = classifier_from(args)
+    print("Loading dataset")
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    print()
+    cut = int(args.threshold if args.threshold is not None else clf.threshold)
+    way = args.direction or clf.direction
+    print("==> score  %s than %d words is scam, over %d calls"
+          % (way, cut, len(rows)))
+    trained_on = clf.meta.get("dataset")
+    if trained_on and trained_on == args.csv:
+        print("  NOTE this threshold was fitted on this same dataset, so this "
+              "is how well one\n       number fits the calls it was chosen "
+              "from, not how well it travels.")
+
+    prog = EC.Progress(len(rows), every=max(1, len(rows) // 40))
+    preds, words = [], []
+    t0 = time.time()
+    for r in rows:
+        text = strip_tags(r["text"]) if args.strip_tags else r["text"]
+        w = word_count(text)
+        pred = predict(w, cut, way)
+        words.append(w)
+        preds.append(pred)
+        prog.tick(r, pred)
+    elapsed = time.time() - t0
+
+    truths = [r["label"] for r in rows]
+    m = EC.metrics(truths, preds)
+    base = EC.baselines(truths)
+    # The same rule pointing the other way, since a threshold that is worse
+    # than its own mirror image is a direction error rather than a bad number.
+    other = LONGER if way == SHORTER else SHORTER
+    mirror = EC.metrics(truths, [predict(w, cut, other) for w in words])
+    EC.report(m, base, elapsed, len(rows), [
+        "the same threshold pointing the other way (%s than %d) would get "
+        "%.1f%%" % (other, cut, 100 * mirror["acc"])])
+    if mirror["acc"] > m["acc"]:
+        print("  NOTE the rule is pointing the wrong way for this dataset - "
+              "on these calls the\n       %s ones are the scams." % other)
+    if args.out:
+        EC.write_results(args.out, clf.name, args.csv, rows, preds, m, base,
+                         elapsed, {"words_counted": words},
+                         {"kind": "length", "trained_on": trained_on,
+                          "threshold": cut, "direction": way,
+                          "mirror": mirror,
+                          "same_dataset": bool(trained_on == args.csv)})
+    return m
+
+
+# ---------------------------------------------------------------------------
 # serve - one JSON request per line, one JSON reply per line
 # ---------------------------------------------------------------------------
 
@@ -671,6 +736,18 @@ def build_parser():
                     help="defaults to the model's own")
     cl.add_argument("--json", action="store_true")
     cl.set_defaults(func=run_classify)
+
+    ev = sub.add_parser("evaluate", help="score a whole dataset")
+    scoring(ev)
+    ev.add_argument("--csv", required=True)
+    ev.add_argument("--limit", type=int, default=None)
+    ev.add_argument("--threshold", type=int, default=None)
+    ev.add_argument("--direction", choices=[LONGER, SHORTER], default=None)
+    ev.add_argument("--text-col", default=None)
+    ev.add_argument("--label-col", default=None)
+    ev.add_argument("--out", default=None,
+                    help="write <out>.json and a per-call CSV in results/")
+    ev.set_defaults(func=run_evaluate)
 
     sv = sub.add_parser("serve", help="stay loaded, one JSON request per line")
     scoring(sv)

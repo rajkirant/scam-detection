@@ -360,6 +360,61 @@ def print_result(r):
 
 
 # ---------------------------------------------------------------------------
+# evaluate - the whole dataset, not one call
+# ---------------------------------------------------------------------------
+
+def run_evaluate(args):
+    """Score every call in a dataset with one fitted model.
+
+    Note what this is NOT: the `bow` row on the Benchmark page is five-fold
+    cross-validation, where every call is predicted by a model that never saw
+    it. This scores calls with one already-fitted model, so any call that was
+    in that model's training split is being marked by a model that has read
+    it. The run says which dataset the model was fitted on, and says it
+    loudly when that is the dataset being scored - a 100% there means the
+    model remembers, not that it generalises.
+    """
+    import eval_common as EC
+
+    clf = classifier_from(args)
+    print("Loading dataset")
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    print()
+    print("==> score  models/%s over %d calls" % (clf.name, len(rows)))
+    trained_on = clf.meta.get("dataset")
+    if trained_on and trained_on == args.csv:
+        print("  WARNING this model was fitted on this same dataset. Unless "
+              "you held rows\n          back, it has read these calls before "
+              "and the score below is a\n          memory test.")
+
+    prog = EC.Progress(len(rows), every=max(1, len(rows) // 40))
+    preds, probs = [], []
+    t0 = time.time()
+    for r in rows:
+        try:
+            out = clf.classify(r["text"], args.threshold, strip=args.strip_tags)
+            pred = 1 if out["verdict"] == "scam" else 0
+            probs.append("%.4f" % out["prob_scam"])
+        except ValueError:
+            pred = None
+            probs.append("")
+        preds.append(pred)
+        prog.tick(r, pred)
+    elapsed = time.time() - t0
+
+    m = EC.metrics([r["label"] for r in rows], preds)
+    base = EC.baselines([r["label"] for r in rows])
+    EC.report(m, base, elapsed, len(rows))
+    if args.out:
+        EC.write_results(args.out, clf.name, args.csv, rows, preds, m, base,
+                         elapsed, {"prob_scam": probs},
+                         {"kind": "bow", "trained_on": trained_on,
+                          "threshold": args.threshold or clf.threshold,
+                          "same_dataset": bool(trained_on == args.csv)})
+    return m
+
+
+# ---------------------------------------------------------------------------
 # serve - one JSON request per line, one JSON reply per line
 # ---------------------------------------------------------------------------
 
@@ -457,6 +512,17 @@ def build_parser():
                     help="defaults to the model's own")
     cl.add_argument("--json", action="store_true")
     cl.set_defaults(func=run_classify)
+
+    ev = sub.add_parser("evaluate", help="score a whole dataset")
+    scoring(ev)
+    ev.add_argument("--csv", required=True)
+    ev.add_argument("--limit", type=int, default=None)
+    ev.add_argument("--threshold", type=float, default=None)
+    ev.add_argument("--text-col", default=None)
+    ev.add_argument("--label-col", default=None)
+    ev.add_argument("--out", default=None,
+                    help="write <out>.json and a per-call CSV in results/")
+    ev.set_defaults(func=run_evaluate)
 
     sv = sub.add_parser("serve", help="stay loaded, one JSON request per line")
     scoring(sv)

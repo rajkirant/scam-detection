@@ -1753,6 +1753,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/bow/models":
                 return self._send(200, {"models": bow_classify.list_models(),
                                         "worker": BOW_SLOT.state()})
+            if u.path == "/api/eval/result":
+                return self._send(200, eval_result(q.get("id", [""])[0]))
             if u.path == "/api/llm/profiles":
                 return self._send(200, {"profiles": llm_fit.list_models()})
             if u.path == "/api/length/config":
@@ -1840,6 +1842,14 @@ class Handler(BaseHTTPRequestHandler):
                 out = remove_length_model(form.get("name", ""))
                 sys.stderr.write("deleted length model %s\n" % out["id"])
                 return self._send(200, out)
+            # ---- scoring a whole dataset, from any of the four pages
+            if u.path.startswith("/api/") and u.path.endswith("/evaluate"):
+                page = u.path[len("/api/"):-len("/evaluate")]
+                meta = start_eval_run(page, form)
+                sys.stderr.write("started %s  score %s %s on %s\n"
+                                 % (meta["id"], page, meta["model_name"]
+                                    or "(bare)", meta["dataset"]))
+                return self._send(200, meta)
             # ---- the LLM judge page
             if u.path == "/api/llm/judge":
                 return self._send(200, llm_verdict(form))
@@ -1858,6 +1868,170 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": str(e)})
         except Exception as e:
             return self._send(500, {"error": str(e)})
+
+
+# ------------------------------------------------------- scoring a dataset
+# The fourth thing each model page can do, and the one that turns four toys
+# into four measurements: put a whole dataset to a fitted model and report the
+# confusion matrix.
+#
+# All four go out through the same shape - a detached run with a log, writing
+# a metrics JSON beside it - so the page code is one form and one card rather
+# than four, and the numbers from the four pages are computed by the same
+# function in eval_common and can be read side by side.
+#
+# What it is NOT is the Benchmark page. That cross-validates: every call is
+# predicted by a model that never saw it. This scores calls with one already
+# fitted model, so pointing a model at its own training set measures memory.
+# Every evaluate run says so when the two datasets match, and the page repeats
+# it on the card.
+EVAL_PAGES = {
+    # page id -> (script, subcommand flags builder)
+    "bert":   BERT_SCRIPT,
+    "bow":    BOW_SCRIPT,
+    "length": LENGTH_SCRIPT,
+    "llm":    PROJECT_DIR / "scripts" / "llm_fit.py",
+}
+
+EVAL_FIELDS = {
+    "limit":     ("--limit", int, 0, 100000, 0),
+    "threshold": ("--threshold", float, 0.0, 1.0, None),
+}
+
+
+def eval_result(run_id):
+    """The metrics a finished evaluate run wrote, or nothing yet."""
+    path = run_path(checked_run_id(run_id), "metrics.json")
+    if not path.exists():
+        return {"ready": False}
+    try:
+        out = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {"ready": False, "error": "could not read the results: %s" % e}
+    out["ready"] = True
+    return out
+
+
+def start_eval_run(page, form):
+    """Score a whole dataset with one fitted model, on any of the four pages.
+
+    Only the flags differ between pages; everything else - the detached run,
+    the log, the metrics file the page reads afterwards - is shared, because
+    a score that was computed differently per page could not be compared
+    across them, which is the entire point of having four of them.
+    """
+    script = EVAL_PAGES.get(page)
+    if script is None:
+        raise ValueError("unknown page")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+
+    name = str(form.get("model", "")).strip()
+    flags = ["evaluate", "--csv", ds]
+
+    if page == "llm":
+        # the LLM page's "model" is what ollama has pulled; the fitted prompt
+        # is a separate, optional thing
+        base = str(form.get("base_model") or llm_judge.DEFAULT_MODEL).strip()
+        if not LLM_MODEL_RE.match(base):
+            raise ValueError("%r is not a name ollama would accept" % base[:60])
+        flags += ["--model", base]
+        if name:
+            if not BERT_NAME_RE.match(name):
+                raise ValueError("bad profile name")
+            if not (MODELS_DIR / name / llm_fit.PROFILE_FILE).exists():
+                raise ValueError("models/%s is not a fitted prompt" % name)
+            flags += ["--profile", name]
+        for key in ("num_ctx", "max_tokens", "temperature"):
+            val = numeric(form, LLM_FIELDS, key)
+            if val is not None:
+                flags += ["--" + key.replace("_", "-"), str(val)]
+        running = [r for r in all_runs() if r["status"] == "running"]
+        if running:
+            raise ValueError("a run is already going (%s). Stop it first - "
+                             "this wants the model ollama is holding, and so "
+                             "does that." % running[0]["id"])
+    else:
+        if not BERT_NAME_RE.match(name):
+            raise ValueError("pick a fitted model first")
+        marker = {"bert": "config.json", "bow": bow_classify.MODEL_FILE,
+                  "length": length_classify.MODEL_FILE}[page]
+        if not (MODELS_DIR / name / marker).exists():
+            raise ValueError("models/%s is not a %s model" % (name, page))
+        flags += ["--name", name]
+        if form.get("strip_tags"):
+            flags.append("--strip-tags")
+
+    if page == "bert":
+        # a whole dataset through BERT is the one evaluate that wants the GPU,
+        # and the one that fights a benchmark for it
+        if form.get("gpu"):
+            flags.append("--gpu")
+        running = [r for r in all_runs() if r["status"] == "running"]
+        if running and form.get("gpu"):
+            raise ValueError("a run is already going (%s). Stop it first - "
+                             "the GPU cannot hold two." % running[0]["id"])
+
+    limit = numeric(form, EVAL_FIELDS, "limit")
+    if limit:
+        flags += ["--limit", str(limit)]
+    if page in ("bert", "bow"):
+        thr = numeric(form, EVAL_FIELDS, "threshold")
+        if thr is not None:
+            flags += ["--threshold", str(thr)]
+    if page == "length":
+        thr = numeric(form, {"threshold": ("threshold", int, 1, 200000, None)},
+                      "threshold")
+        if thr is not None:
+            flags += ["--threshold", str(thr)]
+        way = str(form.get("direction") or "").strip()
+        if way in (length_classify.LONGER, length_classify.SHORTER):
+            flags += ["--direction", way]
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = (time.strftime("%Y%m%d_%H%M%S") + "_eval_" + page + "_"
+              + (name or "bare"))
+    flags += ["--out", str(run_path(run_id, "metrics.json"))]
+
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    rel = script.relative_to(PROJECT_DIR).as_posix()
+    body = [
+        "score() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> score\\n"',
+        '  "$PY" -u %s ' % shlex.quote(rel) + quoted
+        + ' || { printf "  fail score\\n"; return 1; }',
+        '  printf "  ok score\\n"',
+        "}", "score",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    log = run_path(run_id, "log")
+    with open(log, "wb") as out:
+        out.write(("$ python %s %s\n\n" % (rel, quoted)).encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "eval",
+            "page": page, "model_name": name,
+            "label": "score %s · %s" % (page, name or "bare"),
+            "dataset": ds, "baseline": "%s:%s" % (page, name or "bare"),
+            "limit": str(limit or "-"), "model": name or page,
+            "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
 
 
 def remove_llm_profile(name):
@@ -2263,6 +2437,16 @@ PAGE = r"""<!doctype html>
 
   /* a fitted prompt that beat the control, and one that did not - the
      second is the more useful of the two and must not be hidden */
+  /* the four cells every other number on the card comes off, so they can be
+     checked rather than taken on trust */
+  table.cm { border-collapse:collapse; margin-top:4px; }
+  table.cm th, table.cm td { padding:7px 14px; text-align:right;
+                             border:1px solid var(--line); font-size:13px; }
+  table.cm th { color:var(--dim); font-weight:600; font-size:12px; }
+  table.cm tr th:first-child { text-align:left; }
+  table.cm td { font-variant-numeric:tabular-nums; }
+  table.cm td.good { color:var(--accent); }
+  table.cm td.bad { color:var(--bad); }
   .gain-up { color:var(--accent); }
   .gain-down { color:var(--bad); }
   .note { color:var(--dim); font-size:12.5px; }
@@ -2517,6 +2701,7 @@ results table, and the prediction it made for every single call.</pre>
 
     <div class="tabs" id="berttabs">
       <button data-mtab="ask" class="on">Classify</button>
+      <button data-mtab="eval">Score a dataset</button>
       <button data-mtab="train">Training output</button>
       <button data-mtab="about">How it decides</button>
     </div>
@@ -2582,6 +2767,30 @@ results table, and the prediction it made for every single call.</pre>
     </div>
 
     <!-- training output -->
+
+    <div id="m-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="berteds"></select>
+          <input type="text" id="bertevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <label class="inline" for="bertevthr">Scam at
+            <input type="text" id="bertevthr" class="num" placeholder="model's own"></label>
+          <label class="inline"><input type="checkbox" id="bertevstrip">
+            strip tone tags</label>
+          <label class="inline"><input type="checkbox" id="bertevgpu">
+            use the GPU</label></div>
+        <button class="go" id="bertevgo">Score every call</button>
+        <div class="hint" id="berteverr" style="color:var(--bad)"></div>
+        <div class="hint">Every call is scored by the one model selected on the left, so pointing it at the dataset it was fitted on measures memory rather than skill — the card says so when the two match. The Benchmark page cross-validates instead, which is the number to quote. A long call is scored in windows, as on the Classify tab.</div>
+      </div>
+      <div id="bertevout"></div>
+      <pre class="log" id="bertevlog" hidden></pre>
+    </div>
+
     <div id="m-train" hidden>
       <pre class="log" id="trainlog">No training run selected.
 
@@ -2699,6 +2908,7 @@ shows up in Recent runs on the Benchmark page too.</pre>
 
     <div class="tabs" id="bowtabs">
       <button data-btab="ask" class="on">Classify</button>
+      <button data-btab="eval">Score a dataset</button>
       <button data-btab="train">Fitting output</button>
       <button data-btab="about">How it decides</button>
     </div>
@@ -2724,6 +2934,28 @@ shows up in Recent runs on the Benchmark page too.</pre>
         <div class="hint" id="bowaskerr" style="color:var(--bad)"></div>
       </div>
       <div id="bowanswer"></div>
+    </div>
+
+
+    <div id="b-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="boweds"></select>
+          <input type="text" id="bowevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <label class="inline" for="bowevthr">Scam at
+            <input type="text" id="bowevthr" class="num" placeholder="model's own"></label>
+          <label class="inline"><input type="checkbox" id="bowevstrip">
+            strip tone tags</label></div>
+        <button class="go" id="bowevgo">Score every call</button>
+        <div class="hint" id="boweverr" style="color:var(--bad)"></div>
+        <div class="hint">Every call is scored by the one model selected on the left, so pointing it at the dataset it was fitted on measures memory rather than skill — the card says so when the two match. The Benchmark page cross-validates instead, which is the number to quote.</div>
+      </div>
+      <div id="bowevout"></div>
+      <pre class="log" id="bowevlog" hidden></pre>
     </div>
 
     <div id="b-train" hidden>
@@ -2859,6 +3091,7 @@ run appears under Recent runs on the Benchmark page like any other.</pre>
 
     <div class="tabs" id="lentabs">
       <button data-ltab="ask" class="on">Classify</button>
+      <button data-ltab="eval">Score a dataset</button>
       <button data-ltab="train">Fitting output</button>
       <button data-ltab="about">How it decides</button>
     </div>
@@ -2888,6 +3121,34 @@ run appears under Recent runs on the Benchmark page like any other.</pre>
         <div class="hint" id="lenaskerr" style="color:var(--bad)"></div>
       </div>
       <div id="lenanswer"></div>
+    </div>
+
+
+    <div id="l-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="leneds"></select>
+          <input type="text" id="lenevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <label class="inline" for="lenevthr">Scam past
+            <input type="text" id="lenevthr" class="num" placeholder="fitted"></label>
+          <label class="inline" for="lenevdir">on the
+            <select id="lenevdir" style="width:auto">
+              <option value="">fitted side</option>
+              <option value="longer">longer side</option>
+              <option value="shorter">shorter side</option>
+            </select></label>
+          <label class="inline"><input type="checkbox" id="lenevstrip">
+            strip tone tags</label></div>
+        <button class="go" id="lenevgo">Score every call</button>
+        <div class="hint" id="leneverr" style="color:var(--bad)"></div>
+        <div class="hint">Every call is scored by the one model selected on the left, so pointing it at the dataset it was fitted on measures memory rather than skill — the card says so when the two match. The Benchmark page cross-validates instead, which is the number to quote. The card also reports what the same threshold pointing the other way would have scored.</div>
+      </div>
+      <div id="lenevout"></div>
+      <pre class="log" id="lenevlog" hidden></pre>
     </div>
 
     <div id="l-train" hidden>
@@ -3060,6 +3321,7 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
 
     <div class="tabs" id="llmtabs">
       <button data-jtab="ask" class="on">Ask</button>
+      <button data-jtab="eval">Score a dataset</button>
       <button data-jtab="fit">Fitting output</button>
       <button data-jtab="about">How it decides</button>
     </div>
@@ -3096,6 +3358,25 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
       <div class="hint" id="llmasker" style="color:var(--bad)"></div>
     </div>
     <div id="llmanswer"></div>
+    </div>
+
+
+    <div id="j-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="llmeds"></select>
+          <input type="text" id="llmevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <span class="hint" id="llmevcost" style="flex:1"></span></div>
+        <button class="go" id="llmevgo">Score every call</button>
+        <div class="hint" id="llmeverr" style="color:var(--bad)"></div>
+        <div class="hint">One generation per call, so this is the slow one: a thousand-call dataset is hours on a 14B model. Set a limit. It scores under whichever fitted prompt is picked on the left, or bare with <em>None</em> — running it both ways on the same calls is how you find out whether the fitting helped on more than its own holdout.</div>
+      </div>
+      <div id="llmevout"></div>
+      <pre class="log" id="llmevlog" hidden></pre>
     </div>
 
     <div id="j-fit" hidden>
@@ -3164,6 +3445,11 @@ let RUNS = {};
 let page = 0, PAGE_SIZE = 50;
 
 const $ = id => document.getElementById(id);
+
+// A run is over when /api/log stops calling it running. The field is
+// `status`; there is no `done` key, and a poller that waits for one polls
+// until the tab is closed while its pane sits on "scoring…" forever.
+const runOver = r => !!(r.status && r.status !== 'running');
 
 // Always resolves to an object. A fetch that fails, or a reply that is not
 // JSON - a proxy's error page, say - used to reject and take the whole poll
@@ -4037,6 +4323,14 @@ async function bertBoot() {
   forgetRowOnEdit('transcript', 'sampleinfo');
   $('sampleidx').onkeydown = e => { if (e.key === 'Enter') loadSample(); };
   $('unload').onclick = unloadModel;
+  $('berteds').innerHTML = BERT.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  $('bertevgo').onclick = () => evalRun('bert', evalIds('bert', 'm-eval'), {
+    model: model, dataset: $('berteds').value, limit: $('bertevlimit').value,
+    threshold: $('bertevthr').value, strip_tags: $('bertevstrip').checked,
+    gpu: $('bertevgpu').checked,
+  });
   for (const b of $('berttabs').querySelectorAll('button'))
     b.onclick = () => showMtab(b.dataset.mtab);
 
@@ -4056,7 +4350,8 @@ function onBase() {
 function showMtab(name) {
   for (const b of $('berttabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.mtab === name);
-  for (const t of ['ask', 'train', 'about']) $('m-' + t).hidden = t !== name;
+  for (const t of ['ask', 'eval', 'train', 'about'])
+    $('m-' + t).hidden = t !== name;
 }
 
 // ------------------------------------------------------- trained models
@@ -4366,6 +4661,11 @@ async function bowBoot() {
   $('bowunload').onclick = async () => {
     await api('/api/bow/unload', {}); await bowRefresh();
   };
+  $('boweds').innerHTML = $('bowdataset').innerHTML;
+  $('bowevgo').onclick = () => evalRun('bow', evalIds('bow', 'b-eval'), {
+    model: bowModel, dataset: $('boweds').value, limit: $('bowevlimit').value,
+    threshold: $('bowevthr').value, strip_tags: $('bowevstrip').checked,
+  });
   for (const b of $('bowtabs').querySelectorAll('button'))
     b.onclick = () => bowTab(b.dataset.btab);
   await bowRefresh();
@@ -4374,9 +4674,8 @@ async function bowBoot() {
 function bowTab(name) {
   for (const b of $('bowtabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.btab === name);
-  $('b-ask').hidden = name !== 'ask';
-  $('b-train').hidden = name !== 'train';
-  $('b-about').hidden = name !== 'about';
+  for (const t of ['ask', 'eval', 'train', 'about'])
+    $('b-' + t).hidden = t !== name;
 }
 
 async function bowRefresh() {
@@ -4458,7 +4757,7 @@ async function bowPoll() {
   const r = await api(`/api/log?id=${encodeURIComponent(bowRun)}&offset=0`);
   if (!r.error) $('bowtrainlog').textContent = r.text || '(no output yet)';
   clearTimeout(bowTimer);
-  if (r.error || r.done) { await bowRefresh(); return; }
+  if (r.error || runOver(r)) { await bowRefresh(); return; }
   bowTimer = setTimeout(bowPoll, 900);
 }
 
@@ -4536,6 +4835,158 @@ function bowPaint(a) {
     · ${a.model.features || '?'} features · ${a.elapsed_ms} ms</div>`;
 }
 
+// ====================================================== scoring a dataset
+// One implementation for all four pages. The four models are different
+// enough that they each get their own page, but a confusion matrix is a
+// confusion matrix, and four copies of this would be four chances for the
+// numbers to stop meaning the same thing.
+const EVAL = {};     // page -> {run, ids, timer}
+
+function evalIds(pre, pane) {
+  return {ds: pre + 'eds', limit: pre + 'evlimit', go: pre + 'evgo',
+          err: pre + 'everr', out: pre + 'evout', log: pre + 'evlog',
+          pane: pane};
+}
+
+// Each page says what it is scoring and with what; everything after the POST
+// is shared.
+async function evalRun(page, ids, body) {
+  $(ids.err).textContent = '';
+  if (!body.dataset) { $(ids.err).textContent = 'pick a dataset'; return; }
+  $(ids.go).disabled = true;
+  const res = await api('/api/' + page + '/evaluate', body);
+  $(ids.go).disabled = false;
+  if (res.error) { $(ids.err).textContent = res.error; return; }
+  clearTimeout((EVAL[page] || {}).timer);
+  EVAL[page] = {run: res.id, ids: ids};
+  $(ids.out).innerHTML = '<div class="card muted">scoring…</div>';
+  $(ids.log).hidden = false;
+  evalPoll(page);
+}
+
+async function evalPoll(page) {
+  const st = EVAL[page];
+  if (!st || !st.run) return;
+  const r = await api(`/api/log?id=${encodeURIComponent(st.run)}&offset=0`);
+  if (!r.error) {
+    // the tail is the interesting part while it runs - a 7,000-call log is
+    // 7,000 lines and the browser should not be asked to lay all of them out
+    const lines = (r.text || '').split('\n');
+    $(st.ids.log).textContent = lines.length > 400
+      ? '… ' + (lines.length - 400) + ' earlier lines\n'
+        + lines.slice(-400).join('\n')
+      : (r.text || '(no output yet)');
+    $(st.ids.log).scrollTop = $(st.ids.log).scrollHeight;
+  }
+  clearTimeout(st.timer);
+  if (r.error || runOver(r)) {
+    const m = await api(`/api/eval/result?id=${encodeURIComponent(st.run)}`);
+    if (m.error || !m.ready) {
+      $(st.ids.out).innerHTML = '<div class="card hint">The run finished '
+        + 'without writing a score. The output below says why.</div>';
+      return;
+    }
+    $(st.ids.out).innerHTML = evalCard(m);
+    return;
+  }
+  st.timer = setTimeout(() => evalPoll(page), 1200);
+}
+
+const pc = x => (100 * x).toFixed(1) + '%';
+
+// The confusion matrix as a table, because the four cells are what every
+// other number on the card is derived from and a reader should be able to
+// check the arithmetic.
+function evalMatrix(m) {
+  const cell = (n, tot, cls) => `<td class="${cls}"><strong>${n}</strong>`
+    + `<span class="muted"> ${tot ? pc(n / tot) : '—'}</span></td>`;
+  const scam = m.tp + m.fn, legit = m.fp + m.tn;
+  return `<table class="cm">
+    <tr><th></th><th>said scam</th><th>said legitimate</th></tr>
+    <tr><th>really scam</th>${cell(m.tp, scam, 'good')}${cell(m.fn, scam, 'bad')}</tr>
+    <tr><th>really legitimate</th>${cell(m.fp, legit, 'bad')}${cell(m.tn, legit, 'good')}</tr>
+  </table>`;
+}
+
+function missList(title, list, note) {
+  if (!list || !list.length) return '';
+  return `<div class="qp" style="margin-top:16px">${title}
+      <span class="muted" style="font-weight:400">— ${note}</span></div>`
+    + list.map(x => `<div class="ev">
+        <span class="muted">id ${esc(String(x.id))} · ${x.words} words${
+          x.prob_scam ? ' · p(scam) ' + x.prob_scam : ''}${
+          x.words_counted !== undefined ? ' · counted ' + x.words_counted : ''}${
+          x.verdict ? ' · said ' + esc(x.verdict) : ''}</span><br>${esc(x.excerpt)}${
+          x.reason ? '<br><em>' + esc(x.reason) + '</em>' : ''}</div>`).join('');
+}
+
+function evalCard(d) {
+  const m = d.metrics, b = d.baselines;
+  const floor = Math.max(b.always_scam.acc, b.never_scam.acc);
+  const over = m.acc - floor;
+  const notes = [];
+
+  if (d.same_dataset) notes.push('<strong>This model was fitted on this '
+    + 'dataset.</strong> Unless rows were held back, it has read these calls '
+    + 'before, so the score is a memory test rather than a measurement. Point '
+    + 'it at a dataset it has never seen for the number worth quoting.');
+  if (m.acc <= floor) notes.push('<strong>This does not beat answering the '
+    + 'same thing every time</strong> (' + pc(floor) + ' by always saying '
+    + (b.always_scam.acc >= b.never_scam.acc ? 'scam' : 'legitimate')
+    + '). On this dataset the model is adding nothing to the class balance.');
+  if (m.unreadable) notes.push(m.unreadable + ' call(s) got no readable '
+    + 'answer. They are left out of the scores above rather than counted as '
+    + 'legitimate — which is what would quietly turn every one of them into a '
+    + 'false negative.');
+  if (d.truncated) notes.push(d.truncated + ' prompt(s) were truncated by '
+    + 'ollama, so those verdicts are about part of the call. Raise the '
+    + 'context window and score again before quoting this.');
+  if (d.mirror && d.mirror.acc > m.acc) notes.push('The same threshold '
+    + 'pointing the other way would get <strong>' + pc(d.mirror.acc)
+    + '</strong>. The rule is the wrong way round for this dataset.');
+
+  const big = (label, val, sub) => `<div>
+      <div class="cap">${label}</div>
+      <div class="big">${val}</div>
+      <div class="hint">${sub}</div></div>`;
+
+  return `
+  <div class="card">
+    <div class="verdict">
+      ${big('Accuracy', pc(m.acc),
+            (over > 0 ? '+' + (100 * over).toFixed(1) + ' over ' : 'under ')
+            + 'the best constant answer')}
+      ${big('Precision', m.precision.toFixed(3), 'of the calls it called scam')}
+      ${big('Recall', m.recall.toFixed(3), 'of the scams it found')}
+      ${big('F1', m.f1.toFixed(3), 'balanced acc ' + pc(m.balanced_acc))}
+    </div>
+  </div>
+  <div class="card">
+    <div class="qp">Where the ${m.scored} scored calls went</div>
+    ${evalMatrix(m)}
+    <div class="hint" style="margin-top:12px">
+      always scam would get ${pc(b.always_scam.acc)} ·
+      never scam ${pc(b.never_scam.acc)} ·
+      specificity ${m.specificity.toFixed(3)} ·
+      ${d.calls} calls in ${d.elapsed_s}s</div>
+  </div>
+  ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
+  <div class="card">
+    ${missList('Called scam, was not', d.misses && d.misses.false_scam,
+               'false positives')}
+    ${missList('Called legitimate, was a scam', d.misses && d.misses.missed_scam,
+               'false negatives — the expensive kind')}
+    ${missList('No readable answer', d.misses && d.misses.unreadable,
+               'scored as neither')}
+    ${(d.misses && (d.misses.false_scam.length || d.misses.missed_scam.length
+      || d.misses.unreadable.length)) ? '' :
+      '<div class="qp">Nothing to show — it got every call right.</div>'}
+    <div class="hint" style="margin-top:14px">Up to ten of each are sampled
+      here. Every call is in <code>${esc(d.per_call_csv)}</code>, with the
+      prediction, the truth and the transcript.</div>
+  </div>`;
+}
+
 // =========================================================== Length only
 // The floor. Same shape as the other two - fit, then classify - but the
 // model is one integer, so the answer is the comparison itself: where the
@@ -4571,6 +5022,12 @@ async function lenBoot() {
   $('lenunload').onclick = async () => {
     await api('/api/length/unload', {}); await lenRefresh();
   };
+  $('leneds').innerHTML = $('lendataset').innerHTML;
+  $('lenevgo').onclick = () => evalRun('length', evalIds('len', 'l-eval'), {
+    model: lenModel, dataset: $('leneds').value, limit: $('lenevlimit').value,
+    threshold: $('lenevthr').value, direction: $('lenevdir').value,
+    strip_tags: $('lenevstrip').checked,
+  });
   for (const b of $('lentabs').querySelectorAll('button'))
     b.onclick = () => lenTab(b.dataset.ltab);
   await lenRefresh();
@@ -4579,9 +5036,8 @@ async function lenBoot() {
 function lenTab(name) {
   for (const b of $('lentabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.ltab === name);
-  $('l-ask').hidden = name !== 'ask';
-  $('l-train').hidden = name !== 'train';
-  $('l-about').hidden = name !== 'about';
+  for (const t of ['ask', 'eval', 'train', 'about'])
+    $('l-' + t).hidden = t !== name;
 }
 
 const lenRule = m => `${m.direction || '?'} than ${m.threshold} words`;
@@ -4667,7 +5123,7 @@ async function lenPoll() {
   const r = await api(`/api/log?id=${encodeURIComponent(lenRun)}&offset=0`);
   if (!r.error) $('lentrainlog').textContent = r.text || '(no output yet)';
   clearTimeout(lenTimer);
-  if (r.error || r.done) { await lenRefresh(); return; }
+  if (r.error || runOver(r)) { await lenRefresh(); return; }
   lenTimer = setTimeout(lenPoll, 900);
 }
 
@@ -4834,6 +5290,18 @@ async function llmBoot() {
   $('llmfitgo').onclick = llmFit;
   for (const id of ['llmshots', 'llmholdcalls', 'llmrubric'])
     $(id).addEventListener('input', llmFitCost);
+  $('llmeds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  $('llmevlimit').addEventListener('input', llmEvalCost);
+  $('llmeds').addEventListener('change', llmEvalCost);
+  $('llmevgo').onclick = () => evalRun('llm', evalIds('llm', 'j-eval'), {
+    model: llmProf, base_model: $('llmmodel').value,
+    dataset: $('llmeds').value, limit: $('llmevlimit').value,
+    num_ctx: $('llmctx').value, max_tokens: $('llmmaxtok').value,
+    temperature: $('llmtemp').value,
+  });
+  llmEvalCost();
   for (const b of $('llmtabs').querySelectorAll('button'))
     b.onclick = () => llmTab(b.dataset.jtab);
   llmFitCost();
@@ -4844,9 +5312,8 @@ async function llmBoot() {
 function llmTab(name) {
   for (const b of $('llmtabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.jtab === name);
-  $('j-ask').hidden = name !== 'ask';
-  $('j-fit').hidden = name !== 'fit';
-  $('j-about').hidden = name !== 'about';
+  for (const t of ['ask', 'eval', 'fit', 'about'])
+    $('j-' + t).hidden = t !== name;
 }
 
 // What a fit is going to cost, before it is started rather than after. Two
@@ -4862,6 +5329,25 @@ function llmFitCost() {
       + '. On a 14B model that is minutes, not seconds.'
     : 'no holdout — the prompt will be saved unmeasured, which means you will '
       + 'not know whether it beat the bare one.';
+}
+
+// The one evaluate that has to be budgeted rather than just started. One
+// generation per call, and the datasets here run to seven thousand.
+function llmEvalCost() {
+  const opt = $('llmeds').selectedOptions[0];
+  const rows = opt ? parseInt((opt.textContent.match(/([0-9]+) rows/) || [])[1], 10) : 0;
+  const asked = parseInt($('llmevlimit').value, 10) || 0;
+  const n = asked ? Math.min(asked, rows || asked) : rows;
+  if (!n) { $('llmevcost').textContent = ''; return; }
+  // 6s/call is a 14B model on a GPU with a short transcript; long calls and
+  // CPU are both far worse, so this is the optimistic end and is labelled so
+  const secs = n * 6;
+  const h = secs >= 3600 ? (secs / 3600).toFixed(1) + ' hours'
+          : secs >= 60 ? Math.round(secs / 60) + ' minutes'
+          : secs + ' seconds';
+  $('llmevcost').innerHTML = `<strong>${n}</strong> generation`
+    + (n === 1 ? '' : 's') + ` — at best about ${h} on a 14B model with the `
+    + `GPU, and a good deal longer on CPU or with long calls`;
 }
 
 async function llmProfiles() {
@@ -4944,7 +5430,7 @@ async function llmFitPoll() {
   const r = await api(`/api/log?id=${encodeURIComponent(llmFitRun)}&offset=0`);
   if (!r.error) $('llmfitlog').textContent = r.text || '(no output yet)';
   clearTimeout(llmFitTimer);
-  if (r.error || r.done) { await llmProfiles(); return; }
+  if (r.error || runOver(r)) { await llmProfiles(); return; }
   llmFitTimer = setTimeout(llmFitPoll, 1500);
 }
 
