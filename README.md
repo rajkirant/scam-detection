@@ -1169,17 +1169,22 @@ transcription tool, how the text was written down - separates them for free.
 The content-deletion test measures how much of each system's score comes from
 that, rather than from what the caller said.
 
-Give the Benchmark page a **Stripped twin**, or give `run_all.sh` a
-`--stripped` file: a copy of the dataset with every noun, verb, adjective and
-adverb removed, so only function words such as "the", "of" and "is" remain.
-Every ticked system is then scored on both copies, and the results gain a
-trusted-accuracy column:
+Tick **Content-deletion test** on the Benchmark page, or pass `--stripped` to
+`run_all.sh`. It needs a twin beside the dataset — `<name>_stripped.csv`, the
+same calls with the same ids in the same order, with every noun, verb,
+adjective and adverb removed so only function words such as "the", "of" and
+"is" remain. It is found by convention rather than picked, because choosing
+it by hand is how two files that are not the same calls end up paired; the
+tick box is disabled, and says why, for a dataset with no twin.
+
+The folds do not change. Every ticked system runs its normal cross-validation
+and the held-out fold is scored twice, so the results gain a
+stripped-accuracy column and a trusted accuracy beside it:
 
     A = a_full - max(0, a_stripped - 0.5)
 
 ```bash
-./run_all.sh -d datasets/scambait_bank_422.csv \
-             --stripped datasets/scambait_bank_422_stripped.csv -b all -l 0
+./run_all.sh -d datasets/scambait_bank_422.csv --stripped -b all -l 0
 ```
 
 **How each system is scored on the stripped copy matters more than anything

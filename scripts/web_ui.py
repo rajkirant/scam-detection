@@ -443,7 +443,8 @@ def start_run(form):
     valid_ds = {d["path"] for d in datasets()}
     if ds not in valid_ds:
         raise ValueError("unknown dataset")
-    stripped = (form.get("stripped") or "").strip()
+    want_stripped = bool(form.get("stripped"))
+    stripped = ""
     known = {b[0]: b for b in BASELINES}
     bad = [b for b in picked if b not in known]
     if bad:
@@ -455,17 +456,25 @@ def start_run(form):
     baselines = [b[0] for b in BASELINES if b[0] in set(picked)]
     if not LIMIT_RE.match(limit):
         raise ValueError("limit must be a whole number, id:<value>, or idx:<n>")
-    if stripped:
-        # The content-deletion test. check_pair is the same check run_all.sh
-        # makes, run here first so a twin that does not line up is a message
-        # under the form instead of a run that dies in its first second.
-        if stripped not in valid_ds:
-            raise ValueError("unknown stripped twin")
-        if stripped == ds:
-            raise ValueError("the stripped twin cannot be the dataset itself")
+    if want_stripped:
+        # The content-deletion test is a tick box, and the twin is found by
+        # convention rather than picked: choosing it by hand is how two files
+        # that are not row-for-row the same calls end up paired.
+        if ds.endswith("_stripped.csv"):
+            raise ValueError("%s is already a stripped set, so there is "
+                             "nothing left to delete - pick the original" % ds)
+        stripped = ds[:-len(".csv")] + "_stripped.csv"
+        if not (PROJECT_DIR / stripped).is_file():
+            raise ValueError(
+                "no stripped twin for that dataset - expected it at %s. The "
+                "twin is the same calls, same ids, same order, with the "
+                "content words deleted." % stripped)
         if limit.startswith(("id:", "idx:")):
-            raise ValueError("the stripped twin scores the whole dataset twice; "
-                             "it cannot run on a single transcript")
+            raise ValueError("the content-deletion test scores every held-out "
+                             "call twice; it cannot run on a single transcript")
+        # the same check run_all.sh makes, run here first so a twin that does
+        # not line up is a message under the form instead of a run that dies
+        # in its first second
         sys.path.insert(0, str(PROJECT_DIR / "scripts"))
         import trusted
         problems = trusted.check_pair(str(PROJECT_DIR / ds),
@@ -496,7 +505,9 @@ def start_run(form):
     if model:
         flags += ["--model", model]
     if stripped:
-        flags += ["--stripped", stripped]
+        # run_all.sh resolves the twin the same way; the path above is only
+        # so this server can refuse a bad pair before starting anything
+        flags.append("--stripped")
 
     # $1 is the script and "${@:2}" the flags, so nothing here is re-parsed as
     # shell syntax. The marker records the exit status in the log itself.
@@ -2568,13 +2579,21 @@ PAGE = r"""<!doctype html>
       <label for="dataset">Dataset</label>
       <select id="dataset"></select>
 
-      <label for="stripped">Stripped twin <span class="note">optional</span></label>
-      <select id="stripped"></select>
-      <div class="hint">The content-deletion test. Every ticked system is
-        scored again on this copy of the dataset with the content words
-        removed, and the results gain a trusted-accuracy column. Systems that
-        learn from the data are trained on the original text only. The twin
-        must hold the same ids, in the same order, with the same labels.</div>
+      <label class="inline" style="margin-top:12px">
+        <input type="checkbox" id="stripped">
+        <span><span class="name">Content-deletion test</span>
+        <span class="note">also score every held-out call with its content
+          words deleted</span></span>
+      </label>
+      <div class="hint" id="strippedhint">The folds do not change. A system
+        that learns from the data is trained on the original text of the four
+        training folds, then the held-out fold is scored twice by those same
+        weights &mdash; as written, and with the content words deleted &mdash;
+        and that rotates through all five. Nothing is ever trained on stripped
+        text. The results gain a stripped-accuracy column and a trusted
+        accuracy beside it. The twin is found next to the dataset as
+        <code>&lt;name&gt;_stripped.csv</code>.</div>
+      <div class="hint" id="twinnote" style="margin-top:2px"></div>
 
       <label>Baselines</label>
       <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
@@ -3624,10 +3643,24 @@ async function boot() {
   ).join('');
   $('dataset').addEventListener('change', sizeContext);
   sizeContext();
-  $('stripped').innerHTML = '<option value="">none</option>' +
-    CFG.datasets.map(d =>
-      `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
-    ).join('');
+  // The content-deletion box is only usable where a twin exists, so it says
+  // so before the run is started rather than after it is refused.
+  const twinFor = p => p && !p.endsWith('_stripped.csv')
+    ? p.slice(0, -4) + '_stripped.csv' : null;
+  const paths = new Set(CFG.datasets.map(d => d.path));
+  function strippedAvail() {
+    const twin = twinFor($('dataset').value);
+    const have = !!twin && paths.has(twin);
+    $('stripped').disabled = !have;
+    if (!have) $('stripped').checked = false;
+    $('strippedhint').style.opacity = have ? '' : '.55';
+    $('twinnote').textContent = have ? 'twin: ' + twin
+      : ($('dataset').value.endsWith('_stripped.csv')
+         ? 'this is already a stripped set — pick the original'
+         : 'no ' + (twin || '…') + ' next to this dataset');
+  }
+  $('dataset').addEventListener('change', strippedAvail);
+  strippedAvail();
 
   // "all" is not offered as a box of its own - ticking every box is "all",
   // and the select-all link is a clearer way to say it
@@ -3805,7 +3838,7 @@ async function go() {
     limit: limit,
     model: $('model').value,
     num_ctx: $('numctx').value,
-    stripped: $('stripped').value,
+    stripped: $('stripped').checked,
   });
   onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }
