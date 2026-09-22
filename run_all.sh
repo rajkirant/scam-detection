@@ -613,32 +613,30 @@ SINGLE_MODE=0
 
 # The content-deletion test pairs the dataset with its stripped twin by id,
 # and refuses a twin whose ids, order or labels disagree with it.
-# The content-deletion test is a switch, not a file: the twin is found by
-# convention next to the dataset, because picking it by hand is how you end
-# up pairing two files that are not row-for-row the same calls.
+# The content-deletion test needs no twin file and no second dataset. The
+# stripped copy is built from the dataset itself, by deleting every word that
+# is not in trusted.FUNCTION_WORDS, so any dataset in the list can be tested
+# and the pairing is exact by construction.
+#
+# combined_evaluate.py and bert_baseline.py strip in memory, which is what
+# lets them honour --limit. The ontology runners take a CSV path, so one
+# stripped copy is written into this run's log directory for them - the same
+# strip_content_words either way, so the two cannot disagree.
 STRIPPED_ARGS=""
-STRIPPED_CSV=""
+STRIPPED_ON=0
 if [[ -n "$ARG_STRIPPED" ]]; then
-  case "$DATASET" in
-    *_stripped.csv) die "--stripped: $DATASET is already a stripped set, so
-       there is nothing left to delete. Pick the original." ;;
-  esac
-  STRIPPED_CSV="${DATASET%.csv}_stripped.csv"
-  [[ -f "$STRIPPED_CSV" ]] || die "--stripped: no stripped twin for $DATASET
-       expected it at: $STRIPPED_CSV
-       The twin is the same calls, same ids, same order, with the content
-       words deleted. Make that file and run this again."
-  ARG_STRIPPED="$STRIPPED_CSV"
-fi
-if [[ -n "$ARG_STRIPPED" ]]; then
-  [[ "$SINGLE_MODE" -eq 1 ]] && die "--stripped scores the whole dataset twice;
+  STRIPPED_ON=1
+  [[ "$SINGLE_MODE" -eq 1 ]] && die "--stripped scores every call twice;
        it cannot be combined with a one-transcript id:/idx: limit"
-  [[ -f "$ARG_STRIPPED" ]] || die "--stripped file not found: $ARG_STRIPPED"
-  [[ "$ARG_STRIPPED" -ef "$DATASET" ]] && die "--stripped is the dataset itself"
-  python scripts/trusted.py check "$DATASET" "$ARG_STRIPPED" \
-    || die "the stripped twin does not match the dataset (see above)"
-  STRIPPED_ARGS="--stripped-csv $ARG_STRIPPED"
-  ok "stripped  $ARG_STRIPPED  (content-deletion test on)"
+  STRIPPED_ARGS="--stripped"
+  if [[ "$RUN_ONTOLOGY" -eq 1 || "$RUN_MCQ" -eq 1 ]]; then
+    ARG_STRIPPED="$LOGDIR/stripped_$(basename "$DATASET")"
+    python scripts/trusted.py strip "$DATASET" "$ARG_STRIPPED" \
+      || die "could not build the stripped copy"
+  else
+    ARG_STRIPPED=""
+  fi
+  ok "stripped  content-deletion test on (built from $DATASET)"
 fi
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
 if [[ ( -n "$ONE_ID" || -n "$ONE_IDX" ) && "$RUN_BERT" -eq 1 ]]; then
@@ -851,7 +849,7 @@ ELAPSED=$(( $(date +%s) - START_ALL ))
 
 echo
 echo "  dataset: $DATASET   baseline: $BASELINE   model: ${MODEL:-none}"
-[[ -n "$ARG_STRIPPED" ]] && echo "  stripped twin: $ARG_STRIPPED   (content-deletion test)"
+[[ "$STRIPPED_ON" -eq 1 ]] && echo "  content-deletion test: on (stripped copy built from the dataset)"
 python scripts/collect_results.py "$LOGDIR"
 
 echo "=========================================================================="

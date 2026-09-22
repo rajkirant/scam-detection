@@ -232,24 +232,23 @@ def train_and_predict(model_name, train_texts, train_labels, eval_texts,
 # Modes
 # ---------------------------------------------------------------------------
 
-def stripped_twins(args, df):
-    """The stripped transcript for each row load_dataset kept, matched by id.
+def stripped_twins(args, texts):
+    """The same transcripts with their content words deleted.
 
-    Matched on the id column, never on position, because --limit keeps a
-    class-balanced head rather than the file's first rows.
+    Built here rather than read from a paired file on disk: the pairing is
+    then exact by construction, every dataset can be tested rather than only
+    the ones somebody made a twin for, and the rule that defines the
+    measurement is trusted.FUNCTION_WORDS instead of whatever tool wrote the
+    CSV. The checkpoint never sees any of this in training.
     """
-    problems = trusted.check_pair(args.csv, args.stripped_csv)
-    if problems:
-        raise SystemExit("--stripped-csv %s cannot be paired with %s:\n  %s"
-                         % (args.stripped_csv, args.csv, "\n  ".join(problems)))
-    by_id = {str(r["id"]): (r.get("text") or "").strip()
-             for r in trusted.read_rows(args.stripped_csv)}
-    # a byte-order mark can stick to the first header, which is usually id
-    id_col = next((c for c in df.columns if str(c).lstrip("\ufeff") == "id"), None)
-    if id_col is None:
-        raise SystemExit(f"--stripped-csv needs an id column in {args.csv}")
-    print(f"  paired with its stripped twin {args.stripped_csv}")
-    return [by_id[str(i)] for i in df[id_col].tolist()]
+    out, empties = trusted.strip_all(texts)
+    kept = sum(len(t.split()) for t in out)
+    whole = sum(len(t.split()) for t in texts)
+    print("  content-deletion test: %d of %d words kept (%.0f%%)"
+          % (kept, whole, 100.0 * kept / whole if whole else 0))
+    if empties:
+        print(f"  {empties} call(s) strip to nothing at all")
+    return out
 
 
 def run_cv(args, tokenizer=None, model_init=None):
@@ -261,7 +260,7 @@ def run_cv(args, tokenizer=None, model_init=None):
     # each training fold and then scores BOTH copies of the held-out calls, in
     # one pass, so the stripped score comes from the very same fine-tuned
     # weights. It is never trained on stripped text.
-    texts_s = stripped_twins(args, df) if getattr(args, "stripped_csv", None) else None
+    texts_s = stripped_twins(args, texts) if getattr(args, "stripped", False) else None
     oof_pred_s = [None] * len(texts)
     oof_prob_s = [None] * len(texts)
     print()
@@ -340,7 +339,7 @@ def run_cv(args, tokenizer=None, model_init=None):
 
     summary_extra = {}
     if stripped is not None:
-        summary_extra = {"stripped_csv": args.stripped_csv, "stripped": stripped,
+        summary_extra = {"stripped_csv": None, "stripped": stripped,
                          "trusted_accuracy": trusted.trusted_accuracy(
                              overall["acc"], stripped["acc"])}
     write_summary(args, {**summary_extra, "mode": "cv", "folds": args.folds,
@@ -455,9 +454,9 @@ def build_parser():
     cv.add_argument("--csv", default="datasets/scam_vs_bank_243x243.csv")
     cv.add_argument("--folds", type=int, default=5)
     cv.add_argument("--out", default="results/bert_results_486.csv")
-    cv.add_argument("--stripped-csv", default=None,
-                    help="content-deletion test: also score the stripped twin "
-                         "of each held-out call, matched by id, with the same "
+    cv.add_argument("--stripped", action="store_true",
+                    help="content-deletion test: also score each held-out call "
+                         "with its content words deleted, using the same "
                          "fine-tuned model. Training uses original text only")
     common(cv)
     cv.set_defaults(func=run_cv)
