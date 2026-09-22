@@ -148,6 +148,26 @@ latest_url() {
   echo "$u"
 }
 
+# How many tunnels have been announced in the log so far. A session connected
+# if this went up while it ran - which is true whether localhost.run handed
+# back a new address or, for a keyed tunnel, the same one as last time.
+announced() {
+  grep -c "tunneled with" "$TUNNEL_LOG" 2>/dev/null || echo 0
+}
+
+# Wait for the NEXT announcement after $1 lines, and give its URL.
+# $2 = seconds to wait, $3 = the ssh pid to give up on if it dies.
+await_announce() {
+  local n0="$1" secs="$2" pid="${3:-}" i
+  for (( i = 0; i < secs; i++ )); do
+    (( $(announced) > n0 )) && { latest_url; return 0; }
+    [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null && break
+    sleep 1
+  done
+  echo ""
+  return 1
+}
+
 # Wait for a URL that is not the one we already had. $1 = the previous URL,
 # $2 = how many seconds to wait, $3 = the ssh pid to give up on if it dies.
 await_url() {
@@ -200,13 +220,14 @@ supervise() {
 # localhost.run, and two of them in a row mean the key is not welcome - at
 # which point it switches to the anonymous user rather than retrying forever.
 tunnel_loop() {
-  local sshpid prev url t0 el fails=0 pause had=0 keyopt=()
+  local sshpid prev n0 url t0 el fails=0 pause had=0 keyopt=()
   # IdentitiesOnly, or ssh offers the box's other keys first and localhost.run
   # answers whichever one it is handed - which is how you end up on a different
   # subdomain than the one you shared
   [[ -f "$TUNNEL_KEY" ]] && keyopt=(-i "$TUNNEL_KEY" -o IdentitiesOnly=yes)
   while true; do
     prev="$(latest_url)"
+    n0="$(announced)"
     url=""
     t0=$(date +%s)
     ssh -n -T -o StrictHostKeyChecking=accept-new \
@@ -221,14 +242,21 @@ tunnel_loop() {
     # waiting for it. Only once a link has actually existed is a new one a
     # reconnect worth reporting - and with the anonymous user it is a
     # different address from the one before, so it has to be reported.
-    if [[ "$had" -eq 1 ]]; then
-      url="$(await_url "$prev" 40 "$sshpid")"
-      if [[ -n "$url" ]]; then
-        echo "$url" > "$PUBLIC_URL_FILE"
-        echo -e "\n${YLW}  warn${NC} the tunnel dropped and reconnected"
+    #
+    # Waiting for "a URL different from before" used to be how a reconnect was
+    # recognised. A keyed tunnel comes back on the SAME address, so that wait
+    # never ended, and worse, every ordinary drop was then counted as a
+    # failure below - two of those and the key was abandoned for an anonymous
+    # tunnel with a random address. So wait for a new announcement instead.
+    url="$(await_announce "$n0" 45 "$sshpid")"
+    if [[ "$had" -eq 1 && -n "$url" ]]; then
+      echo "$url" > "$PUBLIC_URL_FILE"
+      echo -e "\n${YLW}  warn${NC} the tunnel dropped and reconnected"
+      if [[ "$url" == "$prev" ]]; then
+        echo -e "${GRN}  ok${NC} public    $url   (same address as before)"
+      else
         echo -e "${GRN}  ok${NC} public    $url"
-        [[ "$TUNNEL_TARGET" == nokey@* ]] \
-          && echo -e "${YLW}  warn${NC} that is a new address - the previous link is dead"
+        echo -e "${YLW}  warn${NC} that is a new address - the previous link is dead"
       fi
     fi
 
@@ -237,10 +265,10 @@ tunnel_loop() {
     wait "$sshpid" 2>/dev/null
     [[ -n "$(latest_url)" ]] && had=1
     el=$(( $(date +%s) - t0 ))
-    if [[ "$(latest_url)" != "$prev" ]]; then
+    if (( $(announced) > n0 )); then
       fails=0                     # it did connect, however briefly
     else
-      fails=$(( fails + 1 ))
+      fails=$(( fails + 1 ))      # it never got as far as a tunnel
     fi
     echo "" >> "$TUNNEL_LOG"
     echo "[$(date "+%F %T")] ssh exited after ${el}s (consecutive failures: $fails)" \
