@@ -26,6 +26,14 @@
 #   ./run_all.sh -b llm_only,mcq,bert -l 0    # just those three, one run
 #   ./run_all.sh -b 3,7,8 -l 0                # the same three, by number
 #
+# The content-deletion test scores every system twice, on the dataset and on
+# a stripped twin of it with the content words removed, and adds a
+# trusted-accuracy table. Learning systems are trained on the original text
+# only (see scripts/trusted.py):
+#
+#   ./run_all.sh -d datasets/scambait_bank_422.csv \
+#                --stripped datasets/scambait_bank_422_stripped.csv -b all -l 0
+#
 # A long run can outlive the SSH session, so question 5 offers to hand the
 # actual work to a detached tmux session: closing the terminal, or losing
 # the link, then does not kill it. It is asked on every run, including a
@@ -79,7 +87,7 @@ prompt() {            # prompt <text> <varname>   - read only echoes its own
 }
 
 # ---------------------------------------------------------------- arguments
-ARG_DATASET=""; ARG_BASELINE=""; ARG_LIMIT=""; ARG_MODEL=""
+ARG_DATASET=""; ARG_BASELINE=""; ARG_LIMIT=""; ARG_MODEL=""; ARG_STRIPPED=""
 DETACH=0; SESSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,6 +95,7 @@ while [[ $# -gt 0 ]]; do
     -b|--baseline) ARG_BASELINE="${2:-}"; shift 2 ;;
     -l|--limit)    ARG_LIMIT="${2:-}";    shift 2 ;;
     -m|--model)    ARG_MODEL="${2:-}";    shift 2 ;;
+    -S|--stripped) ARG_STRIPPED="${2:-}"; shift 2 ;;
     -t|--tmux)     DETACH=1;              shift   ;;
     -s|--session)  SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)     awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
@@ -458,6 +467,7 @@ relaunch_cmd() {           # the exact command line the detached copy runs
   printf 'bash %q --dataset %q --baseline %q --limit %q' \
     "$SELF" "$DATASET" "$BASELINE" "$lim"
   [[ -n "$MODEL" ]] && printf ' --model %q' "$MODEL"
+  [[ -n "$ARG_STRIPPED" ]] && printf ' --stripped %q' "$ARG_STRIPPED"
   printf '\n'
 }
 
@@ -598,6 +608,20 @@ ok "logs      $LOGDIR"
 # either way)
 SINGLE_MODE=0
 [[ -n "$ONE_ID" || -n "$ONE_IDX" ]] && SINGLE_MODE=1
+
+# The content-deletion test pairs the dataset with its stripped twin by id,
+# and refuses a twin whose ids, order or labels disagree with it.
+STRIPPED_ARGS=""
+if [[ -n "$ARG_STRIPPED" ]]; then
+  [[ "$SINGLE_MODE" -eq 1 ]] && die "--stripped scores the whole dataset twice;
+       it cannot be combined with a one-transcript id:/idx: limit"
+  [[ -f "$ARG_STRIPPED" ]] || die "--stripped file not found: $ARG_STRIPPED"
+  [[ "$ARG_STRIPPED" -ef "$DATASET" ]] && die "--stripped is the dataset itself"
+  python scripts/trusted.py check "$DATASET" "$ARG_STRIPPED" \
+    || die "the stripped twin does not match the dataset (see above)"
+  STRIPPED_ARGS="--stripped-csv $ARG_STRIPPED"
+  ok "stripped  $ARG_STRIPPED  (content-deletion test on)"
+fi
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
 if [[ ( -n "$ONE_ID" || -n "$ONE_IDX" ) && "$RUN_BERT" -eq 1 ]]; then
   warn "BERT needs several rows per fold to train on; a 1-row run will fail or be meaningless"
@@ -713,7 +737,7 @@ fi
 if [[ "$RUN_COMBINED" -eq 1 ]]; then
   # shellcheck disable=SC2086
   run_step "combined" python -u scripts/combined_evaluate.py \
-    --csv "$DATASET" $LIMIT_ARG $COMBINED_EXTRA $QWEN_ARGS
+    --csv "$DATASET" $LIMIT_ARG $COMBINED_EXTRA $QWEN_ARGS $STRIPPED_ARGS
 fi
 
 # ---------------------------------------------------------- 2. ontology RAG
@@ -727,6 +751,14 @@ if [[ "$RUN_ONTOLOGY" -eq 1 ]]; then
   run_step "ontology" python -u scripts/evaluate_ontology.py \
     --csv "$DATASET" --model "$MODEL" --ontology "$ONTOLOGY" \
     --out "$ONTO_OUT" $LIMIT_ARG $DEBUG_FLAG
+  if [[ -n "$ARG_STRIPPED" ]]; then
+    # nothing here is learned from the data, so the stripped twin is simply
+    # scored; trusted.py check has already confirmed its rows line up
+    # shellcheck disable=SC2086
+    run_step "ontology_stripped" python -u scripts/evaluate_ontology.py \
+      --csv "$ARG_STRIPPED" --model "$MODEL" --ontology "$ONTOLOGY" \
+      --out "${ONTO_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
+  fi
 fi
 
 # ---------------------------------------------------------- 3. MCQ ontology
@@ -736,6 +768,12 @@ if [[ "$RUN_MCQ" -eq 1 ]]; then
   run_step "mcq" python -u scripts/evaluate_mcq_ontology.py \
     --csv "$DATASET" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
     --out "$MCQ_OUT" $LIMIT_ARG $DEBUG_FLAG
+  if [[ -n "$ARG_STRIPPED" ]]; then
+    # shellcheck disable=SC2086
+    run_step "mcq_stripped" python -u scripts/evaluate_mcq_ontology.py \
+      --csv "$ARG_STRIPPED" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
+      --out "${MCQ_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
+  fi
 fi
 
 # --------------------------------------------------------- 4. free GPU, BERT
@@ -787,7 +825,7 @@ if [[ "$RUN_BERT" -eq 1 ]]; then
   fi
   # shellcheck disable=SC2086
   run_step "bert" python -u scripts/bert_baseline.py cv \
-    --csv "$DATASET" --out "$BERT_OUT" $BERT_ARGS
+    --csv "$DATASET" --out "$BERT_OUT" $BERT_ARGS $STRIPPED_ARGS
 fi
 
 # ------------------------------------------------------------------ results
@@ -795,6 +833,7 @@ ELAPSED=$(( $(date +%s) - START_ALL ))
 
 echo
 echo "  dataset: $DATASET   baseline: $BASELINE   model: ${MODEL:-none}"
+[[ -n "$ARG_STRIPPED" ]] && echo "  stripped twin: $ARG_STRIPPED   (content-deletion test)"
 python scripts/collect_results.py "$LOGDIR"
 
 echo "=========================================================================="

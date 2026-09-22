@@ -442,6 +442,7 @@ def start_run(form):
     valid_ds = {d["path"] for d in datasets()}
     if ds not in valid_ds:
         raise ValueError("unknown dataset")
+    stripped = (form.get("stripped") or "").strip()
     known = {b[0]: b for b in BASELINES}
     bad = [b for b in picked if b not in known]
     if bad:
@@ -453,6 +454,23 @@ def start_run(form):
     baselines = [b[0] for b in BASELINES if b[0] in set(picked)]
     if not LIMIT_RE.match(limit):
         raise ValueError("limit must be a whole number, id:<value>, or idx:<n>")
+    if stripped:
+        # The content-deletion test. check_pair is the same check run_all.sh
+        # makes, run here first so a twin that does not line up is a message
+        # under the form instead of a run that dies in its first second.
+        if stripped not in valid_ds:
+            raise ValueError("unknown stripped twin")
+        if stripped == ds:
+            raise ValueError("the stripped twin cannot be the dataset itself")
+        if limit.startswith(("id:", "idx:")):
+            raise ValueError("the stripped twin scores the whole dataset twice; "
+                             "it cannot run on a single transcript")
+        sys.path.insert(0, str(PROJECT_DIR / "scripts"))
+        import trusted
+        problems = trusted.check_pair(str(PROJECT_DIR / ds),
+                                      str(PROJECT_DIR / stripped))
+        if problems:
+            raise ValueError("stripped twin rejected: " + "; ".join(problems))
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
     if any(known[b][3] for b in baselines):
@@ -476,6 +494,8 @@ def start_run(form):
              "--limit", limit]
     if model:
         flags += ["--model", model]
+    if stripped:
+        flags += ["--stripped", stripped]
 
     # $1 is the script and "${@:2}" the flags, so nothing here is re-parsed as
     # shell syntax. The marker records the exit status in the log itself.
@@ -505,7 +525,8 @@ def start_run(form):
 
     meta = {"id": run_id, "pid": proc.pid, "dataset": ds,
             "baseline": ",".join(baselines), "baselines": baselines,
-            "limit": limit, "model": model, "started": time.time()}
+            "limit": limit, "model": model, "started": time.time(),
+            "stripped": stripped}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -2546,6 +2567,14 @@ PAGE = r"""<!doctype html>
       <label for="dataset">Dataset</label>
       <select id="dataset"></select>
 
+      <label for="stripped">Stripped twin <span class="note">optional</span></label>
+      <select id="stripped"></select>
+      <div class="hint">The content-deletion test. Every ticked system is
+        scored again on this copy of the dataset with the content words
+        removed, and the results gain a trusted-accuracy column. Systems that
+        learn from the data are trained on the original text only. The twin
+        must hold the same ids, in the same order, with the same labels.</div>
+
       <label>Baselines</label>
       <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
       <div class="checks" id="baselines"></div>
@@ -3594,6 +3623,10 @@ async function boot() {
   ).join('');
   $('dataset').addEventListener('change', sizeContext);
   sizeContext();
+  $('stripped').innerHTML = '<option value="">none</option>' +
+    CFG.datasets.map(d =>
+      `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+    ).join('');
 
   // "all" is not offered as a box of its own - ticking every box is "all",
   // and the select-all link is a clearer way to say it
@@ -3771,6 +3804,7 @@ async function go() {
     limit: limit,
     model: $('model').value,
     num_ctx: $('numctx').value,
+    stripped: $('stripped').value,
   });
   onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }
@@ -3992,17 +4026,31 @@ function showView(which) {
 }
 
 function paintTable() {
-  const head = ['system','acc','P','R','F1','TP','FP','FN','TN'];
+  // A run given a stripped twin adds two columns: accuracy on the stripped
+  // copy, from the same trained model, and trusted accuracy
+  // A = a_full - max(0, a_stripped - 0.5). collect_results.py computes A.
+  const paired = !!RESULTS.paired;
+  const head = ['system','acc','P','R','F1','TP','FP','FN','TN']
+    .concat(paired ? ['stripped acc', 'trusted A'] : []);
   let h = '<tr>' + head.map(x => `<th>${x}</th>`).join('') + '</tr>';
   for (const s of RESULTS.systems) {
     if (!s.ran) {
-      h += `<tr class="skipped"><td>${s.system}</td><td colspan="8">not run</td></tr>`;
+      h += `<tr class="skipped"><td>${s.system}</td>` +
+           `<td colspan="${head.length - 1}">not run</td></tr>`;
       continue;
     }
     h += `<tr><td>${s.system}</td><td>${s.acc.toFixed(1)}%</td>` +
          `<td>${s.p.toFixed(3)}</td><td>${s.r.toFixed(3)}</td>` +
          `<td>${s.f1.toFixed(3)}</td><td>${s.tp}</td><td>${s.fp}</td>` +
-         `<td>${s.fn}</td><td>${s.tn}</td></tr>`;
+         `<td>${s.fn}</td><td>${s.tn}</td>`;
+    if (paired) {
+      h += s.stripped
+        ? `<td title="stripped copy: TP${s.stripped.tp} FP${s.stripped.fp} ` +
+          `FN${s.stripped.fn} TN${s.stripped.tn}">${s.stripped.acc.toFixed(1)}%</td>` +
+          `<td>${s.trusted.toFixed(1)}%</td>`
+        : '<td class="muted">—</td><td class="muted">—</td>';
+    }
+    h += '</tr>';
   }
   $('results').innerHTML = h;
 }
@@ -4198,7 +4246,7 @@ async function loadCalls() {
     h += '<tr>' + row.map((v, i) => {
       if (!keep(i)) return '';
       const c = cols[i];
-      if (c === 'text' || c === 'transcript')
+      if (c === 'text' || c === 'transcript' || c === 'text_stripped')
         return `<td class="text">${esc(v.length > 260 ? v.slice(0, 260) + '…' : v)}</td>`;
       // the cell is clipped by CSS, so the full sentence goes in the tooltip
       if (why[i])

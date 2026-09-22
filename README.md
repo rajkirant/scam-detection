@@ -1159,6 +1159,61 @@ SCAM_NUM_CTX=16384 ./run_all.sh -d datasets/scamai_hard_subset.csv -b llm_only
 
 ---
 
+## The content-deletion test
+
+Accuracy on a paired scam dataset can be earned without reading the calls.
+When the scam half and the legitimate half come from different collections,
+anything that differs between the collections - recording conditions, the
+transcription tool, how the text was written down - separates them for free.
+The content-deletion test measures how much of each system's score comes from
+that, rather than from what the caller said.
+
+Give the Benchmark page a **Stripped twin**, or give `run_all.sh` a
+`--stripped` file: a copy of the dataset with every noun, verb, adjective and
+adverb removed, so only function words such as "the", "of" and "is" remain.
+Every ticked system is then scored on both copies, and the results gain a
+trusted-accuracy column:
+
+    A = a_full - max(0, a_stripped - 0.5)
+
+```bash
+./run_all.sh -d datasets/scambait_bank_422.csv \
+             --stripped datasets/scambait_bank_422_stripped.csv -b all -l 0
+```
+
+**How each system is scored on the stripped copy matters more than anything
+else here.** A system that learns from the data - bag-of-words, BERT,
+Qwen-KB, the hybrid - is trained on the **original** text of each training
+fold, and that same trained model then scores both copies of the held-out
+calls. It is never trained on stripped text: that would ask whether a fresh
+model can learn the stripped data, which is a question about the dataset,
+not about the detector. Systems that learn nothing from the data - length,
+LLM-only, Singh, Web-RAG, the two ontology systems - are simply run on the
+stripped file. Qwen-KB and the hybrid learn their patterns once a fold and
+reuse them for both copies, so the expensive step is not repeated.
+
+The twin is matched to the dataset by its `id` column, never by row position,
+and a twin whose ids, order or labels disagree is refused before anything
+runs. To check a pair yourself:
+
+```bash
+python scripts/trusted.py check datasets/scambait_bank_422.csv \
+                                datasets/scambait_bank_422_stripped.csv
+```
+
+The formula lives in `scripts/trusted.py` and nowhere else, so the number in
+a log, in `collect_results.py` and in the web UI is always the same
+computation. `scripts/test_stripped_pairing.py` checks the rule above
+directly, by recording what each learner was shown.
+
+Read a trained classifier's trusted accuracy with care: it is sensitive to
+the vectoriser. On `scambait_bank_422` the benchmark's bag-of-words scores
+78.2% on the stripped copy (trusted 71.8%), but adding `sublinear_tf` alone
+moves that to 56.6% (trusted 93.4%). Report the range across reasonable
+settings, not one configuration.
+
+---
+
 ## Datasets
 
 Every CSV in `datasets/` shows up in the launcher menus automatically. All of
