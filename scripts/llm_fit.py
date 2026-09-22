@@ -51,7 +51,6 @@ level and has to start without the venv.
 """
 
 import argparse
-import csv
 import json
 import random
 import sys
@@ -66,118 +65,26 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import llm_judge                                           # noqa: E402
 
+# The dataset loader and the confusion matrix live in eval_common, so all
+# four pages agree on what a score means and the numbers can be read side
+# by side. Re-exported here because this module's own callers use them.
+import eval_common as EC                                    # noqa: E402
+
+to_binary = EC.to_binary
+load_rows = EC.load_rows
+metrics = EC.metrics
+fmt = EC.fmt
+
+
 # What marks a directory in models/ as one of these. The other three pages
 # look for config.json, bow.joblib and length.json, so the four kinds sit
 # side by side in models/ without seeing each other.
 PROFILE_FILE = "llm.json"
 META_FILE = "meta.json"
 
-TEXT_COLS = ("transcript", "text", "call", "conversation", "dialogue",
-             "content", "body")
-LABEL_COLS = ("label", "is_scam", "scam", "target", "class", "y",
-              "ground_truth")
-ID_COLS = ("id", "call_id", "conv_id")
-
-SCAM_WORDS = {"1", "scam", "fraud", "fraudulent", "true", "yes", "spam",
-              "phishing", "malicious"}
-
 MAX_SHOTS = 12
 MAX_SHOT_WORDS = 400
 RUBRIC_MAX_TOKENS = 600
-
-
-# ---------------------------------------------------------------------------
-# the dataset, without pandas
-# ---------------------------------------------------------------------------
-
-def to_binary(value):
-    v = str(value).strip().lower()
-    if v in SCAM_WORDS:
-        return 1
-    try:
-        return 1 if float(v) >= 0.5 else 0
-    except ValueError:
-        return 0
-
-
-def load_rows(path, text_col=None, label_col=None, limit=None):
-    """[{id, text, label, words}] out of a dataset CSV.
-
-    stdlib csv rather than pandas: this module is imported by web_ui.py, which
-    runs on the system python so it can start without the venv.
-    """
-    csv.field_size_limit(sys.maxsize)
-    p = Path(path)
-    if not p.exists():
-        raise SystemExit("dataset not found: %s" % path)
-    with open(p, newline="", encoding="utf-8", errors="replace") as f:
-        raw = list(csv.DictReader(f))
-    if not raw:
-        raise SystemExit("that dataset is empty")
-
-    cols = {c.lower(): c for c in raw[0]}
-    tcol = text_col or next((cols[c] for c in TEXT_COLS if c in cols), None)
-    lcol = label_col or next((cols[c] for c in LABEL_COLS if c in cols), None)
-    if tcol is None:
-        raise SystemExit("no transcript column in that dataset")
-    if lcol is None:
-        raise SystemExit("no label column in that dataset")
-    icol = next((cols[c] for c in ID_COLS if c in cols), None)
-
-    rows = []
-    for i, r in enumerate(raw):
-        text = (r.get(tcol) or "").strip()
-        if not text:
-            continue
-        rows.append({"id": (r.get(icol) if icol else None) or i,
-                     "row": i,
-                     "text": text,
-                     "label": to_binary(r.get(lcol)),
-                     "words": len(text.split())})
-    if limit:
-        # a class-balanced head, so a smoke test is not all one class - the
-        # same thing bert_baseline.load_dataset does
-        pos = [r for r in rows if r["label"]][: limit // 2]
-        neg = [r for r in rows if not r["label"]][: limit - limit // 2]
-        rows = sorted(pos + neg, key=lambda r: r["row"])
-    print("  loaded %d calls from %s" % (len(rows), path))
-    print("  text column: '%s'   label column: '%s'" % (tcol, lcol))
-    print("  class balance: %d scam / %d legitimate"
-          % (sum(r["label"] for r in rows),
-             len(rows) - sum(r["label"] for r in rows)))
-    return rows
-
-
-def metrics(y_true, y_pred):
-    """The same shape combined_evaluate and bert_baseline print.
-
-    A prediction of None - the model gave an answer that could not be read -
-    counts as neither class and is reported separately rather than being
-    quietly folded into Normal, which is what turns an unreadable answer into
-    a false negative.
-    """
-    pairs = [(t, p) for t, p in zip(y_true, y_pred) if p is not None]
-    tp = sum(1 for t, p in pairs if t == 1 and p == 1)
-    fp = sum(1 for t, p in pairs if t == 0 and p == 1)
-    fn = sum(1 for t, p in pairs if t == 1 and p == 0)
-    tn = sum(1 for t, p in pairs if t == 0 and p == 0)
-    n = len(pairs)
-    acc = (tp + tn) / n if n else 0.0
-    prec = tp / (tp + fp) if (tp + fp) else 0.0
-    rec = tp / (tp + fn) if (tp + fn) else 0.0
-    f1 = 2 * prec * rec / (prec + rec) if (prec + rec) else 0.0
-    return {"acc": acc, "precision": prec, "recall": rec, "f1": f1,
-            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
-            "unreadable": len(y_pred) - n, "scored": n}
-
-
-def fmt(name, m):
-    return ("  %-24s acc %5.1f%%  P %.3f  R %.3f  F1 %.3f   (TP%d FP%d FN%d "
-            "TN%d)%s" % (name, m["acc"] * 100, m["precision"], m["recall"],
-                         m["f1"], m["tp"], m["fp"], m["fn"], m["tn"],
-                         "  %d unreadable" % m["unreadable"]
-                         if m["unreadable"] else ""))
-
 
 # ---------------------------------------------------------------------------
 # the profile
@@ -536,6 +443,92 @@ def run_fit(args):
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# evaluate - the whole dataset, not one call
+# ---------------------------------------------------------------------------
+
+def run_evaluate(args):
+    """Put every call in a dataset to the model and score the verdicts.
+
+    This is the `llm_only` row on the Benchmark page, run from this page and
+    optionally under a fitted prompt. Two things about it are not like the
+    other three evaluate runs:
+
+      it is slow and it costs   One generation per call. On a 14B model that
+                                is seconds each, so a thousand-call dataset
+                                is hours. --limit takes a class-balanced head
+                                and is the right default habit here.
+
+      it can fail to answer     A reply that cannot be parsed is not a
+                                verdict. Those calls are counted and left out
+                                of the scores rather than folded into Normal,
+                                which is what would quietly turn every
+                                unreadable answer into a false negative.
+    """
+    import ollama_ctx
+
+    profile = load_profile(args.profile) if args.profile else None
+
+    print("Loading dataset")
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    print()
+    print("==> score  %s over %d calls%s"
+          % (args.model, len(rows),
+             ", under models/%s" % profile["name"] if profile else
+             ", bare llm_only prompt"))
+    if profile and profile.get("dataset_hint") == args.csv:
+        print("  NOTE this prompt was fitted on this dataset.")
+    print("  one generation per call, so this is not quick. Ctrl-C or Stop "
+          "leaves the\n  partial results in place.")
+
+    truths = [r["label"] for r in rows]
+    prog = EC.Progress(len(rows), every=1)
+    preds, verdicts, reasons = [], [], []
+    truncated = 0
+    t0 = time.time()
+    for r in rows:
+        prompt = llm_judge.build_prompt(r["text"], None, profile)
+        ctx = ollama_ctx.fit_num_ctx(prompt, args.max_tokens,
+                                     cap=args.num_ctx, where="llm evaluate")
+        try:
+            out = llm_judge.judge(r["text"], model=args.model,
+                                  max_tokens=args.max_tokens, num_ctx=ctx,
+                                  temperature=args.temperature,
+                                  timeout=args.timeout, profile=profile)
+        except RuntimeError as e:
+            print("    ERROR %s" % e)
+            preds.append(None)
+            verdicts.append("error")
+            reasons.append(str(e)[:200])
+            prog.tick(r, None)
+            continue
+        pred = None if out["unreadable"] else int(out["scam"])
+        preds.append(pred)
+        verdicts.append(out["verdict"] or "unreadable")
+        reasons.append(" ".join((out["reason"] or "").split())[:300])
+        truncated += bool(out["prompt_truncated"])
+        prog.tick(r, pred)
+    elapsed = time.time() - t0
+
+    m = EC.metrics(truths, preds)
+    base = EC.baselines(truths)
+    extra = []
+    if truncated:
+        extra.append("%d prompt(s) were truncated by ollama - those verdicts "
+                     "are about part of the call" % truncated)
+    EC.report(m, base, elapsed, len(rows), extra)
+    if args.out:
+        EC.write_results(args.out, args.profile or args.model, args.csv, rows,
+                         preds, m, base, elapsed,
+                         {"verdict": verdicts, "reason": reasons},
+                         {"kind": "llm", "base_model": args.model,
+                          "profile": args.profile,
+                          "shots": len((profile or {}).get("shots") or []),
+                          "rubric": bool((profile or {}).get("rubric")),
+                          "truncated": truncated})
+    return m
+
+
 def run_show(args):
     prof = load_profile(args.name)
     meta = read_meta(model_dir(args.name))
@@ -626,6 +619,26 @@ def build_parser():
         tr.add_argument("--label-col", default=None)
         tr.add_argument("--overwrite", action="store_true")
         tr.set_defaults(func=run_fit)
+
+    ev = sub.add_parser("evaluate", help="score a whole dataset")
+    ev.add_argument("--csv", required=True)
+    ev.add_argument("--profile", default=None,
+                    help="score under a fitted prompt; omit for the bare "
+                         "llm_only control")
+    ev.add_argument("--limit", type=int, default=None,
+                    help="a class-balanced head - one generation per call, "
+                         "so this is the flag that decides what it costs")
+    ev.add_argument("--model", default=llm_judge.DEFAULT_MODEL)
+    ev.add_argument("--num-ctx", type=int, default=llm_judge.DEFAULT_NUM_CTX)
+    ev.add_argument("--max-tokens", type=int,
+                    default=llm_judge.DEFAULT_MAX_TOKENS)
+    ev.add_argument("--temperature", type=float, default=0.0)
+    ev.add_argument("--timeout", type=int, default=300)
+    ev.add_argument("--text-col", default=None)
+    ev.add_argument("--label-col", default=None)
+    ev.add_argument("--out", default=None,
+                    help="write <out>.json and a per-call CSV in results/")
+    ev.set_defaults(func=run_evaluate)
 
     sh = sub.add_parser("show", help="what is in a fitted prompt")
     sh.add_argument("--name", required=True)

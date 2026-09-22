@@ -552,6 +552,60 @@ Two things the page shows that the benchmark does not:
   settles for Normal. Here it says so, because on a single call "Normal"
   should not sometimes mean "the model did not answer".
 
+### Scoring a whole dataset
+
+Every one of the four model pages has a **Score a dataset** tab: pick a
+dataset from the dropdown, press the button, and the model is put to every
+call in it. What comes back is the confusion matrix and what falls out of it —
+accuracy, precision, recall, F1, balanced accuracy, specificity — plus a
+sample of the calls it got wrong and a per-call CSV in `results/`.
+
+All four go through `scripts/eval_common.py`, deliberately: four confusion
+matrices computed four ways could not be compared, and comparing them is the
+only reason to have four pages.
+
+Three things the card shows that an accuracy on its own does not:
+
+- **What answering the same thing every time would get.** Always-scam and
+  never-scam are scored on the same calls and printed beside the result. On a
+  set that is 61% legitimate, a model at 55% is *worse than a constant*, and
+  that should not need working out. When the model fails to clear that floor
+  the card says so in those words.
+- **Whether the model has read these calls before.** This is not the Benchmark
+  page. That cross-validates — every call predicted by a model that never saw
+  it — and is the number to quote. This scores calls with one already-fitted
+  model, so pointing a model at its own training set measures memory. The card
+  warns when the two datasets match.
+- **Which calls it got wrong.** Up to ten false positives, ten false negatives
+  and ten unreadable answers, with the transcript excerpt and whatever the
+  page can say about each (the probability, the word count, the model's own
+  reason). An accuracy tells you how often a model is wrong; these tell you
+  what it is wrong *about*, which is the part that goes in a write-up.
+
+Unreadable LLM answers are counted separately and left **out** of the scores
+rather than folded into "legitimate" — which is what would quietly turn every
+one of them into a false negative and flatter recall.
+
+The four differ only in what they cost and what they add:
+
+| Page | Speed over 7,013 calls | Extra on the card |
+| --- | --- | --- |
+| Bag of words | a few seconds | — |
+| Length only | under a second | what the same threshold pointing the *other* way would have scored |
+| BERT | minutes on a GPU; long calls are scored in windows | — |
+| LLM judge | **one generation per call** — hours. Set a limit | truncated-prompt count; scores under the fitted prompt picked on the left, or bare |
+
+The LLM tab shows the number of generations and a time estimate before you
+start it. Running it bare and then under a fitted prompt on the same calls is
+how you find out whether the fitting helped on anything beyond its own
+holdout.
+
+Each run is detached and appears under **Recent runs** on the Benchmark page
+like any other, so closing the browser does not stop it. Each also leaves a
+`results/eval_<run id>.csv` behind — `results/*.csv` is deliberately not
+gitignored in this project, so these accumulate and are worth clearing out
+now and then.
+
 ---
 
 ## B. The same thing in the terminal
@@ -918,6 +972,39 @@ is one with `config.json`, and each listing skips the other kind.
 ---
 
 ---
+
+### 14. Score a whole dataset from the command line
+
+The command line behind the **Score a dataset** tab on all four model pages
+([section A](#scoring-a-whole-dataset)). Same subcommand, same flags, same
+numbers out:
+
+```bash
+python scripts/bow_classify.py    evaluate --name bank-bow    --csv datasets/zhi_english_646.csv
+python scripts/length_classify.py evaluate --name bank-length --csv datasets/everything_7013.csv
+python scripts/bert_classify.py   evaluate --name bank-bert   --csv datasets/zhi_english_646.csv --gpu
+python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40
+python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40 \
+    --profile zhi-prompt
+```
+
+Each prints a running tally, then the confusion matrix next to what
+always-scam and never-scam get on the same calls, and says out loud when the
+model fails to beat them. `--limit N` takes a class-balanced head. `--out
+PATH.json` writes the metrics as JSON and a per-call CSV into `results/`;
+without it the numbers are printed and nothing is kept.
+
+**The cross-corpus case is the one worth running.** A model fitted on one
+dataset, scored on another it has never seen, is the number a write-up needs
+and it is usually far below the holdout figure. A bag-of-words model fitted on
+`scambait_bank_422.csv` and pointed at `zhi_english_646.csv` scores **50.0%**
+— it calls every single call a scam — against 100% on its own holdout.
+
+The offline checks need no dataset and no venv:
+
+```bash
+python3 scripts/test_eval_common.py
+```
 
 ## The context window
 

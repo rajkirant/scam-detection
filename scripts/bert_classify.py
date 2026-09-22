@@ -419,6 +419,76 @@ def classifier_from(args):
                       aggregate=args.aggregate, strip=args.strip_tags)
 
 
+# ---------------------------------------------------------------------------
+# evaluate - the whole dataset, not one call
+# ---------------------------------------------------------------------------
+
+def run_evaluate(args):
+    """Score every call in a dataset with one trained checkpoint.
+
+    Note what this is NOT: the `bert` row on the Benchmark page is k-fold
+    cross-validation, where every call is predicted by a model that never saw
+    it. This scores calls with one already-trained checkpoint, so any call
+    that was in that checkpoint's training split is being marked by a model
+    that has read it. The run says so when the dataset being scored is the
+    one it was trained on - a very high number there means the model
+    remembers, not that it generalises.
+
+    The useful thing to do with it is the opposite: point a checkpoint at a
+    dataset it has never seen. That is the number the write-up needs, and
+    it is usually a good deal lower than the holdout one.
+    """
+    import eval_common as EC
+
+    clf = classifier_from(args)
+    print("Loading dataset")
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    print()
+    print("==> score  models/%s over %d calls, on the %s"
+          % (clf.name, len(rows), clf.device))
+    trained_on = clf.meta.get("dataset")
+    if trained_on and trained_on == args.csv:
+        print("  WARNING this checkpoint was trained on this same dataset. "
+              "Unless you held\n          rows back, it has read these calls "
+              "before and the score below is\n          a memory test.")
+    long_calls = sum(1 for r in rows if r["words"] > (clf.window or 200))
+    if long_calls:
+        print("  %d call(s) are longer than one window and will be scored in "
+              "windows, taking\n  the %s" % (long_calls, clf.aggregate))
+
+    prog = EC.Progress(len(rows), every=max(1, len(rows) // 60))
+    preds, probs, wins = [], [], []
+    t0 = time.time()
+    for r in rows:
+        try:
+            out = clf.classify(r["text"], args.threshold, strip=args.strip_tags)
+            pred = 1 if out["verdict"] == "scam" else 0
+            probs.append("%.4f" % out["prob_scam"])
+            wins.append(out.get("windows"))
+        except ValueError:
+            pred = None
+            probs.append("")
+            wins.append("")
+        preds.append(pred)
+        prog.tick(r, pred)
+    elapsed = time.time() - t0
+
+    truths = [r["label"] for r in rows]
+    m = EC.metrics(truths, preds)
+    base = EC.baselines(truths)
+    EC.report(m, base, elapsed, len(rows))
+    if args.out:
+        EC.write_results(args.out, clf.name, args.csv, rows, preds, m, base,
+                         elapsed, {"prob_scam": probs, "windows": wins},
+                         {"kind": "bert", "trained_on": trained_on,
+                          "base_model": clf.meta.get("base_model"),
+                          "threshold": args.threshold or clf.threshold,
+                          "aggregate": clf.aggregate,
+                          "device": str(clf.device),
+                          "same_dataset": bool(trained_on == args.csv)})
+    return m
+
+
 def run_classify(args):
     text = args.text
     if not text and args.csv:
@@ -581,6 +651,17 @@ def build_parser():
                     help="defaults to the checkpoint's own")
     cl.add_argument("--json", action="store_true")
     cl.set_defaults(func=run_classify)
+
+    ev = sub.add_parser("evaluate", help="score a whole dataset")
+    scoring(ev)
+    ev.add_argument("--csv", required=True)
+    ev.add_argument("--limit", type=int, default=None)
+    ev.add_argument("--threshold", type=float, default=None)
+    ev.add_argument("--text-col", default=None)
+    ev.add_argument("--label-col", default=None)
+    ev.add_argument("--out", default=None,
+                    help="write <out>.json and a per-call CSV in results/")
+    ev.set_defaults(func=run_evaluate)
 
     sv = sub.add_parser("serve", help="stay loaded, one JSON request per line")
     scoring(sv)
