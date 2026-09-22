@@ -457,30 +457,12 @@ def start_run(form):
     if not LIMIT_RE.match(limit):
         raise ValueError("limit must be a whole number, id:<value>, or idx:<n>")
     if want_stripped:
-        # The content-deletion test is a tick box, and the twin is found by
-        # convention rather than picked: choosing it by hand is how two files
-        # that are not row-for-row the same calls end up paired.
-        if ds.endswith("_stripped.csv"):
-            raise ValueError("%s is already a stripped set, so there is "
-                             "nothing left to delete - pick the original" % ds)
-        stripped = ds[:-len(".csv")] + "_stripped.csv"
-        if not (PROJECT_DIR / stripped).is_file():
-            raise ValueError(
-                "no stripped twin for that dataset - expected it at %s. The "
-                "twin is the same calls, same ids, same order, with the "
-                "content words deleted." % stripped)
+        # No twin file to find and none to get wrong: the stripped copy is
+        # built from this same dataset, so every dataset can be tested.
+        stripped = ds
         if limit.startswith(("id:", "idx:")):
             raise ValueError("the content-deletion test scores every held-out "
                              "call twice; it cannot run on a single transcript")
-        # the same check run_all.sh makes, run here first so a twin that does
-        # not line up is a message under the form instead of a run that dies
-        # in its first second
-        sys.path.insert(0, str(PROJECT_DIR / "scripts"))
-        import trusted
-        problems = trusted.check_pair(str(PROJECT_DIR / ds),
-                                      str(PROJECT_DIR / stripped))
-        if problems:
-            raise ValueError("stripped twin rejected: " + "; ".join(problems))
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
     if any(known[b][3] for b in baselines):
@@ -2591,9 +2573,12 @@ PAGE = r"""<!doctype html>
         weights &mdash; as written, and with the content words deleted &mdash;
         and that rotates through all five. Nothing is ever trained on stripped
         text. The results gain a stripped-accuracy column and a trusted
-        accuracy beside it. The twin is found next to the dataset as
-        <code>&lt;name&gt;_stripped.csv</code>.</div>
-      <div class="hint" id="twinnote" style="margin-top:2px"></div>
+        accuracy beside it. A word survives only if it is a determiner,
+        pronoun, preposition, conjunction, auxiliary or negation &mdash; the
+        closed class in <code>scripts/trusted.py</code>; everything else goes.
+        The stripped copy is built from the dataset itself, so this works on
+        any dataset in the list &mdash; there is no second file to make or to
+        keep in step.</div>
 
       <label>Baselines</label>
       <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
@@ -3643,24 +3628,6 @@ async function boot() {
   ).join('');
   $('dataset').addEventListener('change', sizeContext);
   sizeContext();
-  // The content-deletion box is only usable where a twin exists, so it says
-  // so before the run is started rather than after it is refused.
-  const twinFor = p => p && !p.endsWith('_stripped.csv')
-    ? p.slice(0, -4) + '_stripped.csv' : null;
-  const paths = new Set(CFG.datasets.map(d => d.path));
-  function strippedAvail() {
-    const twin = twinFor($('dataset').value);
-    const have = !!twin && paths.has(twin);
-    $('stripped').disabled = !have;
-    if (!have) $('stripped').checked = false;
-    $('strippedhint').style.opacity = have ? '' : '.55';
-    $('twinnote').textContent = have ? 'twin: ' + twin
-      : ($('dataset').value.endsWith('_stripped.csv')
-         ? 'this is already a stripped set — pick the original'
-         : 'no ' + (twin || '…') + ' next to this dataset');
-  }
-  $('dataset').addEventListener('change', strippedAvail);
-  strippedAvail();
 
   // "all" is not offered as a box of its own - ticking every box is "all",
   // and the select-all link is a clearer way to say it

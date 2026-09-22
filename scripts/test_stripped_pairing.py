@@ -64,19 +64,33 @@ def write_csv(path, rows, fields=("id", "label", "source", "text")):
             w.writerow({k: r.get(k, "") for k in fields})
 
 
+# Function words that survive stripping. ONE pool for both classes, drawn
+# from at random, so the stripped text carries no class signal at all.
+#
+# The old fixture put class-specific function words in the twin and not in
+# the original, so a model that had wrongly trained on stripped text would
+# score ~100% and give itself away. That trick is not available any more: the
+# stripped copy is derived from the original, so it cannot contain anything
+# the original did not. The rule is now checked directly instead - the
+# learners record what they were trained on - and what this pool buys is the
+# other half: with no signal left, whatever the stripped score is, it is not
+# a reading of the call.
+FILLER_FN = ["you", "me", "we", "our", "your", "they", "to", "of", "with",
+             "and", "it", "that"]
+
+
 def make_pair(tmp, n=40, seed=7):
-    """A small balanced dataset and a stripped twin whose text is traceable.
+    """A small balanced dataset, and its stripped copy built the real way.
 
-    Every original transcript carries its own id, and every stripped one reads
-    "STRIPPED <id> ...". A stand-in that sees a transcript can therefore say
-    exactly which call, and which copy, it was shown.
+    Every original transcript carries its own id and the word ORIGINAL, both
+    of which are content words and are deleted, so a stand-in that is handed
+    a transcript can always say which copy it was shown. What survives is the
+    function words, drawn per class from the two lists above and shuffled per
+    row, so the stripped calls are not all the same string - a fixture where
+    they were would make most of these checks vacuous.
 
-    The twins also carry what the real stripped data carries: function words
-    that differ by collection ("you me" in one class, "we our" in the other)
-    and never appear in any original transcript. A model trained on the
-    originals has never seen them, so it cannot use them. A model wrongly
-    trained on the stripped text learns them and separates the twins
-    perfectly - which is what lets a test tell the two apart.
+    The twin file is still written, because check_pair is still tested; the
+    scoring paths build their stripped text in memory instead of reading it.
     """
     rnd = random.Random(seed)
     scam_words = ["gift", "card", "urgent", "refund", "arrest", "wire", "code"]
@@ -85,14 +99,15 @@ def make_pair(tmp, n=40, seed=7):
     for i in range(n):
         scam = i % 2 == 0
         words = rnd.sample(scam_words if scam else bank_words, 3)
+        fn = rnd.sample(FILLER_FN, 4)
         cid = "c%03d" % i
+        text = ("ORIGINAL %s the caller said %s %s"
+                % (cid, " ".join(words), " ".join(fn)))
         rows.append({"id": cid, "label": "scam" if scam else "nonscam",
-                     "source": "a" if scam else "b",
-                     "text": "ORIGINAL %s the caller said %s" % (cid, " ".join(words))})
+                     "source": "a" if scam else "b", "text": text})
         twins.append({"id": cid, "label": "scam" if scam else "nonscam",
                       "source": "a" if scam else "b",
-                      "text": "STRIPPED %s the of is %s"
-                              % (cid, "you me" if scam else "we our")})
+                      "text": trusted.strip_content_words(text)})
     full = Path(tmp) / "set.csv"
     strip = Path(tmp) / "set_stripped.csv"
     write_csv(full, rows)
@@ -180,12 +195,13 @@ def test_loader_unchanged(tmp):
         check("load_combined matches the original, limit=%s" % limit,
               CE.load_combined(full, limit), original_load_combined(full, limit))
     for limit in (None, 20):
-        data, data_s = CE.load_paired(full, strip, limit)
+        data, data_s = CE.load_paired(full, limit)
         check("paired data == load_combined, limit=%s" % limit,
               data, CE.load_combined(full, limit))
-        ok = all(s.split()[1] == d.split()[1] and s.startswith("STRIPPED")
-                 for (d, _), (s, _) in zip(data, data_s))
-        check("each twin is its own call's, by id, limit=%s" % limit, ok, True)
+        ok = all(st == trusted.strip_content_words(d)
+                 for (d, _), (st, _) in zip(data, data_s))
+        check("each stripped call is the strip of its own text, limit=%s"
+              % limit, ok, True)
         check("labels carried across, limit=%s" % limit,
               [l for _, l in data_s], [l for _, l in data])
 
@@ -194,7 +210,7 @@ def test_loader_unchanged(tmp):
 def test_bow(tmp):
     print("\nbag-of-words: one model a fold, trained on original text")
     full, strip, _, _ = make_pair(tmp, n=60)
-    data, data_s = CE.load_paired(full, strip)
+    data, data_s = CE.load_paired(full)
     full_rows, strip_rows = CE.trivial_bow_paired(data, data_s, folds=5)
     check("full-text rows identical to trivial_bow",
           full_rows, CE.trivial_bow(data, folds=5))
@@ -202,16 +218,19 @@ def test_bow(tmp):
     check("a twin identical to the data scores identically",
           same_strip, same_full)
 
-    # The discriminating check. The twins' only class signal is the
-    # collection-specific function words, which no original contains. A model
-    # trained on the originals cannot use them, so it falls to one verdict. A
-    # model trained on the stripped text would learn them and score ~100%.
-    verdicts = {p for p, _ in strip_rows}
-    check("stripped copy is only scored, never trained on (one verdict)",
-          len(verdicts), 1)
+    # Everything that separates these two classes is a content word, and the
+    # stripped calls are drawn from one shared pool of function words, so
+    # there is nothing left in them to be right about. A stripped score that
+    # is not near chance would mean the strip left a cue behind - or that
+    # something trained on it.
+    acc_f = CE.metrics(full_rows)["acc"]
     acc_s = CE.metrics(strip_rows)["acc"]
-    check("so the stripped copy scores at chance, not on the cue",
-          acc_s, 0.5)
+    check("the full text is separable, so the test has something to measure",
+          acc_f > 0.9, True)
+    check("and the stripped copy is not, within a few points of chance",
+          abs(acc_s - 0.5) < 0.12, True)
+    check("so trusted accuracy is close to the full score",
+          abs(trusted.trusted_accuracy(acc_f, acc_s) - acc_f) < 0.12, True)
 
 
 # ------------------------------------------------- learners that need an LLM
@@ -275,7 +294,7 @@ def remove_stubs(saved, saved_web):
 def test_learners(tmp):
     print("\nQwen-KB and the hybrid: learn from original, judge the twin")
     full, strip, _, _ = make_pair(tmp, n=40)
-    data, data_s = CE.load_paired(full, strip)
+    data, data_s = CE.load_paired(full)
 
     for name, run in (("qwen_kb", CE.run_qwen_kb), ("hybrid", CE.run_hybrid)):
         CE._LEARNED_KB.clear()
@@ -290,9 +309,13 @@ def test_learners(tmp):
                                            for t in rec.trained_on), True)
         check("%s never trained on a stripped call" % name,
               any("STRIPPED" in t for t in rec.trained_on), False)
+        # What is recorded is the whole prompt, so the transcript is found
+        # in it rather than compared to it. "ORIGINAL" is a content word and
+        # stripping deletes it, so a prompt carrying it is carrying an
+        # original call - which is the thing this must never see.
         check("%s judged only stripped calls" % name,
               len(rec.judged) == len(data)
-              and all("STRIPPED" in j for j in rec.judged), True)
+              and not any("ORIGINAL" in j for j in rec.judged), True)
         check("%s scored every call once" % name,
               all(p is not None for p, _ in out), True)
         # no call is judged while its own original sat in that fold's training
@@ -320,13 +343,15 @@ def test_bert_alignment(tmp):
     print("\nBERT: each kept row gets its own twin, even under --limit")
     import bert_baseline as B
     full, strip, rows, _ = make_pair(tmp, n=30)
-    args = types.SimpleNamespace(csv=str(full), stripped_csv=str(strip))
+    args = types.SimpleNamespace(csv=str(full), stripped=True)
     for limit in (None, 10):
         df, texts, _ = B.load_dataset(str(full), limit=limit)
-        twins = B.stripped_twins(args, df)
-        ok = all(t.split()[1] == o.split()[1] and t.startswith("STRIPPED")
+        twins = B.stripped_twins(args, texts)
+        check("one stripped text per kept row, limit=%s" % limit,
+              len(twins), len(texts))
+        ok = all(t == trusted.strip_content_words(o)
                  for t, o in zip(twins, texts))
-        check("twin matches its row by id, limit=%s" % limit, ok, True)
+        check("each is the strip of its own row, limit=%s" % limit, ok, True)
 
 
 # -------------------------------------------------------- collect_results
@@ -389,13 +414,13 @@ def test_end_to_end(tmp):
     """Run the real main(), not its parts. The unit checks above call the
     functions directly, so a mistake in main() itself - a name it never
     defines, a flag it never passes on - would get past every one of them."""
-    print("\ncombined_evaluate.py runs end to end with --stripped-csv")
+    print("\ncombined_evaluate.py runs end to end with --stripped")
     full, strip, _, _ = make_pair(tmp, n=40)
     work = Path(tmp) / "e2e"
     work.mkdir()
     run = subprocess.run(
         [sys.executable, str(HERE / "combined_evaluate.py"), "--csv", str(full),
-         "--stripped-csv", str(strip), "--trivial-only"],
+         "--stripped", "--trivial-only"],
         cwd=work, capture_output=True, text=True)
     check("exits cleanly", run.returncode, 0)
     if run.returncode:
@@ -413,9 +438,9 @@ def test_end_to_end(tmp):
           "text_stripped" in rows[0], True)
     check("and a verdict column for each stripped system",
           {"length__stripped", "bow__stripped"} <= set(rows[0]), True)
-    check("the stripped transcript on each row is that row's own twin",
-          all(r["text_stripped"].split()[1] == r["text"].split()[1] for r in rows),
-          True)
+    check("the stripped transcript on each row is that row's own text, stripped",
+          all(r["text_stripped"] == trusted.strip_content_words(r["text"])
+              for r in rows), True)
 
     plain = subprocess.run(
         [sys.executable, str(HERE / "combined_evaluate.py"), "--csv", str(full),

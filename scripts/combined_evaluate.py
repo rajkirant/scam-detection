@@ -162,23 +162,29 @@ def load_combined_ids(csv_path, limit=None):
     return data
 
 
-def load_paired(csv_path, stripped_csv, limit=None):
-    """(data, data_s): the dataset and its stripped twin, call for call.
+def load_paired(csv_path, limit=None):
+    """(data, data_s): the dataset, and the same calls with content deleted.
 
-    data is what load_combined(csv_path, limit) returns. data_s holds the same
-    calls in the same order with the same labels, each transcript replaced by
-    its stripped twin, matched on the id column - never on row position.
+    data_s is built here rather than read from a file. A twin on disk has to
+    be made by some other tool, kept in step with the dataset, and trusted to
+    hold the same calls in the same order - and when it does not, nothing
+    says so. Stripping in memory removes all three problems: every dataset
+    can be tested, the pairing is exact by construction, and the rule that
+    defines the measurement is trusted.FUNCTION_WORDS rather than whatever
+    produced some CSV.
     """
     import trusted
-    problems = trusted.check_pair(csv_path, stripped_csv)
-    if problems:
-        sys.exit("ERROR: --stripped-csv %s cannot be paired with %s:\n  %s"
-                 % (stripped_csv, csv_path, "\n  ".join(problems)))
-    full = load_combined_ids(csv_path, limit)
-    by_id = {r["id"]: (r.get("text") or "").strip()
-             for r in trusted.read_rows(stripped_csv)}
-    data = [(t, l) for _, t, l in full]
-    data_s = [(by_id[cid], l) for cid, _, l in full]
+    data = load_combined(csv_path, limit)
+    stripped, empties = trusted.strip_all([t for t, _ in data])
+    data_s = [(t, lab) for t, (_, lab) in zip(stripped, data)]
+    kept = sum(len(t.split()) for t in stripped)
+    whole = sum(len(t.split()) for t, _ in data)
+    print("  content words deleted in memory: %d of %d words kept (%.0f%%)"
+          % (kept, whole, 100.0 * kept / whole if whole else 0))
+    if empties:
+        print("  %d call(s) have no function words left at all; whatever a "
+              "system says\n  about those is its prior, not a reading of the "
+              "call" % empties)
     return data, data_s
 
 
@@ -1265,22 +1271,23 @@ def main():
                     help="context window for the KB-building prompts. Ollama "
                          "truncates an over-long prompt from the front, which "
                          "silently removes the instructions")
-    ap.add_argument("--stripped-csv", default=None,
-                    help="the content-deletion test: score every system on this "
-                         "stripped twin of --csv as well, matched by id. Systems "
-                         "that learn from the data are trained on the ORIGINAL "
-                         "text only and score both copies of each held-out "
-                         "call; the rest are simply run on the stripped file. "
-                         "Adds a trusted-accuracy table. See scripts/trusted.py")
+    ap.add_argument("--stripped", action="store_true",
+                    help="the content-deletion test: score every system a "
+                         "second time on a copy of these same calls with the "
+                         "content words deleted, built in memory. Systems that "
+                         "learn from the data are trained on the ORIGINAL text "
+                         "only and score both copies of each held-out call; "
+                         "the rest are simply run on the stripped text. Adds a "
+                         "trusted-accuracy table. See scripts/trusted.py")
     args = ap.parse_args()
 
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
     # suffix of a system's row on the stripped twin, e.g. "bow__stripped"
     S = trusted.STRIPPED_SUFFIX
     print("Reading %s ..." % args.csv, flush=True)
-    if args.stripped_csv:
-        print("  paired with its stripped twin %s" % args.stripped_csv, flush=True)
-        data, data_s = load_paired(args.csv, args.stripped_csv, args.limit)
+    if args.stripped:
+        print("  content-deletion test on", flush=True)
+        data, data_s = load_paired(args.csv, args.limit)
     else:
         data, data_s = load_combined(args.csv, limit=args.limit), None
     n_fraud = sum(1 for _, l in data if l == "Fraud")
@@ -1291,7 +1298,7 @@ def main():
     print("  source: %s" % args.csv)
     print("  LLM max_tokens: %d" % args.max_tokens)
     if data_s is not None:
-        print("  stripped twin: %s" % args.stripped_csv)
+        print("  stripped copy: built in memory from this dataset")
         print("  Every system is scored on both copies. Learning systems are")
         print("  trained on the original text only; a <system>__stripped row is")
         print("  that same model scoring the stripped copy of each call.")

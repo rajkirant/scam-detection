@@ -1170,22 +1170,38 @@ The content-deletion test measures how much of each system's score comes from
 that, rather than from what the caller said.
 
 Tick **Content-deletion test** on the Benchmark page, or pass `--stripped` to
-`run_all.sh`. It needs a twin beside the dataset — `<name>_stripped.csv`, the
-same calls with the same ids in the same order, with every noun, verb,
-adjective and adverb removed so only function words such as "the", "of" and
-"is" remain. It is found by convention rather than picked, because choosing
-it by hand is how two files that are not the same calls end up paired; the
-tick box is disabled, and says why, for a dataset with no twin.
+`run_all.sh`. It works on any dataset in the list: the stripped copy is built
+from the dataset itself, in memory, so there is no second file to make and
+none to keep in step.
 
-The folds do not change. Every ticked system runs its normal cross-validation
-and the held-out fold is scored twice, so the results gain a
-stripped-accuracy column and a trusted accuracy beside it:
+A word survives only if it is in the closed class — determiners, pronouns,
+prepositions, conjunctions, the auxiliary and modal verbs, negation, and a
+few particles. The list is `trusted.FUNCTION_WORDS` and nothing else defines
+the measurement, so the same transcript strips to the same thing on every
+machine. Contractions are expanded first, so `don't` keeps its negation.
+Roughly half the words survive:
+
+```
+datasets/zhi_english_646.csv     14,117 of 29,141 words kept (48%)
+datasets/scambait_bank_422.csv   33,703 of 61,735 words kept (55%)
+```
+
+The folds do not change. Every ticked system runs its normal
+cross-validation, and the held-out fold is scored twice — as written, and
+stripped — so the results gain a stripped-accuracy column and a trusted
+accuracy beside it:
 
     A = a_full - max(0, a_stripped - 0.5)
 
 ```bash
-./run_all.sh -d datasets/scambait_bank_422.csv --stripped -b all -l 0
+./run_all.sh -d datasets/zhi_english_646.csv --stripped -b all -l 0
 ```
+
+A part-of-speech tagger would be more principled than a whitelist, and was
+not used on purpose: it means spaCy or NLTK, a model download, and an answer
+that changes when the model does. The stripped text is not an intermediate
+here — it *is* the measurement — so it has to be reproducible from one file
+in this repository.
 
 **How each system is scored on the stripped copy matters more than anything
 else here.** A system that learns from the data - bag-of-words, BERT,
