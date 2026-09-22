@@ -67,10 +67,11 @@ ONTOLOGY="knowledge/scam_ontology.json"
 MCQ_ONTOLOGY="knowledge/mcq_ontology.json"
 MODELS=("qwen2.5:14b" "llama3.1:8b")
 
-BL_KEYS=(all trivial llm_only singh webrag qwen_kb hybrid ontology mcq bert)
+BL_KEYS=(all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert)
 BL_LABELS=(
   "all                       every system below, in one run"
-  "length + bag-of-words     trivial references, no LLM"
+  "Length only               word count against one threshold, no LLM"
+  "Bag of words              TF-IDF into logistic regression, no LLM"
   "LLM-only                  the model decides alone, no retrieval"
   "Singh                     policy-compliance baseline"
   "Web-RAG                   KB-only retrieval"
@@ -373,7 +374,8 @@ has_bl bert     && RUN_BERT=1
 # combined_evaluate.py owns four of the seven systems, so it runs whenever
 # any of them was picked, and is told to skip the ones that were not.
 COMBINED_SKIP=()
-has_bl trivial  || COMBINED_SKIP+=(length bow)
+has_bl length   || COMBINED_SKIP+=(length)
+has_bl bow      || COMBINED_SKIP+=(bow)
 has_bl llm_only || COMBINED_SKIP+=(llm_only)
 has_bl singh    || COMBINED_SKIP+=(singh)
 has_bl webrag   || COMBINED_SKIP+=(webrag)
@@ -386,7 +388,7 @@ if [[ ${#COMBINED_SKIP[@]} -lt 7 ]]; then     # fewer than all seven skipped
 fi
 
 # only the systems that actually call an LLM make the model question worth
-# asking - a trivial+bert selection needs no model at all
+# asking - a length/bow/bert selection needs no model at all
 NEEDS_MODEL=0
 for _k in llm_only singh webrag qwen_kb hybrid ontology mcq; do
   has_bl "$_k" && NEEDS_MODEL=1
@@ -440,7 +442,7 @@ if [[ "$NEEDS_MODEL" -eq 1 ]]; then
     echo
     die "Ollama is not answering at $OLLAMA_URL
        start it with:  ollama serve
-       (or pick a baseline that needs no LLM: trivial, or bert)"
+       (or pick a baseline that needs no LLM: length, bow, or bert)"
   fi
   is_pulled "$MODEL" || warn "$MODEL is not pulled here.  Get it with:  ollama pull $MODEL"
 fi

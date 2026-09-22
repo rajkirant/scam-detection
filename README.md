@@ -36,11 +36,12 @@ base.
 | `chroma_db/` | Local vector index — **not in git, you build it** (setup step 6) |
 | `results/` | `*.csv` per-call predictions, `logs/run_<stamp>/` one log per baseline |
 
-The nine baselines, in escalating order:
+The ten baselines, in escalating order:
 
 | Key | System | Needs an LLM |
 | --- | --- | --- |
-| `trivial` | length threshold + TF-IDF bag-of-words, 5-fold CV | no |
+| `length` | word count against one threshold | no |
+| `bow` | TF-IDF into logistic regression, 5-fold CV | no |
 | `llm_only` | the model decides alone, no retrieval — the control | yes |
 | `singh` | policy-compliance check against the `bank_policies` collection | yes |
 | `webrag` | retrieval over the web-harvested `scam_patterns` KB, with a relevance gate | yes |
@@ -177,7 +178,7 @@ repo (20 harvested patterns), so this step needs no API key. Check it:
 python scripts/build_index.py --test   # rebuild, then show which hits pass the gate
 ```
 
-Skip this step only if you are running `trivial`, `llm_only` or `bert`, which
+Skip this step only if you are running `length`, `bow`, `llm_only` or `bert`, which
 retrieve nothing.
 
 ### 7. Optional — the Tavily API key
@@ -647,7 +648,7 @@ Or answer up front and it asks nothing:
 | Flag | Values |
 | --- | --- |
 | `-d, --dataset` | a path, or a menu number |
-| `-b, --baseline` | `all trivial llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
+| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
 | `-m, --model` | `qwen2.5:14b` or `llama3.1:8b`, or the menu number |
 | `-t, --tmux` | detach into tmux |
@@ -1251,7 +1252,7 @@ the row count — the launcher parses them as CSV instead.
 ## Troubleshooting
 
 **`Ollama is not answering at http://localhost:11434`** — start it with
-`ollama serve`, or pick a baseline that needs no LLM (`trivial`, `bert`).
+`ollama serve`, or pick a baseline that needs no LLM (`length`, `bow`, `bert`).
 
 **`<model> is not pulled here`** — `ollama pull qwen2.5:14b`.
 
