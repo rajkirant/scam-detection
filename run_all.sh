@@ -96,7 +96,7 @@ while [[ $# -gt 0 ]]; do
     -b|--baseline) ARG_BASELINE="${2:-}"; shift 2 ;;
     -l|--limit)    ARG_LIMIT="${2:-}";    shift 2 ;;
     -m|--model)    ARG_MODEL="${2:-}";    shift 2 ;;
-    -S|--stripped) ARG_STRIPPED="${2:-}"; shift 2 ;;
+    -S|--stripped) ARG_STRIPPED=1; shift ;;
     -t|--tmux)     DETACH=1;              shift   ;;
     -s|--session)  SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)     awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
@@ -469,7 +469,7 @@ relaunch_cmd() {           # the exact command line the detached copy runs
   printf 'bash %q --dataset %q --baseline %q --limit %q' \
     "$SELF" "$DATASET" "$BASELINE" "$lim"
   [[ -n "$MODEL" ]] && printf ' --model %q' "$MODEL"
-  [[ -n "$ARG_STRIPPED" ]] && printf ' --stripped %q' "$ARG_STRIPPED"
+  [[ -n "$ARG_STRIPPED" ]] && printf ' --stripped'
   printf '\n'
 }
 
@@ -613,7 +613,23 @@ SINGLE_MODE=0
 
 # The content-deletion test pairs the dataset with its stripped twin by id,
 # and refuses a twin whose ids, order or labels disagree with it.
+# The content-deletion test is a switch, not a file: the twin is found by
+# convention next to the dataset, because picking it by hand is how you end
+# up pairing two files that are not row-for-row the same calls.
 STRIPPED_ARGS=""
+STRIPPED_CSV=""
+if [[ -n "$ARG_STRIPPED" ]]; then
+  case "$DATASET" in
+    *_stripped.csv) die "--stripped: $DATASET is already a stripped set, so
+       there is nothing left to delete. Pick the original." ;;
+  esac
+  STRIPPED_CSV="${DATASET%.csv}_stripped.csv"
+  [[ -f "$STRIPPED_CSV" ]] || die "--stripped: no stripped twin for $DATASET
+       expected it at: $STRIPPED_CSV
+       The twin is the same calls, same ids, same order, with the content
+       words deleted. Make that file and run this again."
+  ARG_STRIPPED="$STRIPPED_CSV"
+fi
 if [[ -n "$ARG_STRIPPED" ]]; then
   [[ "$SINGLE_MODE" -eq 1 ]] && die "--stripped scores the whole dataset twice;
        it cannot be combined with a one-transcript id:/idx: limit"
