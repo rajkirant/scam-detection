@@ -382,10 +382,7 @@ def run_evaluate(args):
     print()
     print("==> score  models/%s over %d calls" % (clf.name, len(rows)))
     trained_on = clf.meta.get("dataset")
-    if trained_on and trained_on == args.csv:
-        print("  WARNING this model was fitted on this same dataset. Unless "
-              "you held rows\n          back, it has read these calls before "
-              "and the score below is a\n          memory test.")
+    EC.say_which_experiment(trained_on, args.csv, "fitted")
 
     prog = EC.Progress(len(rows), every=max(1, len(rows) // 40))
     preds, probs = [], []

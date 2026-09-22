@@ -571,11 +571,32 @@ Three things the card shows that an accuracy on its own does not:
   set that is 61% legitimate, a model at 55% is *worse than a constant*, and
   that should not need working out. When the model fails to clear that floor
   the card says so in those words.
-- **Whether the model has read these calls before.** This is not the Benchmark
-  page. That cross-validates — every call predicted by a model that never saw
-  it — and is the number to quote. This scores calls with one already-fitted
-  model, so pointing a model at its own training set measures memory. The card
-  warns when the two datasets match.
+- **Which of three experiments this is.** The card names it, because they are
+  not comparable and it is easy to read one as another:
+
+  | | |
+  | --- | --- |
+  | same dataset | the model has read these calls — a memory test unless rows were held back |
+  | a different one | a **transfer test**: how far what it learned on one corpus carries to another. Usually the number worth having, and usually much lower |
+  | nothing recorded | an older model that did not save its dataset |
+
+  **None of the three is the Benchmark page's figure.** That is k-fold
+  cross-validation *within* one dataset — trained on part of it, scored on the
+  rest, every call predicted by a model that never saw it. So 100% there and
+  50% here is two experiments, not a disagreement.
+
+  On `scambait_bank_422.csv` and its `_stripped` variant (52% of the words
+  deleted and the text re-tokenised, leaving a 212-word function-word
+  vocabulary), the pair reads:
+
+  | | bag of words | BERT |
+  | --- | --- | --- |
+  | fit on stripped, scored on stripped | 98.8% | 100% |
+  | fit on full, scored on stripped | **76.1%** | **50.2%** |
+
+  Both keep recall 1.000 and lose specificity — they over-predict scam under
+  the shift. BERT collapses to one class entirely, which is what a fine-tuned
+  transformer does when the text stops looking like what it was trained on.
 - **Which calls it got wrong.** Up to ten false positives, ten false negatives
   and ten unreadable answers, with the transcript excerpt and whatever the
   page can say about each (the probability, the word count, the model's own

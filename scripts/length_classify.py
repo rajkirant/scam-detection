@@ -594,10 +594,7 @@ def run_evaluate(args):
     print("==> score  %s than %d words is scam, over %d calls"
           % (way, cut, len(rows)))
     trained_on = clf.meta.get("dataset")
-    if trained_on and trained_on == args.csv:
-        print("  NOTE this threshold was fitted on this same dataset, so this "
-              "is how well one\n       number fits the calls it was chosen "
-              "from, not how well it travels.")
+    EC.say_which_experiment(trained_on, args.csv, "fitted")
 
     prog = EC.Progress(len(rows), every=max(1, len(rows) // 40))
     preds, words = [], []

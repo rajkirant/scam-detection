@@ -447,10 +447,7 @@ def run_evaluate(args):
     print("==> score  models/%s over %d calls, on the %s"
           % (clf.name, len(rows), clf.device))
     trained_on = clf.meta.get("dataset")
-    if trained_on and trained_on == args.csv:
-        print("  WARNING this checkpoint was trained on this same dataset. "
-              "Unless you held\n          rows back, it has read these calls "
-              "before and the score below is\n          a memory test.")
+    EC.say_which_experiment(trained_on, args.csv, "trained")
     long_calls = sum(1 for r in rows if r["words"] > (clf.window or 200))
     if long_calls:
         print("  %d call(s) are longer than one window and will be scored in "
