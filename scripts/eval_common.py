@@ -149,6 +149,48 @@ def verdict_of(pred):
     return "unreadable" if pred is None else ("scam" if pred else "legitimate")
 
 
+def say_which_experiment(trained_on, scoring, verb="fitted"):
+    """Name the experiment this run is, before it prints a number for it.
+
+    Three different things get run from the same button and they are not
+    comparable, which is easy to miss and expensive to miss:
+
+      same dataset        the model has read these calls. Unless rows were
+                          held back this is a memory test.
+      a different one     a transfer test: how far what it learned on one
+                          corpus carries to another. This is usually the
+                          number worth having, and usually far lower.
+      unknown             an old model with no dataset recorded.
+
+    None of the three is what the Benchmark page reports for a dataset. That
+    is k-fold cross-validation WITHIN one dataset - trained on part of it,
+    scored on the rest, every call predicted by a model that never saw it -
+    so a 100% there and a 50% here are not a contradiction and not the same
+    experiment. Saying so costs two lines and saves reading one as the other.
+    """
+    if not trained_on:
+        print("  NOTE this model does not record what it was %s on, so "
+              "whether it has seen\n       these calls cannot be told from "
+              "here." % verb)
+        return "unknown"
+    if trained_on == scoring:
+        print("  WARNING this model was %s on this same dataset. Unless rows "
+              "were held back\n          it has read these calls before, and "
+              "the score below is a memory\n          test rather than a "
+              "measurement." % verb)
+        return "same"
+    print("  This is a TRANSFER test.")
+    print("    %s on   %s" % (verb.rjust(7), trained_on))
+    print("    scored on  %s" % scoring)
+    print("  It asks how far what the model learned on the first carries to "
+          "the second,\n  which is a harder question than the Benchmark "
+          "page's figure for either.\n  That one is k-fold cross-validation "
+          "within a single dataset, so it trains\n  and scores on the same "
+          "kind of text; this does not. A low number here next\n  to a high "
+          "one there is a finding, not a disagreement.")
+    return "transfer"
+
+
 class Progress:
     """One line per call while a slow run is going, or a tick every so often
     while a fast one is.

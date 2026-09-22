@@ -5040,10 +5040,34 @@ function evalCard(d) {
   const over = m.acc - floor;
   const notes = [];
 
-  if (d.same_dataset) notes.push('<strong>This model was fitted on this '
+  // Which of three experiments this is. They are not comparable with each
+  // other, and none of them is the Benchmark page's cross-validated figure -
+  // a 100% there next to a 50% here is two experiments, not a disagreement,
+  // and that is exactly the reading this note exists to stop.
+  // The LLM was never fitted on anything, so none of the three applies to
+  // it; what matters there is which prompt was used, which is below.
+  if (d.kind === 'llm') {
+    notes.push(d.profile
+      ? 'Scored under the fitted prompt <code>models/' + esc(d.profile)
+        + '</code>. Run it again with <em>None</em> picked to see what the '
+        + 'bare <code>llm_only</code> prompt gets on the same calls — that '
+        + 'difference is what the fitting bought outside its own holdout.'
+      : 'Scored with the bare <code>llm_only</code> prompt, so this is the '
+        + 'control. It is the same prompt the Benchmark page uses, over the '
+        + 'same calls.');
+  } else if (d.same_dataset) notes.push('<strong>This model was fitted on this '
     + 'dataset.</strong> Unless rows were held back, it has read these calls '
     + 'before, so the score is a memory test rather than a measurement. Point '
     + 'it at a dataset it has never seen for the number worth quoting.');
+  else if (d.trained_on) notes.push('<strong>This is a transfer test.</strong> '
+    + 'The model was fitted on <code>' + esc(d.trained_on) + '</code> and '
+    + 'scored on <code>' + esc(d.dataset) + '</code> — how far what it learned '
+    + 'on one corpus carries to another. That is a harder question than the '
+    + 'Benchmark page asks: its figure is k-fold cross-validation <em>within</em> '
+    + 'one dataset, so it trains and scores on the same kind of text. A low '
+    + 'number here beside a high one there is a finding, not a contradiction.');
+  else notes.push('This model does not record what it was fitted on, so '
+    + 'whether it has already read these calls cannot be told from here.');
   if (m.acc <= floor) notes.push('<strong>This does not beat answering the '
     + 'same thing every time</strong> (' + pc(floor) + ' by always saying '
     + (b.always_scam.acc >= b.never_scam.acc ? 'scam' : 'legitimate')
