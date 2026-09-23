@@ -167,7 +167,7 @@ def dataset_context(path):
         return hit[1]
 
     csv.field_size_limit(sys.maxsize)
-    with open(p, newline="", encoding="utf-8", errors="replace") as f:
+    with open(p, newline="", encoding="utf-8-sig", errors="replace") as f:
         reader = csv.DictReader(f)
         cols = {c.lower(): c for c in (reader.fieldnames or [])}
         tcol = next((cols[c] for c in ("transcript", "text", "call",
@@ -1209,7 +1209,7 @@ def dataset_row(path, idx):
         raise ValueError("unknown dataset")
     import csv
     csv.field_size_limit(sys.maxsize)
-    with open(PROJECT_DIR / path, newline="", encoding="utf-8",
+    with open(PROJECT_DIR / path, newline="", encoding="utf-8-sig",
               errors="replace") as f:
         reader = csv.reader(f)
         try:

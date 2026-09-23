@@ -131,21 +131,14 @@ def load_combined_ids(csv_path, limit=None):
     p = Path(csv_path)
     if not p.exists():
         sys.exit("ERROR: not found: %s" % csv_path)
-    rows = list(csv.DictReader(open(p, encoding="utf-8")))
-    if not rows:
-        sys.exit("ERROR: empty CSV: %s" % csv_path)
-    if "label" not in rows[0] or "text" not in rows[0]:
-        sys.exit("ERROR: CSV needs 'label' and 'text' columns. Found: %s"
-                 % list(rows[0].keys()))
-    # a byte-order mark sticks to the first header, which is usually id
-    id_key = next((k for k in rows[0] if k and k.lstrip("\ufeff") == "id"), None)
+    import dataset_io
+    rows = dataset_io.read_rows(p)
+    tcol, lcol, id_key = dataset_io.columns(rows, csv_path)
 
-    scam_words = {"scam", "fraud", "fraudulent", "1", "true", "yes"}
     data = []
     for n, r in enumerate(rows):
-        lab_raw = (r["label"] or "").strip().lower()
-        lab = "Fraud" if lab_raw in scam_words else "Normal"
-        text = (r["text"] or "").strip()
+        lab = "Fraud" if dataset_io.is_scam(r[lcol]) else "Normal"
+        text = (r[tcol] or "").strip()
         if text:
             data.append((r[id_key] if id_key else "row%d" % n, text, lab))
 

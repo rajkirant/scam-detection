@@ -37,11 +37,13 @@ def load_shuffled(csv_path, limit=None, seed=42):
     --idx here lines up with idx values from a prior evaluation run."""
     import random
     SCAM_WORDS = {"scam", "fraud", "fraudulent", "1", "true", "yes"}
-    rows = list(csv.DictReader(open(csv_path, encoding="utf-8")))
+    import dataset_io
+    rows = dataset_io.read_rows(csv_path)
+    tcol, lcol, _ = dataset_io.columns(rows, csv_path)
     data = []
     for r in rows:
-        lab = "Fraud" if (r["label"] or "").strip().lower() in SCAM_WORDS else "Normal"
-        txt = (r["text"] or "").strip()
+        lab = "Fraud" if dataset_io.is_scam(r[lcol]) else "Normal"
+        txt = (r[tcol] or "").strip()
         if txt:
             data.append((txt, lab))
     if limit:
@@ -58,10 +60,11 @@ def load_shuffled(csv_path, limit=None, seed=42):
 
 def load_raw_row(csv_path, row_num):
     """Row as it sits in the file, 0-indexed, ignoring shuffle entirely."""
-    rows = list(csv.DictReader(open(csv_path, encoding="utf-8")))
+    import dataset_io
+    rows = dataset_io.read_rows(csv_path)
+    tcol, lcol, _ = dataset_io.columns(rows, csv_path)
     r = rows[row_num]
-    lab = "Fraud" if (r["label"] or "").strip().lower() in {"scam", "fraud", "1"} else "Normal"
-    return r["text"].strip(), lab
+    return r[tcol].strip(), "Fraud" if dataset_io.is_scam(r[lcol]) else "Normal"
 
 
 def main():

@@ -95,7 +95,8 @@ def to_binary(value):
 def load_dataset(path, text_col=None, label_col=None, limit=None):
     if not os.path.exists(path):
         raise SystemExit(f"dataset not found: {path}")
-    df = pd.read_csv(path)
+    # utf-8-sig: a byte-order mark would otherwise stick to the first header
+    df = pd.read_csv(path, encoding="utf-8-sig")
     tcol = text_col or pick_column(df, TEXT_CANDIDATES, "text")
     lcol = label_col or pick_column(df, LABEL_CANDIDATES, "label")
     texts = df[tcol].astype(str).tolist()
