@@ -274,6 +274,26 @@ browser, dropping the SSH link, or restarting the server does not stop them —
 reopen the URL and the run is still there. Pick a run under **Recent runs** to
 get its Output, Results, Per-call predictions and the per-baseline Step logs.
 
+### Results tab
+
+A run of every baseline takes an afternoon. The **Results** tab at the top of
+the Benchmark page lets the table be built one baseline at a time instead.
+
+Every benchmark run that finishes is recorded in `results/ledger.jsonl`, one
+line per baseline: accuracy, precision, recall, F1, the confusion counts, and
+— when the content-deletion test was on — stripped accuracy and trusted
+accuracy. Pick a dataset from the dropdown and the tab shows one row per
+baseline: its latest run over the whole dataset, how many runs it has, and
+the spread between them if they disagree. "all runs" opens that baseline's
+history; "remove" hides one result without touching the run itself.
+
+The ledger is kept outside `results/logs/` on purpose: deleting a run from
+Recent runs removes its logs, and the number it produced should not go with
+them. A pilot run on `--limit` is recorded too, marked **pilot**, and only
+stands in for a baseline that has no full run yet.
+
+The per-run table that used to be the Results tab is now called **Table**.
+
 ### Web-RAG knowledge base panel
 
 Under the Run button, **Web-RAG knowledge base** does what
