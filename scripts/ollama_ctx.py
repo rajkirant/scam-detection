@@ -53,6 +53,21 @@ SAFETY = 1.15
 # where -> [times it overflowed, worst prompt seen]
 _overflows = {}
 
+# The largest window asked for so far in this process. Windows only grow.
+#
+# Ollama reloads the model whenever a request's num_ctx differs from the one
+# the loaded runner was started with - for qwen2.5:14b that is ~9 GB pushed
+# back onto the GPU. Sizing every call to its own prompt, in 1024-token steps,
+# changed the window on 88% of consecutive calls on scamai_full_1000 and 60%
+# on everything_7013: thousands of reloads a run. A bigger window holds a
+# smaller prompt just as well, so once a window has been needed it is kept,
+# and a run reloads at most once per step it grows through (about 9).
+#
+# SCAM_STICKY_CTX=0 goes back to sizing each call on its own - worth it only
+# if a big window pushes the model partly off the GPU (see `ollama ps`).
+STICKY = os.environ.get("SCAM_STICKY_CTX", "1") != "0"
+_sticky = 0
+
 
 def estimate_tokens(text):
     """Tokens in `text`, erring high.
@@ -77,11 +92,16 @@ def fit_num_ctx(prompt, reply_tokens=300, cap=None, where=""):
     it is more use than a crash, but nobody should be able to read the result
     and not know.
     """
+    global _sticky
     cap = int(cap or DEFAULT_CAP)
     needed = int(estimate_tokens(prompt) * SAFETY) + int(reply_tokens or 0)
     want = min(cap, max(FLOOR, -(-needed // STEP) * STEP))
     if needed > cap:
         _warn_overflow(where or "an ollama call", needed, cap)
+    if STICKY:
+        # never shrink - but never exceed this caller's own cap either
+        want = min(cap, max(want, _sticky))
+        _sticky = max(_sticky, want)
     return want
 
 

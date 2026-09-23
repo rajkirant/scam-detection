@@ -8,6 +8,7 @@ from pathlib import Path
 
 import chromadb
 from chromadb.utils import embedding_functions
+import gpu                       # noqa: E402  - GPU for embeddings when there is one
 
 POLICIES_DIR = Path("./policies")
 CHROMA_DB_DIR = Path("./chroma_db")
@@ -43,7 +44,7 @@ def load_all_policies():
 def setup_vector_database(chunks):
     client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL_NAME)
+        model_name=EMBEDDING_MODEL_NAME, device=gpu.device())
 
     try:
         client.delete_collection(name=COLLECTION_NAME)
@@ -65,7 +66,7 @@ def setup_vector_database(chunks):
 def test_query():
     client = chromadb.PersistentClient(path=str(CHROMA_DB_DIR))
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL_NAME)
+        model_name=EMBEDDING_MODEL_NAME, device=gpu.device())
     collection = client.get_collection(name=COLLECTION_NAME, embedding_function=ef)
 
     q = "employee asked for full credit card number and CVV code"

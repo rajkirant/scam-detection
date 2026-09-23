@@ -20,6 +20,7 @@ from pathlib import Path
 
 import chromadb
 from chromadb.utils import embedding_functions
+import gpu                       # noqa: E402  - GPU for embeddings when there is one
 
 KB_JSON = Path(__file__).resolve().parent.parent / "knowledge" / "scam_patterns.json"
 CHROMA_DB_DIR = "./chroma_db"
@@ -38,7 +39,7 @@ def load_patterns():
 def build_index(patterns):
     client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL_NAME)
+        model_name=EMBEDDING_MODEL_NAME, device=gpu.device())
 
     # Rebuild from scratch so the index always matches the JSON exactly.
     try:

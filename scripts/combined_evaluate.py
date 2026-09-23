@@ -99,6 +99,7 @@ from pathlib import Path
 csv.field_size_limit(sys.maxsize)
 
 sys.path.insert(0, str(Path(__file__).parent))
+import gpu                       # noqa: E402  - GPU for embeddings when there is one
 
 import trusted                                              # noqa: E402
 
@@ -562,7 +563,7 @@ def run_singh(data, max_tokens=300, debug=False, pass_label=""):
 
     client = chromadb.PersistentClient(path="./chroma_db")
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name="all-MiniLM-L6-v2")
+        model_name="all-MiniLM-L6-v2", device=gpu.device())
     coll = client.get_collection(name="bank_policies", embedding_function=ef)
 
     stats = VerdictStats("singh")
@@ -824,7 +825,7 @@ class QwenPatternKB:
             from chromadb.utils import embedding_functions
             client = chromadb.EphemeralClient()
             ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name="all-MiniLM-L6-v2")
+                model_name="all-MiniLM-L6-v2", device=gpu.device())
             name = "qwen_training_kb_%s" % tag
             # Chroma hands back the same in-memory instance for identical
             # settings, so a second run in one process would collide on the
@@ -1098,7 +1099,7 @@ def build_merged_kb(learned_patterns, tag="hyb", include_web=True):
 
     client = chromadb.EphemeralClient()
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name="all-MiniLM-L6-v2")
+        model_name="all-MiniLM-L6-v2", device=gpu.device())
     name = "hybrid_kb_%s" % tag
     try:
         client.delete_collection(name=name)
