@@ -398,6 +398,48 @@ if [[ "$DETACH" -eq 1 ]]; then
   exit 0
 fi
 
+# Is something already listening on $PORT? Asked before anything starts,
+# because the failure it prevents is quiet: the new server dies on "Address
+# already in use", but wait_for_server then finds the OLD one answering, opens
+# a second tunnel in front of it - which localhost.run gives a different
+# address from the tunnel the old instance still holds - checks that link
+# "reaches this server" (it reaches the old one), and exits.
+port_in_use() {
+  (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null
+}
+
+# Whatever is holding the port, if this machine will say.
+port_owner() {
+  local pid=""
+  command -v ss >/dev/null \
+    && pid="$(ss -ltnpH "sport = :$1" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2)"
+  [[ -z "$pid" ]] && command -v lsof >/dev/null \
+    && pid="$(lsof -t -iTCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1)"
+  echo "$pid"
+}
+
+if port_in_use "$PORT"; then
+  owner="$(port_owner "$PORT")"
+  what=""
+  [[ -n "$owner" ]] && what="$(ps -o args= -p "$owner" 2>/dev/null | cut -c1-80)"
+  echo
+  warn "port $PORT is already in use${what:+ by: $what}"
+  if [[ "$what" == *web_ui.py* ]]; then
+    echo "  That is an earlier copy of this UI, still running."
+    [[ -s "$PUBLIC_URL_FILE" ]] \
+      && echo "  Its public link is probably still up: $(cat "$PUBLIC_URL_FILE")"
+    echo "  Use that one, or stop it and start again:"
+  else
+    echo "  Stop whatever it is, or pick another port with --port."
+  fi
+  tmux has-session -t "$SESSION" 2>/dev/null \
+    && echo "      tmux kill-session -t $SESSION"
+  [[ -n "$owner" ]] && echo "      kill $owner"
+  [[ -z "$owner" ]] && echo "      ss -ltnp | grep :$PORT     (to find it)"
+  echo
+  die "not starting a second server on port $PORT"
+fi
+
 SERVER_PID=""
 cleanup() {
   stop_tunnel
@@ -411,8 +453,11 @@ wait_for_server() {
   command -v curl >/dev/null || { sleep 2; return 0; }
   local i
   for (( i = 0; i < 30; i++ )); do
-    curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/" && return 0
+    # a reply only counts while our own server is alive - otherwise it is
+    # something else on the port answering, and the tunnel would front that
     kill -0 "$SERVER_PID" 2>/dev/null || return 1
+    curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$PORT/" \
+      && sleep 1 && kill -0 "$SERVER_PID" 2>/dev/null && return 0
     sleep 1
   done
   return 1
