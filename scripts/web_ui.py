@@ -735,6 +735,128 @@ def results_of(run_id):
         return None
 
 
+# ---------------------------------------------------------------- the ledger
+# Every successful benchmark run leaves its numbers here, one line per system,
+# so a table can be built up a baseline at a time over days instead of by one
+# run of everything that takes all afternoon. It lives outside results/logs/
+# on purpose: deleting a run from Recent runs removes its logs, and the whole
+# point of the ledger is that the number it produced is not lost with them.
+LEDGER = PROJECT_DIR / "results" / "ledger.jsonl"
+LEDGER_LOCK = threading.Lock()
+
+# collect_results.py names two systems differently from the baseline menu
+SYSTEM_TO_BASELINE = {"ontology_rag": "ontology", "mcq_ontology": "mcq"}
+
+
+def ledger_read():
+    """Every ledger line, in the order written. A line that will not parse is
+    skipped rather than taking the whole tab down with it."""
+    out = []
+    try:
+        with open(LEDGER, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    except FileNotFoundError:
+        pass
+    return out
+
+
+def ledger_sync():
+    """Record any finished run the ledger has not seen yet.
+
+    Runs are looked at once: a run that produced nothing still leaves a marker
+    line, so it is not re-parsed on every visit. Called when the Results tab
+    asks, and every half-minute from the reaper thread, so a run is recorded
+    soon after it finishes even if nobody opens the tab before deleting it.
+    """
+    with LEDGER_LOCK:
+        seen = {e.get("run_id") for e in ledger_read()}
+        needs_model = {b[0]: b[3] for b in BASELINES}
+        new = []
+        for meta in all_runs():
+            rid = meta.get("id")
+            if (not rid or rid in seen or meta.get("kind")
+                    or meta.get("status") != "done"):
+                continue
+            res = results_of(rid) or {}
+            systems = [x for x in res.get("systems", []) if x.get("ran")]
+            finished = time.strftime(
+                "%Y-%m-%d %H:%M", time.localtime(
+                    run_path(rid, "log").stat().st_mtime
+                    if run_path(rid, "log").exists() else time.time()))
+            if not systems:
+                new.append({"run_id": rid, "empty": True})
+                continue
+            for x in systems:
+                key = SYSTEM_TO_BASELINE.get(x["system"], x["system"])
+                entry = {
+                    "run_id": rid,
+                    "finished": finished,
+                    "dataset": meta.get("dataset", ""),
+                    "system": key,
+                    "model": meta.get("model") if needs_model.get(key) else "",
+                    "limit": str(meta.get("limit", "")),
+                    "calls": x["tp"] + x["fp"] + x["fn"] + x["tn"],
+                    "stripped_test": bool(meta.get("stripped")),
+                }
+                for k in ("acc", "p", "r", "f1", "tp", "fp", "fn", "tn"):
+                    entry[k] = x[k]
+                if x.get("stripped"):
+                    entry["stripped_acc"] = x["stripped"]["acc"]
+                    entry["trusted"] = x.get("trusted")
+                new.append(entry)
+        if new:
+            LEDGER.parent.mkdir(parents=True, exist_ok=True)
+            with open(LEDGER, "a", encoding="utf-8") as f:
+                for e in new:
+                    f.write(json.dumps(e) + "\n")
+        return len([e for e in new if not e.get("empty")])
+
+
+def ledger_view(dataset):
+    """What the Results tab shows for one dataset: every recorded result for
+    it, newest first, plus the datasets that have anything recorded."""
+    rows = [e for e in ledger_read()
+            if not e.get("empty") and not e.get("hidden")]
+    counts = {}
+    for e in rows:
+        counts[e["dataset"]] = counts.get(e["dataset"], 0) + 1
+    picked = [e for e in rows if e["dataset"] == dataset] if dataset else []
+    picked.sort(key=lambda e: (e.get("finished", ""), e.get("run_id", "")),
+                reverse=True)
+    order = [b[0] for b in BASELINES if b[0] != "all"]
+    return {"dataset": dataset, "entries": picked,
+            "datasets_recorded": counts, "system_order": order,
+            "labels": {b[0]: b[1] for b in BASELINES}}
+
+
+def ledger_hide(run_id, system):
+    """Take one result off the Results tab. It is marked hidden rather than
+    deleted, so the next sync does not see the run as new and put it back."""
+    run_id = checked_run_id(run_id)
+    with LEDGER_LOCK:
+        entries = ledger_read()
+        hit = 0
+        for e in entries:
+            if e.get("run_id") == run_id and e.get("system") == system:
+                e["hidden"] = True
+                hit += 1
+        if not hit:
+            raise ValueError("no such result")
+        tmp = LEDGER.with_suffix(".jsonl.tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for e in entries:
+                f.write(json.dumps(e) + "\n")
+        tmp.replace(LEDGER)
+    return {"hidden": hit}
+
+
 def artifacts_of(run_id):
     """Everything a run left behind: per-step logs, and per-call CSVs.
 
@@ -1059,6 +1181,10 @@ def worker_reaper():
         time.sleep(30)
         for slot in SLOTS:
             slot.reap()
+        try:
+            ledger_sync()
+        except Exception as e:           # never let the ledger kill the reaper
+            sys.stderr.write("ledger sync failed: %s\n" % e)
 
 
 def bert_config():
@@ -1720,6 +1846,9 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if u.path == "/api/kb":
                 return self._send(200, {"kb": kb_state()})
+            if u.path == "/api/ledger":
+                ledger_sync()
+                return self._send(200, ledger_view(q.get("dataset", [""])[0]))
             if u.path == "/api/runs":
                 return self._send(200, {"runs": all_runs()})
             # "output", not "log": privacy filter lists block paths that
@@ -1861,6 +1990,9 @@ class Handler(BaseHTTPRequestHandler):
                 out = remove_length_model(form.get("name", ""))
                 sys.stderr.write("deleted length model %s\n" % out["id"])
                 return self._send(200, out)
+            if u.path == "/api/ledger/hide":
+                return self._send(200, ledger_hide(form.get("run_id", ""),
+                                                   form.get("system", "")))
             # ---- scoring a whole dataset, from any of the four pages
             if u.path.startswith("/api/") and u.path.endswith("/evaluate"):
                 page = u.path[len("/api/"):-len("/evaluate")]
@@ -2513,6 +2645,18 @@ PAGE = r"""<!doctype html>
   table.cm td { font-variant-numeric:tabular-nums; }
   table.cm td.good { color:var(--accent); }
   table.cm td.bad { color:var(--bad); }
+  /* the Results ledger: a summary row per baseline, its history under it */
+  table.ledger { border-collapse:collapse; width:100%; }
+  table.ledger th, table.ledger td { padding:7px 10px; text-align:right;
+    border-bottom:1px solid var(--line); font-size:13px; white-space:nowrap;
+    font-variant-numeric:tabular-nums; }
+  table.ledger th { color:var(--dim); font-weight:600; font-size:12px; }
+  table.ledger td:last-child { white-space:normal; }
+  table.ledger th:first-child, table.ledger td:first-child { text-align:left; }
+  table.ledger tr.sub td { font-size:12px; color:var(--dim);
+    border-bottom:1px dashed var(--line); }
+  table.ledger tr.sub td:first-child { padding-left:24px; }
+  #benchview { margin-bottom:14px; }
   .gain-up { color:var(--accent); }
   .gain-down { color:var(--bad); }
   .note { color:var(--dim); font-size:12.5px; }
@@ -2636,6 +2780,28 @@ PAGE = r"""<!doctype html>
   </div>
 
   <div class="main">
+    <div class="tabs" id="benchview">
+      <button data-bv="run" class="on">Run</button>
+      <button data-bv="ledger">Results</button>
+    </div>
+
+    <!-- every recorded result, built up a baseline at a time -->
+    <div id="bench-ledger" hidden>
+      <div class="card">
+        <div class="row" style="gap:10px; flex-wrap:wrap">
+          <label for="ledgerds" style="margin:0">Dataset</label>
+          <select id="ledgerds" style="flex:1; min-width:220px"></select>
+          <button class="link" id="ledgerrefresh">refresh</button>
+        </div>
+        <div class="hint" id="ledgersub">Every benchmark run that finishes is
+          recorded here, one line per baseline, and kept even if the run is
+          later deleted from Recent runs. Run baselines one at a time whenever
+          suits you; the table fills in as you go.</div>
+      </div>
+      <div id="ledgerbody"></div>
+    </div>
+
+    <div id="bench-run">
     <div class="card" id="statuscard">
       <div class="row">
         <strong id="runtitle">No run selected</strong>
@@ -2648,7 +2814,7 @@ PAGE = r"""<!doctype html>
 
     <div class="tabs" id="tabs" hidden>
       <button data-tab="output">Output</button>
-      <button data-tab="results">Results</button>
+      <button data-tab="results">Table</button>
       <button data-tab="calls">Per-call <span class="count" id="c-calls"></span></button>
       <button data-tab="steps">Step logs <span class="count" id="c-steps"></span></button>
     </div>
@@ -2704,6 +2870,7 @@ results table, and the prediction it made for every single call.</pre>
         <span class="hint" id="stepinfo"></span>
       </div>
       <pre class="log" id="steplog"></pre>
+    </div>
     </div>
   </div>
 </div>
@@ -3670,6 +3837,10 @@ async function boot() {
   onScope();
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
+  for (const b of $('benchview').querySelectorAll('button'))
+    b.onclick = () => benchView(b.dataset.bv);
+  $('ledgerds').onchange = loadLedger;
+  $('ledgerrefresh').onclick = loadLedger;
   for (const b of $('tabs').querySelectorAll('button')) b.onclick = () => showTab(b.dataset.tab);
   $('v-table').onclick = () => showView('table');
   $('v-chart').onclick = () => showView('chart');
@@ -3871,7 +4042,125 @@ async function refreshKb() {
   if (!r.error) paintKb(r.kb);
 }
 
+// ================================================== the Results ledger
+// One run of every baseline takes an afternoon. This lets the table be built
+// a baseline at a time instead: every finished run is recorded server-side
+// in results/ledger.jsonl, and this view reads it back for one dataset.
+let LEDGER = null, ledgerOpen = {};
+
+function benchView(name) {
+  for (const b of $('benchview').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.bv === name);
+  $('bench-run').hidden = name !== 'run';
+  $('bench-ledger').hidden = name !== 'ledger';
+  if (name === 'ledger') loadLedger();
+}
+
+async function loadLedger() {
+  const ds = $('ledgerds').value || '';
+  $('ledgerbody').innerHTML = '<div class="card muted">reading the ledger…</div>';
+  const r = await api('/api/ledger?dataset=' + encodeURIComponent(ds));
+  if (r.error) {
+    $('ledgerbody').innerHTML = '<div class="card hint" style="color:var(--bad)">'
+      + esc(r.error) + '</div>';
+    return;
+  }
+  LEDGER = r;
+  // the dropdown lists every dataset, with how many results each already has,
+  // and opens on one that has some rather than on an empty table
+  const have = r.datasets_recorded || {};
+  const opts = (CFG && CFG.datasets || []).map(d => d.path);
+  for (const k of Object.keys(have)) if (!opts.includes(k)) opts.push(k);
+  // first visit: the dataset the run form is on, since that is the one being
+  // worked on - then any dataset that has something recorded
+  const formDs = $('dataset') && $('dataset').value;
+  const keep = ds || (have[formDs] ? formDs : '') || opts.find(o => have[o])
+    || formDs || opts[0] || '';
+  $('ledgerds').innerHTML = opts.map(o =>
+    `<option value="${esc(o)}">${esc(o.replace(/^datasets\//, ''))}`
+    + `${have[o] ? ' — ' + have[o] + ' result' + (have[o] === 1 ? '' : 's') : ''}</option>`
+  ).join('');
+  $('ledgerds').value = keep;
+  if (keep !== ds) return loadLedger();
+  paintLedger();
+}
+
+function paintLedger() {
+  const r = LEDGER;
+  if (!r.entries.length) {
+    $('ledgerbody').innerHTML = '<div class="card muted">Nothing recorded for '
+      + 'this dataset yet. Run any baseline on it from the form on the left; '
+      + 'when the run finishes its numbers land here.</div>';
+    return;
+  }
+  const by = {};
+  for (const e of r.entries) (by[e.system] = by[e.system] || []).push(e);
+  const systems = r.system_order.filter(k => by[k])
+    .concat(Object.keys(by).filter(k => !r.system_order.includes(k)));
+  const anyStripped = r.entries.some(e => e.stripped_acc !== undefined);
+  const pct = x => x === undefined || x === null ? '—' : x.toFixed(1) + '%';
+  const f3 = x => x === undefined || x === null ? '—' : x.toFixed(3);
+  // the Model column only earns its width when an LLM baseline is in the table
+  const anyModel = r.entries.some(e => e.model);
+  const when = t => (t || '').slice(5);           // 2026-09-23 03:06 -> 09-23 03:06
+
+  // The summary row for a baseline is its most recent run over the whole
+  // dataset, if it has one - a 40-call pilot is recorded, but it should not
+  // stand in for the real number just because it happened to be later.
+  const full = e => !e.limit || e.limit === '0' || e.limit === '-';
+  const pick = list => list.find(full) || list[0];
+
+  const head = `<tr><th>Baseline</th><th>Acc</th><th>P</th><th>R</th><th>F1</th>`
+    + (anyStripped ? '<th>Stripped acc</th><th>Trusted A</th>' : '')
+    + '<th>Calls</th>' + (anyModel ? '<th>Model</th>' : '') + '<th>When</th><th>Runs</th></tr>';
+
+  const line = (e, sub) => `<tr class="${sub ? 'sub' : 'top'}"
+      ${sub ? '' : `data-sys="${esc(e.system)}"`}>
+    <td class="optname">${sub ? '' : `<strong>${esc(r.labels[e.system] || e.system)}</strong>`}
+      ${full(e) ? '' : '<span class="pill">pilot</span>'}</td>
+    <td>${pct(e.acc)}</td><td>${f3(e.p)}</td><td>${f3(e.r)}</td><td>${f3(e.f1)}</td>
+    ${anyStripped ? `<td>${pct(e.stripped_acc)}</td><td><strong>${pct(e.trusted)}</strong></td>` : ''}
+    <td>${e.calls}</td>${anyModel ? `<td>${esc(e.model || '—')}</td>` : ''}
+    <td class="muted" title="${esc(e.run_id)}">${esc(when(e.finished))}</td>`;
+
+  let rows = '';
+  for (const k of systems) {
+    const list = by[k], top = pick(list);
+    const accs = list.filter(full).map(e => e.acc);
+    const lo = Math.min(...accs), hi = Math.max(...accs);
+    // the spread is only worth a line when the runs actually disagree
+    const spread = accs.length > 1 && hi > lo
+      ? `<div class="hint" style="margin:0">${lo.toFixed(1)}–${hi.toFixed(1)}%</div>` : '';
+    const toggle = list.length > 1
+      ? ` <button class="link" data-toggle="${esc(k)}">${ledgerOpen[k] ? 'hide' : 'all runs'}</button>` : '';
+    rows += line(top, false) + `<td>${list.length}${toggle}${spread}</td></tr>`;
+    if (ledgerOpen[k]) for (const e of list)
+      rows += line(e, true) + `<td><button class="link" title="${esc(e.run_id)}"`
+        + ` data-hide="${esc(e.run_id)}" data-hsys="${esc(k)}">remove</button></td></tr>`;
+  }
+  $('ledgerbody').innerHTML = `<div class="card"><div class="scroll">
+      <table class="ledger">${head}${rows}</table></div>
+    <div class="hint" style="margin-top:10px">One row per baseline: its latest
+      run over the whole dataset (a <span class="pill">pilot</span> run on a
+      --limit only stands in when there is no full one). "all runs" lists every
+      result it has, newest first, and the range under the run count is the
+      spread across full runs. "remove" hides one result from here without
+      touching the run itself.${anyStripped ? ' Trusted A = acc − max(0, stripped acc − 50).' : ''}</div>
+    </div>`;
+
+  for (const b of $('ledgerbody').querySelectorAll('[data-toggle]'))
+    b.onclick = () => { ledgerOpen[b.dataset.toggle] = !ledgerOpen[b.dataset.toggle]; paintLedger(); };
+  for (const b of $('ledgerbody').querySelectorAll('[data-hide]'))
+    b.onclick = async () => {
+      if (!confirm('Remove this ' + b.dataset.hsys + ' result from the Results tab?')) return;
+      const res = await api('/api/ledger/hide', {run_id: b.dataset.hide, system: b.dataset.hsys});
+      if (res.error) { alert(res.error); return; }
+      loadLedger();
+    };
+}
+
 function select(id) {
+  benchView('run');
   current = id; offset = 0; page = 0;
   ART = {steps: [], csvs: []};
   $('log').textContent = '';
