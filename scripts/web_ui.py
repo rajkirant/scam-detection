@@ -1844,6 +1844,8 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if u.path == "/api/kb":
                 return self._send(200, {"kb": kb_state()})
+            if u.path == "/api/admin/version":
+                return self._send(200, version_info())
             if u.path == "/api/ledger":
                 ledger_sync()
                 return self._send(200, ledger_view(q.get("dataset", [""])[0]))
@@ -1987,6 +1989,15 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/api/length/delete_model":
                 out = remove_length_model(form.get("name", ""))
                 sys.stderr.write("deleted length model %s\n" % out["id"])
+                return self._send(200, out)
+            if u.path == "/api/admin/stop":
+                sys.stderr.write("stop requested from the web UI\n")
+                return self._send(200, admin_stop())
+            if u.path == "/api/admin/update":
+                out = admin_update()
+                sys.stderr.write("update from the web UI: %s -> %s%s\n"
+                                 % (out["before"], out["after"],
+                                    ", restarting" if out["restarting"] else ""))
                 return self._send(200, out)
             if u.path == "/api/ledger/hide":
                 return self._send(200, ledger_hide(form.get("run_id", ""),
@@ -2656,6 +2667,23 @@ PAGE = r"""<!doctype html>
     border-bottom:1px dashed var(--line); }
   table.ledger tr.sub td:first-child { padding-left:24px; }
   #benchview { margin-bottom:14px; }
+  .hdrbtn { background:none; border:1px solid var(--line); color:var(--dim);
+            border-radius:99px; padding:5px 13px; font:inherit; font-size:13px;
+            cursor:pointer; }
+  .hdrbtn:hover { color:var(--ink); border-color:var(--dim); }
+  .hdrbtn.off:hover { color:var(--bad); border-color:var(--bad); }
+  #version { font-family:var(--mono); font-size:12px; }
+  /* the Ollama line gives way before the buttons do: it truncates, and its
+     full text is in its tooltip */
+  #ollama { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis;
+            white-space:nowrap; }
+  header .admin { display:flex; align-items:center; gap:8px; flex:none;
+                  margin-left:auto; }
+  #adminveil { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:50;
+               display:flex; align-items:center; justify-content:center;
+               padding:16px; }
+  #adminbox { max-width:620px; width:100%; }
+  #adminbox .log { max-height:260px; margin-top:10px; }
   .gain-up { color:var(--accent); }
   .gain-down { color:var(--bad); }
   .note { color:var(--dim); font-size:12.5px; }
@@ -2681,6 +2709,11 @@ PAGE = r"""<!doctype html>
     <button data-page="llm">LLM judge</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
+  <span class="admin">
+    <span class="sub" id="version" title=""></span>
+    <button class="hdrbtn" id="updbtn" title="git pull the latest code and restart this server">Update</button>
+    <button class="hdrbtn off" id="offbtn" title="stop this server - runs already going are not affected">Stop server</button>
+  </span>
 </header>
 
 <div class="wrap" id="page-bench">
@@ -3687,6 +3720,15 @@ per held-out call, so it takes minutes, not seconds.</pre>
   </div>
 </div>
 
+<div id="adminveil" hidden>
+  <div class="card" id="adminbox">
+    <strong id="admintitle"></strong>
+    <pre class="log" id="adminlog" hidden></pre>
+    <div class="hint" id="adminnote"></div>
+    <button class="link" id="adminclose" hidden>close</button>
+  </div>
+</div>
+
 <script>
 let CFG = null, current = null, offset = 0, timer = null;
 let ART = {steps: [], csvs: []}, tab = 'output';
@@ -3817,6 +3859,9 @@ async function boot() {
   } else {
     $('ollama').textContent = 'Ollama up · nothing loaded';
   }
+  // the header truncates this line when space is short; the whole of it
+  // stays readable on hover
+  $('ollama').title = $('ollama').textContent;
 
   for (const c of checks()) c.onchange = onBaselines;
   $('clearhist').onclick = clearFinished;
@@ -3836,6 +3881,10 @@ async function boot() {
   onScope();
   $('go').onclick = go;
   $('stopbtn').onclick = stop;
+  $('updbtn').onclick = doUpdate;
+  $('offbtn').onclick = doStop;
+  $('adminclose').onclick = () => { $('adminveil').hidden = true; };
+  showVersion();
   for (const b of $('benchview').querySelectorAll('button'))
     b.onclick = () => benchView(b.dataset.bv);
   $('ledgerds').onchange = loadLedger;
@@ -4156,6 +4205,73 @@ function paintLedger() {
       if (res.error) { alert(res.error); return; }
       loadLedger();
     };
+}
+
+// ======================================================= stop and update
+function veil(title, note, log, closable) {
+  $('adminveil').hidden = false;
+  $('admintitle').textContent = title;
+  $('adminnote').innerHTML = note || '';
+  $('adminlog').hidden = !log;
+  $('adminlog').textContent = log || '';
+  $('adminclose').hidden = !closable;
+}
+
+async function showVersion() {
+  const v = await api('/api/admin/version');
+  if (v.error) return;
+  const [hash, ...rest] = (v.commit || '').split(' ');
+  $('version').textContent = hash + (v.branch && v.branch !== 'main' ? ' · ' + v.branch : '');
+  $('version').title = 'running ' + v.commit + ' on ' + v.branch;
+}
+
+async function doUpdate() {
+  if (!confirm('Pull the latest code from GitHub and restart this server?\n\n'
+      + 'Runs already finished are kept. The public link stays the same.')) return;
+  veil('Updating…', 'running git pull');
+  const r = await api('/api/admin/update', {});
+  if (r.error) {
+    veil('Update not done', 'Nothing was changed.', r.error, true);
+    return;
+  }
+  if (!r.updated) {
+    veil('Already up to date', 'Running ' + esc(r.after) + ' — nothing to restart.',
+         r.output, true);
+    return;
+  }
+  veil('Updated — restarting',
+       esc(r.before) + ' → <strong>' + esc(r.after) + '</strong><br>'
+       + (r.web_ui_sh_changed ? '<span style="color:var(--warn)">web_ui.sh itself '
+          + 'changed too; the server restarts now, but that script only takes '
+          + 'effect the next time you start it from the terminal.</span><br>' : '')
+       + 'The page reloads by itself when the new server answers.',
+       r.commits || r.output, false);
+  // wait for the new process to answer with the new commit, then reload
+  const want = (r.after || '').split(' ')[0];
+  for (let i = 0; i < 90; i++) {
+    await new Promise(res => setTimeout(res, 1000));
+    const v = await api('/api/admin/version');
+    if (!v.error && (v.commit || '').split(' ')[0] === want) {
+      location.reload();
+      return;
+    }
+  }
+  veil('The server has not come back', 'It was restarting into ' + esc(want)
+       + '. Check the terminal (or the tmux session) it was started from.', '', true);
+}
+
+async function doStop() {
+  if (!confirm('Stop this server?\n\nRuns already going keep going. The public '
+      + 'link closes, and the page stops working until the server is started '
+      + 'again from the terminal.')) return;
+  const r = await api('/api/admin/stop', {});
+  if (r.error) { veil('Could not stop', '', r.error, true); return; }
+  const going = r.runs_still_going || [];
+  veil('Server stopped',
+       (going.length ? going.length + ' run' + (going.length === 1 ? ' is' : 's are')
+          + ' still going and will finish on their own.<br>' : '')
+       + 'Start it again on the machine with <code>./web_ui.sh --public</code> '
+       + '(or <code>--tmux</code>). Finished runs and the Results tab are kept.');
 }
 
 function select(id) {
@@ -6093,6 +6209,116 @@ def lan_address():
         s.close()
 
 
+# ------------------------------------------------------ stop and update
+# Two buttons in the header. Both act on this server process only: runs are
+# detached into their own sessions and outlive it, as they always have.
+#
+# Restarting is done by re-executing this same process (os.execv) rather than
+# by exiting and letting web_ui.sh start a new one. The PID stays the same, so
+# web_ui.sh keeps waiting on it and never runs its cleanup - the public tunnel
+# stays up on the same address, and is only missing a server for the second
+# or two the new one takes to bind. The listening socket is not inherited
+# across exec (Python sockets are non-inheritable), so the new image binds the
+# port afresh; the BERT worker pipes are not inherited either, and the workers
+# are unloaded first so they do not linger.
+ADMIN_LOCK = threading.Lock()
+
+
+def git(*args, timeout=60):
+    out = subprocess.run(["git"] + list(args), cwd=str(PROJECT_DIR),
+                         capture_output=True, text=True, timeout=timeout)
+    return out.returncode, (out.stdout + out.stderr).strip()
+
+
+def version_info():
+    rc, head = git("log", "-1", "--format=%h %s", timeout=10)
+    rc2, branch = git("rev-parse", "--abbrev-ref", "HEAD", timeout=10)
+    return {"commit": head if rc == 0 else "unknown",
+            "branch": branch if rc2 == 0 else "unknown"}
+
+
+def _after_reply(fn, delay=0.8):
+    """Run fn a moment from now, so the reply that asked for it gets out."""
+    def go():
+        time.sleep(delay)
+        fn()
+    threading.Thread(target=go, daemon=True).start()
+
+
+def _restart_in_place():
+    for slot in SLOTS:
+        try:
+            slot.unload()
+        except Exception:
+            pass
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # -u because web_ui.sh starts it unbuffered and sys.argv does not carry
+    # interpreter flags - without it the restarted server's output sits in a
+    # buffer instead of reaching the terminal or the tmux log
+    os.execv(sys.executable, [sys.executable, "-u"] + sys.argv)
+
+
+def _stop_now():
+    for slot in SLOTS:
+        try:
+            slot.unload()
+        except Exception:
+            pass
+    sys.stderr.write("stopped from the web UI\n")
+    sys.stderr.flush()
+    # os._exit rather than sys.exit: this runs on a helper thread, and the
+    # server's own loop would otherwise keep the process alive. web_ui.sh sees
+    # its server go, closes the tunnel and exits - and with it the tmux session.
+    os._exit(0)
+
+
+def admin_stop():
+    running = [r["id"] for r in all_runs() if r["status"] == "running"]
+    _after_reply(_stop_now)
+    return {"stopping": True, "runs_still_going": running}
+
+
+def admin_update():
+    """git pull --ff-only, and restart into the new code if anything came in.
+
+    Refused while a run is going: run_all.sh is read by bash as it executes,
+    so rewriting it under a live run can break that run part way through.
+    """
+    if not ADMIN_LOCK.acquire(blocking=False):
+        raise ValueError("an update is already in progress")
+    try:
+        running = [r["id"] for r in all_runs() if r["status"] == "running"]
+        if running:
+            raise ValueError(
+                "a run is going (%s). Updating now would change run_all.sh "
+                "under it, and bash reads that file as it goes - wait for it "
+                "to finish, or stop it, then update." % running[0])
+        before = version_info()["commit"]
+        rc, fetched = git("pull", "--ff-only", timeout=120)
+        if rc != 0:
+            raise ValueError("git pull failed, nothing was changed:\n" + fetched)
+        after = version_info()["commit"]
+        changed = before.split()[0] != after.split()[0]
+        log = ""
+        if changed:
+            _, log = git("log", "--format=%h %s",
+                         "%s..%s" % (before.split()[0], after.split()[0]))
+            _, files = git("diff", "--name-only", before.split()[0],
+                           after.split()[0])
+            shell_changed = "web_ui.sh" in files.split()
+            _after_reply(_restart_in_place)
+        else:
+            shell_changed = False
+        return {"updated": changed, "before": before, "after": after,
+                "output": fetched, "commits": log,
+                "restarting": changed,
+                # web_ui.sh itself is the one file a restart does not reload
+                "web_ui_sh_changed": shell_changed}
+    finally:
+        ADMIN_LOCK.release()
+
+
 def main():
     ap = argparse.ArgumentParser(description="browser front end for run_all.sh")
     ap.add_argument("--port", type=int, default=8000)
@@ -6113,6 +6339,9 @@ def main():
     # lets go of a BERT nobody is asking questions of any more
     threading.Thread(target=worker_reaper, daemon=True).start()
 
+    if os.environ.get("SCAM_UI_RESTARTED"):
+        print("\nrestarted into %s" % version_info()["commit"])
+    os.environ["SCAM_UI_RESTARTED"] = "1"
     print("scam-detection UI")
     print("  here:           http://localhost:%d" % args.port)
     if args.host == "127.0.0.1":
