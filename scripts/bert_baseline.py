@@ -39,6 +39,9 @@ import time
 import numpy as np
 import pandas as pd
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import trusted                                              # noqa: E402
+
 # torch and transformers are imported lazily inside main() so that --help works
 # on a machine without them installed.
 
@@ -229,11 +232,37 @@ def train_and_predict(model_name, train_texts, train_labels, eval_texts,
 # Modes
 # ---------------------------------------------------------------------------
 
+def stripped_twins(args, texts):
+    """The same transcripts with their content words deleted.
+
+    Built here rather than read from a paired file on disk: the pairing is
+    then exact by construction, every dataset can be tested rather than only
+    the ones somebody made a twin for, and the rule that defines the
+    measurement is trusted.FUNCTION_WORDS instead of whatever tool wrote the
+    CSV. The checkpoint never sees any of this in training.
+    """
+    out, empties = trusted.strip_all(texts)
+    kept = sum(len(t.split()) for t in out)
+    whole = sum(len(t.split()) for t in texts)
+    print("  content-deletion test: %d of %d words kept (%.0f%%)"
+          % (kept, whole, 100.0 * kept / whole if whole else 0))
+    if empties:
+        print(f"  {empties} call(s) strip to nothing at all")
+    return out
+
+
 def run_cv(args, tokenizer=None, model_init=None):
     from sklearn.model_selection import StratifiedKFold
 
     print("Loading dataset")
     df, texts, labels = load_dataset(args.csv, args.text_col, args.label_col, args.limit)
+    # The content-deletion test: the model is trained on the original text of
+    # each training fold and then scores BOTH copies of the held-out calls, in
+    # one pass, so the stripped score comes from the very same fine-tuned
+    # weights. It is never trained on stripped text.
+    texts_s = stripped_twins(args, texts) if getattr(args, "stripped", False) else None
+    oof_pred_s = [None] * len(texts)
+    oof_prob_s = [None] * len(texts)
     print()
 
     skf = StratifiedKFold(n_splits=args.folds, shuffle=True, random_state=args.seed)
@@ -250,8 +279,17 @@ def run_cv(args, tokenizer=None, model_init=None):
         te_texts = [texts[i] for i in te_idx]
         te_labels = [labels[i] for i in te_idx]
 
-        preds, probs = train_and_predict(args.model, tr_texts, tr_labels, te_texts,
+        eval_texts = te_texts
+        if texts_s is not None:
+            eval_texts = te_texts + [texts_s[i] for i in te_idx]
+        preds, probs = train_and_predict(args.model, tr_texts, tr_labels, eval_texts,
                                          args, tokenizer, model_init)
+        if texts_s is not None:
+            n_te = len(te_idx)
+            for j, i in enumerate(te_idx):
+                oof_pred_s[i] = preds[n_te + j]
+                oof_prob_s[i] = probs[n_te + j]
+            preds, probs = preds[:n_te], probs[:n_te]
         for j, i in enumerate(te_idx):
             oof_pred[i] = preds[j]
             oof_prob[i] = probs[j]
@@ -276,18 +314,35 @@ def run_cv(args, tokenizer=None, model_init=None):
     print(f"  mean F1        {np.mean(f1s):.3f}  (sd {np.std(f1s):.3f})")
     print()
     print(fmt("bert (pooled OOF)", overall))
+    stripped = None
+    if texts_s is not None:
+        stripped = metrics(labels, oof_pred_s)
+        # "stripped OOF", never "pooled OOF": collect_results.py picks the full
+        # row by that phrase and keeps the last match
+        print(fmt("bert__stripped (stripped OOF)", stripped))
+        a = trusted.trusted_accuracy(overall["acc"], stripped["acc"])
+        print(f"  trusted accuracy  A = {overall['acc']*100:.1f} - max(0, "
+              f"{stripped['acc']*100:.1f} - 50) = {a*100:.1f}%")
     print(f"  model: {args.model}   seed: {args.seed}   elapsed: {elapsed:.0f}s")
 
     out_df = df.copy()
     out_df["bert_pred"] = oof_pred
     out_df["bert_prob_scam"] = [round(p, 4) for p in oof_prob]
     out_df["bert_correct"] = [int(p == t) for p, t in zip(oof_pred, labels)]
+    if texts_s is not None:
+        out_df["bert__stripped_pred"] = oof_pred_s
+        out_df["bert__stripped_prob_scam"] = [round(p, 4) for p in oof_prob_s]
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     out_df.to_csv(args.out, index=False)
     print(f"  per-call results: {args.out}")
     print("=" * 74)
 
-    write_summary(args, {"mode": "cv", "folds": args.folds,
+    summary_extra = {}
+    if stripped is not None:
+        summary_extra = {"stripped_csv": None, "stripped": stripped,
+                         "trusted_accuracy": trusted.trusted_accuracy(
+                             overall["acc"], stripped["acc"])}
+    write_summary(args, {**summary_extra, "mode": "cv", "folds": args.folds,
                          "per_fold": fold_metrics, "pooled": overall,
                          "mean_acc": float(np.mean(accs)), "sd_acc": float(np.std(accs)),
                          "mean_f1": float(np.mean(f1s)), "sd_f1": float(np.std(f1s)),
@@ -399,6 +454,10 @@ def build_parser():
     cv.add_argument("--csv", default="datasets/scam_vs_bank_243x243.csv")
     cv.add_argument("--folds", type=int, default=5)
     cv.add_argument("--out", default="results/bert_results_486.csv")
+    cv.add_argument("--stripped", action="store_true",
+                    help="content-deletion test: also score each held-out call "
+                         "with its content words deleted, using the same "
+                         "fine-tuned model. Training uses original text only")
     common(cv)
     cv.set_defaults(func=run_cv)
 

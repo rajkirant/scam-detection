@@ -29,18 +29,19 @@ base.
 | `run_all.sh` | Interactive terminal launcher — asks five questions, then runs |
 | `web_ui.sh` | Browser front end for the same thing |
 | `scripts/` | The evaluation systems and the supporting tools |
-| `models/` | Fine-tuned BERT checkpoints from the BERT + MCQ page — **not in git** |
+| `models/` | Fine-tuned BERT checkpoints, bag-of-words models, length thresholds and fitted LLM prompts, from the four model pages — **not in git** |
 | `datasets/` | The transcript CSVs (`id,label,…,text`) |
 | `knowledge/` | `scam_ontology.json`, `mcq_ontology.json`, `scam_patterns.json` |
 | `policies/` | Three bank policy documents — the corpus the Singh baseline retrieves from |
 | `chroma_db/` | Local vector index — **not in git, you build it** (setup step 6) |
 | `results/` | `*.csv` per-call predictions, `logs/run_<stamp>/` one log per baseline |
 
-The nine baselines, in escalating order:
+The ten baselines, in escalating order:
 
 | Key | System | Needs an LLM |
 | --- | --- | --- |
-| `trivial` | length threshold + TF-IDF bag-of-words, 5-fold CV | no |
+| `length` | word count against one threshold | no |
+| `bow` | TF-IDF into logistic regression, 5-fold CV | no |
 | `llm_only` | the model decides alone, no retrieval — the control | yes |
 | `singh` | policy-compliance check against the `bank_policies` collection | yes |
 | `webrag` | retrieval over the web-harvested `scam_patterns` KB, with a relevance gate | yes |
@@ -177,7 +178,7 @@ repo (20 harvested patterns), so this step needs no API key. Check it:
 python scripts/build_index.py --test   # rebuild, then show which hits pass the gate
 ```
 
-Skip this step only if you are running `trivial`, `llm_only` or `bert`, which
+Skip this step only if you are running `length`, `bow`, `llm_only` or `bert`, which
 retrieve nothing.
 
 ### 7. Optional — the Tavily API key
@@ -223,8 +224,10 @@ the width gets in the way.
 
 ## A. Browser UI
 
-Everything `run_all.sh` does, as a form — plus a second page that trains a BERT
-and puts the MCQ ontology to it.
+Everything `run_all.sh` does, as a form — plus four pages that put one call to
+one model: a fine-tuned BERT, a bag of words, a length threshold, or the local
+LLM. Each of the four fits on a dataset, keeps what it fitted in `models/`,
+and scores itself on held-out calls.
 
 ```bash
 ./web_ui.sh                   # http://localhost:8000, ctrl-c to stop
@@ -296,91 +299,183 @@ same lock a benchmark does — the index cannot be rebuilt underneath a run that
 is reading it. The update streams into the same Output pane and lands in
 "Recent runs" like any other run.
 
-### BERT + MCQ page
+### BERT page
 
 The second tab in the header. It does two things `run_all.sh` has no mode for:
-fine-tune a BERT and *keep* the checkpoint, then put every question in
-`knowledge/mcq_ontology.json` to that checkpoint, one transcript at a time.
-`scripts/bert_mcq.py` does the work and can be used on its own
-([section C.9](#9-train-a-bert-and-answer-the-mcq-ontology-with-it)).
+fine-tune a BERT and *keep* the checkpoint, then put a transcript to that
+checkpoint and get back the probability that the call is a scam.
+`scripts/bert_classify.py` does the work and can be used on its own
+([section C.9](#9-train-a-bert-and-classify-one-call-with-it)).
 
 **Train a model** (left) is `bert_baseline.py`'s training loop pointed at the
 whole dataset rather than at k folds, saving to `models/<name>/` with a
-`mcq_meta.json` recording the dataset, the hyperparameters and a stratified
+`meta.json` recording the dataset, the hyperparameters and a stratified
 holdout score. `models/` is gitignored — each checkpoint is a few hundred MB.
 The run is detached and logged exactly like a benchmark run, streams into the
 **Training output** tab, and appears under *Recent runs* on the other page. It
 takes the same lock a benchmark does, so it cannot start while one is going.
 
-**Ask** (right) puts the ontology to the selected checkpoint: it routes the
-call to a branch, answers that branch's questions, and sums the values of the
-chosen options into the ontology's verdict. Paste a transcript, or pull one out
-of a dataset by row. Each answer shows its confidence, what it contributed to
-the score, the stretch of the call it was matched against, and — under *all N
-options* — what every other option scored.
+**Classify** (right) puts one call to the selected checkpoint. Paste a
+transcript, or pull one out of a dataset by row.
 
-Two numbers sit side by side at the top and are deliberately never combined:
+The number it gives is `prob_scam` — the binary head, which is the one thing
+training directly fits. Nothing on this page is inferred, weighted or scored
+on top of it.
 
-| | Where it comes from |
+**Why the call is read in windows.** BERT takes 512 tokens at most and these
+checkpoints are trained at 256 — about 180 words. Calls in
+`scamai_hard_307_ordered.csv` run past ten thousand. Handing the whole
+transcript to the tokenizer scores its opening and silently drops the rest,
+which on a long call means judging it by the hellos — the same failure the
+Ollama context window had ([the context window](#the-context-window)). So the
+transcript is cut into overlapping windows of the size training used, every
+window is scored, and the call takes either the strongest window or the
+average:
+
+| | |
 | --- | --- |
-| **MCQ score** | the sum of the option values chosen below, banded by the cut-offs in `mcq_ontology.json` |
-| **prob_scam** | the binary classification head — the only thing training directly fits |
+| **strongest** | a scam signal anywhere is a scam signal — suits calls that are mostly small talk around one telling exchange |
+| **average** | steadier, but dilutes that exchange in a long friendly call |
 
-The questions themselves have no labels to train on, so they are answered by
-similarity: the transcript is cut into overlapping windows, each window and
-each option text is mean-pooled into a vector, and an option scores the best
-cosine similarity it reaches against any window.
+Both are shown whichever you pick, next to **first window** — what a single
+truncated read would have said. When the three disagree, the disagreement is
+the finding, and the page says so. Under *every window* is the score of each
+one, so you can see where in the call the signal is.
 
-Four things about that matching decide whether the answers mean anything, and
-each of them was, at one point, the reason they did not:
+**Strip the tone tags** (under *How the call is read*) takes `[curious]`,
+`[long pause]` and the rest out before scoring. It is off by default and it is
+an experiment, not a correction: training read those tags, so a checkpoint
+asked about text without them is being asked about text of a kind it never
+saw. Worth one run each way — in `scamai_full_1000.csv`, `[satisfied]` sits on
+54.8% of legitimate calls and 31.0% of scams, so a score that moves a lot here
+was partly reading the annotation style rather than the call.
 
-- **The encoder.** Options are matched in `all-MiniLM-L6-v2` — already this
-  project's embedding model — not in the fine-tuned checkpoint's own hidden
-  states. A binary scam/legitimate objective never asks an encoder to tell "a
-  courier" from "a customs agency", which is the distinction every question
-  here turns on. Matched in the checkpoint, every option of a question came
-  back within a few hundredths of every other and the winner was decided by
-  noise. `--encoder self` puts it back for comparison.
-- **The key.** An option is embedded as its own text. Prefixing the question
-  prompt, which is identical across that question's options, made the strings
-  being compared about 90% the same characters.
-- **Centring.** The mean direction of the whole option corpus is subtracted
-  from both sides before the cosine. BERT sentence vectors sit in a narrow
-  cone, so two unrelated phrases still score .85 against each other; removing
-  that shared direction is what gives the options room to differ.
-  `--no-center` disables it.
-- **The gate.** A question is answered only when its best option is clear of
-  the runner-up by `--min-margin` in raw cosine. A softmax over four
-  near-identical scores still has to hand its probability to somebody, so
-  confidence alone cannot tell a real answer from a coin flip. Below the
-  margin the question abstains and contributes **nothing** — not knowing
-  whether the caller asked for anything is not evidence that they asked for
-  nothing.
+**The holdout number beside a trained model is not a result.** It is a
+stratified slice of that model's own training file. On
+`scambait_bank_422.csv` a checkpoint reaches 100%, because the scam side is
+YouTube scam-baiting and the legitimate side is the HarperValleyBank corpus —
+separable on recording pipeline alone. Compare against the bag-of-words
+baseline on the Benchmark page before believing any of it.
 
-Transcripts are repaired first: the tone tags (`[curious]`, `[long pause]`)
-come out, redacted entities keep their word (`[CARD]` → "card number"), and
-the apostrophes ASR dropped go back in, because "i m" and "don t" are not
-words any encoder was trained on. `--raw` disables it. Note that the tone tags
-also reach `bert_baseline.py`, which is worth knowing about: in
-`scamai_full_1000.csv`, `[satisfied]` appears on 54.8% of legitimate calls and
-31.0% of scams, so a classifier reading them can score off the labelling
-convention rather than off the call.
-
-What training changes is therefore `prob_scam`, and the MCQ answers are
-zero-shot. The **How it answers** tab says this on the page, including where
-the method is weak (similarity reads subject matter, not negation).
-
-Answering happens on the CPU unless *answer on the GPU* is ticked, so the page
+Scoring happens on the CPU unless *score on the GPU* is ticked, so the page
 stays usable while a benchmark run has the VRAM. The checkpoint is held in
-memory between questions and let go after ten idle minutes, or when you press
+memory between calls and let go after ten idle minutes, or when you press
 *unload it*.
+
+### Bag of words page
+
+The third tab, and the control the other two are measured against. Same shape
+as the BERT page on purpose: fit a model on a dataset, keep it, put a
+transcript to it, get a probability. `scripts/bow_classify.py` does the work
+([section C.11](#11-fit-a-bag-of-words-model-and-classify-one-call)).
+
+Under it is TF-IDF over word unigrams and bigrams into a logistic regression —
+the same vectoriser and classifier the `bow` baseline cross-validates on the
+Benchmark page. No embeddings, no attention, no GPU. It fits in about a
+second.
+
+Two differences from the BERT page matter when reading them side by side:
+
+- **It reads the whole call.** BERT takes 512 tokens, so that page scores a
+  long transcript in windows. TF-IDF has no length limit — every word is
+  counted. On a long call the two pages are not being asked the same
+  question, and this is the one that saw all of it.
+- **It can be read back exactly.** A linear model over TF-IDF decomposes: the
+  score is the intercept plus, for every term in the call, its TF-IDF weight
+  times its coefficient. The terms under a verdict are those products, largest
+  first, and they sum to the score shown. That is arithmetic, not a story told
+  about the model afterwards — and it is what BERT cannot give you.
+
+**Read the terms, not the accuracy.** On `scambait_bank_422.csv` this reaches
+**100% held out in 0.06 seconds** — the same score a fine-tuned BERT takes 63
+seconds on a GPU to reach. The terms doing the work on a real scam call from
+that set are:
+
+| Towards scam | Towards legitimate |
+| --- | --- |
+| `computer` +0.110 | `is` −0.047 |
+| `so` +0.060 | `what` −0.028 |
+| `tell` +0.060 | `can` −0.028 |
+| `me` +0.059 | `hello` −0.023 |
+| `yes` +0.047 | `company` −0.019 |
+
+Those are function words and discourse markers. The two halves of that dataset
+come from different recording pipelines — YouTube scam-baiting and the
+HarperValleyBank corpus — and this is what separating on transcription style
+looks like from the inside. When this page scores near BERT, neither number is
+evidence about understanding scams, and this page shows you why in a way the
+other cannot.
+
+### Length only page
+
+The fourth tab, and the floor. Count the words in the transcript, compare the
+count to one number, call it. Nothing in the call is read — not a word, not an
+entity, not a tone tag. `scripts/length_classify.py` does the work
+([section C.12](#12-fit-a-length-threshold-and-classify-one-call)).
+
+It is the `length` baseline from the Benchmark page, which is
+`trivial_length` in `combined_evaluate.py`: *Fraud if the call is longer than
+45 words*. It has a page of its own because **whatever BERT or the bag of
+words beats this by is the whole of what those models are worth on that
+dataset**, and on several of the datasets here the gap is smaller than the
+write-up would like.
+
+Three things the page is built to show:
+
+- **"Fit" is a sweep, not learning.** There is one parameter, chosen by
+  trying every threshold the fitting calls suggest and keeping the
+  best-scoring one. That overfits a single number to a single dataset without
+  complaint, so the fitting output lists the runner-up thresholds and says out
+  loud when the curve is flat — on `everything_7013.csv`, 209 of 3,896
+  thresholds come within a point of the winner, which means the exact number
+  is meaningless. Tick **pin the threshold** to skip fitting entirely and use
+  the benchmark's own 45.
+- **The direction is not a given.** "Scams are longer" is an assumption about
+  a corpus, not a fact about scams, and the sweep tests both ways round. See
+  the table below — on two of these datasets it points the other way.
+- **No probability is invented.** A threshold cannot say how confident it is.
+  In place of one the page shows a fact about the fitting set: the share of
+  fitting calls on this side of the line that really were scams. Move the
+  threshold on the classify form and that share moves with it. When the share
+  contradicts the verdict, the page says so instead of dressing the number up.
+
+What a fitted threshold actually gets, holdout, alongside what always
+answering the same thing gets:
+
+| Dataset | Fitted rule | Holdout acc | Best constant answer |
+| --- | --- | --- | --- |
+| `zhi_english_646.csv` | longer than 34 words | **85.4%** | 50.0% |
+| `scambait_bank_422.csv` | longer than 130 words | **71.8%** | 50.6% |
+| `everything_7013.csv` | **shorter** than 726 words | **69.8%** | 60.7% |
+| `scamai_full_1000.csv` | **shorter** than 3,574 words | **64.5%** | 50.0% |
+
+Two results in that table are worth carrying into the write-up:
+
+1. On `scamai_full_1000.csv` and `everything_7013.csv` the scam calls are the
+   **shorter** ones. `trivial_length`'s rule points the wrong way on both, so
+   the number the Benchmark page reports for `length` there is worse than the
+   same threshold read backwards.
+2. On `scambait_bank_422.csv`, `trivial_length`'s threshold of 45 calls
+   **every single call a scam** — the shortest call in that set is longer than
+   45 words — so its 49.4% there is the always-scam rate and nothing else. The
+   fitting output prints a note when this happens.
+
+And for the comparison the page exists to make: on `scambait_bank_422.csv`,
+counting the words gets 71.8% from a model that is one integer. BERT and the
+bag of words both get 100% on the same split. The distance between 50% and 72%
+is what counting bought; the distance between 72% and 100% is what reading
+bought.
 
 ### LLM judge page
 
-The third tab, and the simplest thing in the project. Paste a transcript (or
+The last tab, and the simplest thing in the project. Paste a transcript (or
 load a row from a dataset with the picker at the top), press **Ask the
 model**, and the local LLM says whether it is a scam and gives its reason. No
 retrieval, no ontology, no fine-tuned anything.
+
+With **None** picked under *Fitted prompts* it is exactly that and nothing
+else; with a fitted prompt picked it is that plus worked examples out of a
+dataset — see *Fitting a prompt* below.
 
 It is the `llm_only` control from the Benchmark page asked one call at a time,
 and it shares the benchmark's prompt and verdict parser — so the answer on
@@ -393,6 +488,42 @@ is put first, so the page opens on the one the rest of the project uses.
 Ollama holds the model, not the server, so there is nothing to load or unload
 here.
 
+**Fitting a prompt.** The left-hand panel fits a prompt on a dataset, keeps
+it in `models/<name>/`, and lets you pick it from a list — the same shape as
+the other three pages. `scripts/llm_fit.py` does the work
+([section C.13](#13-fit-a-prompt-for-the-llm)).
+
+**It does not fine-tune anything.** The weights Ollama is holding do not move,
+and nothing in this project can move them. A fitted prompt is text prepended
+to every question, made of up to three parts:
+
+| Part | What it is |
+| --- | --- |
+| worked examples | *k* calls from the fitting split with their real answers attached, balanced between the classes and excerpted — a median call in some of these sets is 5,000 tokens and four whole ones would crowd out the call being judged |
+| rubric | what the model itself writes when shown those examples and asked what separates the two classes. One extra call at fit time, then a fixed piece of text |
+| standing instructions | the box below, carried into the profile so a correction survives a page reload |
+
+That is in-context learning, and it is the only kind of training a frozen
+local model can be given from a web page. The other three pages train a model;
+this one writes a better question. The page will not call those the same
+thing.
+
+**The fit scores everything twice.** A longer prompt always *feels* like an
+improvement and often is not, so fitting runs the held-out calls through the
+fitted prompt *and* through the bare one, in the same order, and reports the
+difference. If the fitted prompt did not beat the control it has cost context
+window and bought nothing, and the run says so in those words rather than
+reporting a number that looks fine on its own. That costs two LLM calls per
+held-out call, so the form shows the bill before you press Fit.
+
+**Where the parts sit, and why it matters.** Ollama truncates an overlong
+prompt from the *front*, so the order is worst-to-best: worked examples,
+rubric, transcript, then the rules and answer format. A fitted prompt that
+overflows loses its examples first and decays into the control, rather than
+into a headless wall of transcript with no question attached. The fit counts
+how many held-out prompts this happened to, and the answer card says when it
+happened to the call on screen.
+
 **Standing instructions.** The second box under the transcript is where a
 correction goes when the model gets one wrong — *"a bank asking for the last
 four digits of a card is normal here"* — and it is sent with every question
@@ -402,10 +533,11 @@ transcript is full of people telling each other what to do, and a model that
 cannot tell an instruction from the call it is reading will start taking
 orders from the caller.
 
-It is not training. Nothing is stored and nothing is learned: the text goes
-into the prompt, every time, so the box *is* the model's whole memory and
-closing the page empties it. A verdict reached under instructions comes back
-flagged `guided` and is called out on the page, because at that point it is no
+On its own it is not stored: the text goes into the prompt, every time, so the
+box *is* the model's whole memory and closing the page empties it. Tick *carry
+the standing instructions in* when fitting to make them part of a saved prompt
+instead. A verdict reached under instructions or a fitted prompt comes back
+flagged and is called out on the page, because at that point it is no
 longer the `llm_only` control — with the box empty the prompt is byte for byte
 what `combined_evaluate.py` sends, and with it filled it is not.
 
@@ -420,6 +552,81 @@ Two things the page shows that the benchmark does not:
   one-word retry can be parsed, the benchmark has to score something and
   settles for Normal. Here it says so, because on a single call "Normal"
   should not sometimes mean "the model did not answer".
+
+### Scoring a whole dataset
+
+Every one of the four model pages has a **Score a dataset** tab: pick a
+dataset from the dropdown, press the button, and the model is put to every
+call in it. What comes back is the confusion matrix and what falls out of it —
+accuracy, precision, recall, F1, balanced accuracy, specificity — plus a
+sample of the calls it got wrong and a per-call CSV in `results/`.
+
+All four go through `scripts/eval_common.py`, deliberately: four confusion
+matrices computed four ways could not be compared, and comparing them is the
+only reason to have four pages.
+
+Three things the card shows that an accuracy on its own does not:
+
+- **What answering the same thing every time would get.** Always-scam and
+  never-scam are scored on the same calls and printed beside the result. On a
+  set that is 61% legitimate, a model at 55% is *worse than a constant*, and
+  that should not need working out. When the model fails to clear that floor
+  the card says so in those words.
+- **Which of three experiments this is.** The card names it, because they are
+  not comparable and it is easy to read one as another:
+
+  | | |
+  | --- | --- |
+  | same dataset | the model has read these calls — a memory test unless rows were held back |
+  | a different one | a **transfer test**: how far what it learned on one corpus carries to another. Usually the number worth having, and usually much lower |
+  | nothing recorded | an older model that did not save its dataset |
+
+  **None of the three is the Benchmark page's figure.** That is k-fold
+  cross-validation *within* one dataset — trained on part of it, scored on the
+  rest, every call predicted by a model that never saw it. So 100% there and
+  50% here is two experiments, not a disagreement.
+
+  On `scambait_bank_422.csv` and its `_stripped` variant (52% of the words
+  deleted and the text re-tokenised, leaving a 212-word function-word
+  vocabulary), the pair reads:
+
+  | | bag of words | BERT |
+  | --- | --- | --- |
+  | fit on stripped, scored on stripped | 98.8% | 100% |
+  | fit on full, scored on stripped | **76.1%** | **50.2%** |
+
+  Both keep recall 1.000 and lose specificity — they over-predict scam under
+  the shift. BERT collapses to one class entirely, which is what a fine-tuned
+  transformer does when the text stops looking like what it was trained on.
+- **Which calls it got wrong.** Up to ten false positives, ten false negatives
+  and ten unreadable answers, with the transcript excerpt and whatever the
+  page can say about each (the probability, the word count, the model's own
+  reason). An accuracy tells you how often a model is wrong; these tell you
+  what it is wrong *about*, which is the part that goes in a write-up.
+
+Unreadable LLM answers are counted separately and left **out** of the scores
+rather than folded into "legitimate" — which is what would quietly turn every
+one of them into a false negative and flatter recall.
+
+The four differ only in what they cost and what they add:
+
+| Page | Speed over 7,013 calls | Extra on the card |
+| --- | --- | --- |
+| Bag of words | a few seconds | — |
+| Length only | under a second | what the same threshold pointing the *other* way would have scored |
+| BERT | minutes on a GPU; long calls are scored in windows | — |
+| LLM judge | **one generation per call** — hours. Set a limit | truncated-prompt count; scores under the fitted prompt picked on the left, or bare |
+
+The LLM tab shows the number of generations and a time estimate before you
+start it. Running it bare and then under a fitted prompt on the same calls is
+how you find out whether the fitting helped on anything beyond its own
+holdout.
+
+Each run is detached and appears under **Recent runs** on the Benchmark page
+like any other, so closing the browser does not stop it. Each also leaves a
+`results/eval_<run id>.csv` behind — `results/*.csv` is deliberately not
+gitignored in this project, so these accumulate and are worth clearing out
+now and then.
 
 ---
 
@@ -441,7 +648,7 @@ Or answer up front and it asks nothing:
 | Flag | Values |
 | --- | --- |
 | `-d, --dataset` | a path, or a menu number |
-| `-b, --baseline` | `all trivial llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
+| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
 | `-m, --model` | `qwen2.5:14b` or `llama3.1:8b`, or the menu number |
 | `-t, --tmux` | detach into tmux |
@@ -590,52 +797,38 @@ so idx 19 here is the same call as idx 19 in a prior `--limit 40` run.
 between calls. Use `--raw-row` for a row by its position in the CSV as it sits
 on disk.
 
-### 9. Train a BERT and answer the MCQ ontology with it
+### 9. Train a BERT and classify one call with it
 
-The command line behind the **BERT + MCQ** page
-([section A](#bert--mcq-page)). Unlike `bert_baseline.py`, which trains per
-fold and throws each model away, this keeps the checkpoint.
+The command line behind the **BERT** page ([section A](#bert-page)). Unlike
+`bert_baseline.py`, which trains per fold and throws each model away, this
+keeps the checkpoint.
 
 ```bash
 # fine-tune on a whole dataset and keep it in models/zhi-bert/
-python scripts/bert_mcq.py train --csv datasets/zhi_english_646.csv \
+python scripts/bert_classify.py train --csv datasets/zhi_english_646.csv \
     --name zhi-bert --epochs 4 --holdout 0.2
 
-# put every question in knowledge/mcq_ontology.json to that checkpoint
-python scripts/bert_mcq.py answer --name zhi-bert --text "Hello, this is..."
-python scripts/bert_mcq.py answer --name zhi-bert \
-    --csv datasets/zhi_english_646.csv --idx 3 --json
+# scam or not, for one call
+python scripts/bert_classify.py classify --name zhi-bert --text "Hello, this is..."
+python scripts/bert_classify.py classify --name zhi-bert \
+    --csv datasets/scambait_bank_422.csv --idx 3 --json
 
-# the numbers behind every pick, when the answers look arbitrary
-python scripts/bert_mcq.py diagnose --name zhi-bert \
-    --csv datasets/zhi_english_646.csv --idx 3 --control
-
-python scripts/bert_mcq.py models              # what is in models/
-python scripts/bert_mcq.py delete --name zhi-bert
+python scripts/bert_classify.py models              # what is in models/
+python scripts/bert_classify.py delete --name zhi-bert
 ```
 
-`diagnose` prints the raw cosine behind every option, the margin between the
-best two, and the spread across each question — read those before trusting a
-verdict. `--control` answers a word-shuffled copy of the same call as well.
-Shuffling keeps every word and destroys every phrase, so any answer that
-survives it was reading the vocabulary rather than the call; a low agreement
-count is the good result. The knobs worth moving are `--min-margin` (raise it
-until only the questions the call really answers come through), `--encoder`
-(`self` matches in the checkpoint, which is the old behaviour) and
-`--no-center`.
+`classify` prints the verdict and `prob_scam`, then the three numbers that
+matter on a long call: the strongest window, the average, and what the first
+window alone would have said. When the first disagrees with the strongest by
+a wide margin it says so — that gap is the difference between reading the call
+and reading its opening.
 
-`answer` prints the branch it routed to, the option it chose for each question
-with a confidence, the summed score and the verdict, and `prob_scam` from the
-trained classification head beside it for contrast. `--json` gives the whole
-thing including every option's score and the transcript window each answer was
-matched against — the shape the web UI renders.
-
-Answering is on the CPU unless `--gpu` is passed, so it does not compete with a
-benchmark for VRAM. `--branch <id>` forces a branch instead of routing to one,
-`--cutoff` moves the scam threshold (RQ2), and `--window` / `--stride` /
-`--min-confidence` control how options are matched. There is also a `serve`
-mode — one JSON request per line on stdin — which is how the web UI keeps a
-checkpoint loaded between questions.
+`--aggregate mean` averages the windows instead of taking the strongest,
+`--threshold` overrides the checkpoint's own cut-off, `--window` / `--stride`
+change how the call is cut up, and `--strip-tags` removes the `[curious]`
+annotations first (an experiment — training read them). There is also a
+`serve` mode — one JSON request per line on stdin — which is how the web UI
+keeps a checkpoint loaded between calls.
 
 ### 10. Ask the LLM about one call
 
@@ -670,7 +863,170 @@ the standard library, so it runs outside the venv as well as in it.
 `OLLAMA_URL` (or `OLLAMA_HOST`) points it at another machine and `SCAM_MODEL`
 sets the default model.
 
+### 11. Fit a bag-of-words model and classify one call
+
+The command line behind the **Bag of words** page
+([section A](#bag-of-words-page)).
+
+```bash
+# fit on a whole dataset and keep it in models/bank-bow/
+python scripts/bow_classify.py train --csv datasets/scambait_bank_422.csv \
+    --name bank-bow
+
+# scam or not, and the terms that decided it
+python scripts/bow_classify.py classify --name bank-bow \
+    --csv datasets/scambait_bank_422.csv --idx 0
+
+python scripts/bow_classify.py models               # what is fitted
+python scripts/bow_classify.py delete --name bank-bow
+```
+
+`classify` prints the verdict, `prob_scam`, and the decomposition: the score,
+the intercept, and the terms pushing each way with what each contributed.
+Those contributions are exact — TF-IDF weight times coefficient — and they sum
+to the score.
+
+`--ngram-max 1` drops bigrams, `--min-df` changes how rare a term may be,
+`--top` sets how many terms are listed each way, `--threshold` overrides the
+model's cut-off, and `--strip-tags` removes the `[curious]` annotations (at
+fit time, at classify time, or both — they are separate flags on the two
+subcommands). There is also a `serve` mode on the same one-JSON-line protocol
+the BERT page uses.
+
+### 12. Fit a length threshold and classify one call
+
+The command line behind the **Length only** page
+([section A](#length-only-page)).
+
+```bash
+# sweep for a threshold and keep it in models/bank-length/
+python scripts/length_classify.py fit --csv datasets/scambait_bank_422.csv \
+    --name bank-length
+
+# no sweep at all - combined_evaluate.py's own rule
+python scripts/length_classify.py fit --csv datasets/scambait_bank_422.csv \
+    --name bank-45 --threshold 45 --direction longer
+
+# scam or not, and the whole of the reasoning
+python scripts/length_classify.py classify --name bank-length \
+    --csv datasets/scambait_bank_422.csv --idx 0
+
+python scripts/length_classify.py models            # what is fitted
+python scripts/length_classify.py delete --name bank-length
+```
+
+`fit` prints the two classes' length distributions, the chosen rule, the five
+runner-up thresholds, a warning when the curve is flat, and the holdout score
+next to what always-scam and never-scam get on the same split — so a rule that
+beats nothing is visible as one.
+
+`classify` prints the verdict, the word count, how far past the line it is,
+and the share of fitting calls on that side of the line that were scams. It
+never prints a probability, because a threshold does not have one.
+
+`--metric acc` makes the sweep maximise accuracy rather than F1,
+`--threshold` pins the line instead of fitting it, `--direction` says which
+side is the scam when it is pinned (a sweep decides this for itself),
+`--holdout 0` uses every call to fit, and `--strip-tags` removes the
+`[curious]` annotations before counting. There is also a `serve` mode on the
+same one-JSON-line protocol the other two pages use, and `train` works as an
+alias for `fit`.
+
+The offline checks for it need no dataset and no venv:
+
+```bash
+python3 scripts/test_length_classify.py
+```
+
+### 13. Fit a prompt for the LLM
+
+The command line behind the **Fit a prompt** panel on the LLM judge page
+([section A](#llm-judge-page)). **It does not fine-tune anything** — see that
+section for what it does instead.
+
+```bash
+# worked examples + a rubric the model writes, measured against the control
+python scripts/llm_fit.py fit --csv datasets/zhi_english_646.csv \
+    --name zhi-prompt --shots 4 --rubric --holdout-calls 20
+
+# what ended up in it
+python scripts/llm_fit.py show --name zhi-prompt
+
+# use it
+python scripts/llm_judge.py --profile zhi-prompt --text "Hello, this is..."
+
+python scripts/llm_fit.py models                    # what is fitted
+python scripts/llm_fit.py delete --name zhi-prompt
+```
+
+`fit` prints which calls it picked as examples, the rubric the model wrote,
+how many tokens the fitted prompt adds to every call, then the holdout scored
+twice — once fitted, once bare — with the difference between them. **The
+difference is the number that matters.** A fitted prompt that does not beat
+the control has cost you context window and bought nothing, and this is the
+only way to find that out.
+
+Each held-out call costs two LLM calls, plus one for the rubric, so
+`--holdout-calls 20 --rubric` is 41 calls to the model. Budget minutes, not
+seconds.
+
+`--shots 0` fits nothing but a rubric and your instructions, `--shot-words`
+trades window for detail in each example, `--guidance-file` carries standing
+instructions into the profile, `--holdout-calls 0` skips the measurement
+entirely (and then you will not know whether it helped), and `--seed` changes
+which calls are drawn as examples. `train` works as an alias for `fit`.
+
+Standard library only, like `llm_judge.py` — no venv needed.
+
+The offline checks run the whole fitting path against a fake Ollama on a spare
+port, so they need neither a GPU nor a model pulled. What they mostly guard is
+the order of the prompt — get that backwards and an overlong fitted prompt
+stops being a prompt at all, silently, while still returning a fluent verdict:
+
+```bash
+python3 scripts/test_llm_fit.py
+```
+
+Models land in `models/` beside the BERT checkpoints without colliding: a
+bag-of-words model is a directory with `bow.joblib` in it, a BERT checkpoint
+is one with `config.json`, and each listing skips the other kind.
+
 ---
+
+---
+
+### 14. Score a whole dataset from the command line
+
+The command line behind the **Score a dataset** tab on all four model pages
+([section A](#scoring-a-whole-dataset)). Same subcommand, same flags, same
+numbers out:
+
+```bash
+python scripts/bow_classify.py    evaluate --name bank-bow    --csv datasets/zhi_english_646.csv
+python scripts/length_classify.py evaluate --name bank-length --csv datasets/everything_7013.csv
+python scripts/bert_classify.py   evaluate --name bank-bert   --csv datasets/zhi_english_646.csv --gpu
+python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40
+python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40 \
+    --profile zhi-prompt
+```
+
+Each prints a running tally, then the confusion matrix next to what
+always-scam and never-scam get on the same calls, and says out loud when the
+model fails to beat them. `--limit N` takes a class-balanced head. `--out
+PATH.json` writes the metrics as JSON and a per-call CSV into `results/`;
+without it the numbers are printed and nothing is kept.
+
+**The cross-corpus case is the one worth running.** A model fitted on one
+dataset, scored on another it has never seen, is the number a write-up needs
+and it is usually far below the holdout figure. A bag-of-words model fitted on
+`scambait_bank_422.csv` and pointed at `zhi_english_646.csv` scores **50.0%**
+— it calls every single call a scam — against 100% on its own holdout.
+
+The offline checks need no dataset and no venv:
+
+```bash
+python3 scripts/test_eval_common.py
+```
 
 ## The context window
 
@@ -804,6 +1160,82 @@ SCAM_NUM_CTX=16384 ./run_all.sh -d datasets/scamai_hard_subset.csv -b llm_only
 
 ---
 
+## The content-deletion test
+
+Accuracy on a paired scam dataset can be earned without reading the calls.
+When the scam half and the legitimate half come from different collections,
+anything that differs between the collections - recording conditions, the
+transcription tool, how the text was written down - separates them for free.
+The content-deletion test measures how much of each system's score comes from
+that, rather than from what the caller said.
+
+Tick **Content-deletion test** on the Benchmark page, or pass `--stripped` to
+`run_all.sh`. It works on any dataset in the list: the stripped copy is built
+from the dataset itself, in memory, so there is no second file to make and
+none to keep in step.
+
+A word survives only if it is in the closed class — determiners, pronouns,
+prepositions, conjunctions, the auxiliary and modal verbs, negation, and a
+few particles. The list is `trusted.FUNCTION_WORDS` and nothing else defines
+the measurement, so the same transcript strips to the same thing on every
+machine. Contractions are expanded first, so `don't` keeps its negation.
+Roughly half the words survive:
+
+```
+datasets/zhi_english_646.csv     14,117 of 29,141 words kept (48%)
+datasets/scambait_bank_422.csv   33,703 of 61,735 words kept (55%)
+```
+
+The folds do not change. Every ticked system runs its normal
+cross-validation, and the held-out fold is scored twice — as written, and
+stripped — so the results gain a stripped-accuracy column and a trusted
+accuracy beside it:
+
+    A = a_full - max(0, a_stripped - 0.5)
+
+```bash
+./run_all.sh -d datasets/zhi_english_646.csv --stripped -b all -l 0
+```
+
+A part-of-speech tagger would be more principled than a whitelist, and was
+not used on purpose: it means spaCy or NLTK, a model download, and an answer
+that changes when the model does. The stripped text is not an intermediate
+here — it *is* the measurement — so it has to be reproducible from one file
+in this repository.
+
+**How each system is scored on the stripped copy matters more than anything
+else here.** A system that learns from the data - bag-of-words, BERT,
+Qwen-KB, the hybrid - is trained on the **original** text of each training
+fold, and that same trained model then scores both copies of the held-out
+calls. It is never trained on stripped text: that would ask whether a fresh
+model can learn the stripped data, which is a question about the dataset,
+not about the detector. Systems that learn nothing from the data - length,
+LLM-only, Singh, Web-RAG, the two ontology systems - are simply run on the
+stripped file. Qwen-KB and the hybrid learn their patterns once a fold and
+reuse them for both copies, so the expensive step is not repeated.
+
+The twin is matched to the dataset by its `id` column, never by row position,
+and a twin whose ids, order or labels disagree is refused before anything
+runs. To check a pair yourself:
+
+```bash
+python scripts/trusted.py check datasets/scambait_bank_422.csv \
+                                datasets/scambait_bank_422_stripped.csv
+```
+
+The formula lives in `scripts/trusted.py` and nowhere else, so the number in
+a log, in `collect_results.py` and in the web UI is always the same
+computation. `scripts/test_stripped_pairing.py` checks the rule above
+directly, by recording what each learner was shown.
+
+Read a trained classifier's trusted accuracy with care: it is sensitive to
+the vectoriser. On `scambait_bank_422` the benchmark's bag-of-words scores
+78.2% on the stripped copy (trusted 71.8%), but adding `sublinear_tf` alone
+moves that to 56.6% (trusted 93.4%). Report the range across reasonable
+settings, not one configuration.
+
+---
+
 ## Datasets
 
 Every CSV in `datasets/` shows up in the launcher menus automatically. All of
@@ -841,7 +1273,7 @@ the row count — the launcher parses them as CSV instead.
 ## Troubleshooting
 
 **`Ollama is not answering at http://localhost:11434`** — start it with
-`ollama serve`, or pick a baseline that needs no LLM (`trivial`, `bert`).
+`ollama serve`, or pick a baseline that needs no LLM (`length`, `bow`, `bert`).
 
 **`<model> is not pulled here`** — `ollama pull qwen2.5:14b`.
 

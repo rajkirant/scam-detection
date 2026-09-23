@@ -100,6 +100,8 @@ csv.field_size_limit(sys.maxsize)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import trusted                                              # noqa: E402
+
 RESULTS_DIR = Path("./results")
 SEED = 42
 
@@ -111,6 +113,20 @@ def load_combined(csv_path, limit=None):
     Accepts label values scam/nonscam/fraud/normal/legit and maps to
     'Fraud'/'Normal' to match the other eval scripts' convention.
     """
+    return [(t, l) for _, t, l in load_combined_ids(csv_path, limit)]
+
+
+def load_combined_ids(csv_path, limit=None):
+    """load_combined, keeping each call's id: (id, text, true_label).
+
+    load_combined is exactly this with the ids dropped, so the full half of a
+    paired run scores the same calls, in the same order, as an ordinary run.
+    random.sample and random.shuffle choose positions from the list length
+    alone, so carrying the id in the tuple does not change which calls are
+    sampled or where they land. A file without an id column gets row numbers,
+    which is enough for load_combined but not for pairing - load_paired
+    refuses a file without real ids.
+    """
     p = Path(csv_path)
     if not p.exists():
         sys.exit("ERROR: not found: %s" % csv_path)
@@ -120,20 +136,22 @@ def load_combined(csv_path, limit=None):
     if "label" not in rows[0] or "text" not in rows[0]:
         sys.exit("ERROR: CSV needs 'label' and 'text' columns. Found: %s"
                  % list(rows[0].keys()))
+    # a byte-order mark sticks to the first header, which is usually id
+    id_key = next((k for k in rows[0] if k and k.lstrip("\ufeff") == "id"), None)
 
     scam_words = {"scam", "fraud", "fraudulent", "1", "true", "yes"}
     data = []
-    for r in rows:
+    for n, r in enumerate(rows):
         lab_raw = (r["label"] or "").strip().lower()
         lab = "Fraud" if lab_raw in scam_words else "Normal"
         text = (r["text"] or "").strip()
         if text:
-            data.append((text, lab))
+            data.append((r[id_key] if id_key else "row%d" % n, text, lab))
 
     if limit:
         # balanced sample
-        scam = [d for d in data if d[1] == "Fraud"]
-        norm = [d for d in data if d[1] == "Normal"]
+        scam = [d for d in data if d[2] == "Fraud"]
+        norm = [d for d in data if d[2] == "Normal"]
         k = limit // 2
         random.seed(SEED)
         scam = random.sample(scam, min(k, len(scam)))
@@ -142,6 +160,32 @@ def load_combined(csv_path, limit=None):
     random.seed(SEED)
     random.shuffle(data)
     return data
+
+
+def load_paired(csv_path, limit=None):
+    """(data, data_s): the dataset, and the same calls with content deleted.
+
+    data_s is built here rather than read from a file. A twin on disk has to
+    be made by some other tool, kept in step with the dataset, and trusted to
+    hold the same calls in the same order - and when it does not, nothing
+    says so. Stripping in memory removes all three problems: every dataset
+    can be tested, the pairing is exact by construction, and the rule that
+    defines the measurement is trusted.FUNCTION_WORDS rather than whatever
+    produced some CSV.
+    """
+    import trusted
+    data = load_combined(csv_path, limit)
+    stripped, empties = trusted.strip_all([t for t, _ in data])
+    data_s = [(t, lab) for t, (_, lab) in zip(stripped, data)]
+    kept = sum(len(t.split()) for t in stripped)
+    whole = sum(len(t.split()) for t, _ in data)
+    print("  content words deleted in memory: %d of %d words kept (%.0f%%)"
+          % (kept, whole, 100.0 * kept / whole if whole else 0))
+    if empties:
+        print("  %d call(s) have no function words left at all; whatever a "
+              "system says\n  about those is its prior, not a reading of the "
+              "call" % empties)
+    return data, data_s
 
 
 # ------------------------------------------------------------------ metrics
@@ -336,6 +380,26 @@ def trivial_length(data, threshold=45):
             for t, lab in data]
 
 
+def _bow_oof(build, min_df, texts, y, splits):
+    """Out-of-fold predictions, one model a fold, and a line about each.
+
+    cross_val_predict would do the same arithmetic in one call, but silently:
+    the run then prints a single accuracy with nothing to show it came from
+    five held-out folds rather than from scoring the training data. That is
+    the one thing about a baseline people need to be able to check, and BERT
+    already prints it, so this prints it too.
+    """
+    import numpy as np
+    pred = np.zeros(len(y), dtype=int)
+    for k, (tr, te) in enumerate(splits, 1):
+        model = build(min_df).fit([texts[i] for i in tr], y[tr])
+        pred[te] = model.predict([texts[i] for i in te])
+        acc = float((pred[te] == y[te]).mean())
+        print("    fold %d/%d  train %d  test %d   acc %5.1f%%"
+              % (k, len(splits), len(tr), len(te), 100 * acc), flush=True)
+    return pred
+
+
 def trivial_bow(data, folds=5, show_features=False):
     """TF-IDF + LogisticRegression, properly cross-validated.
 
@@ -368,18 +432,83 @@ def trivial_bow(data, folds=5, show_features=False):
             LogisticRegression(max_iter=2000))
 
     cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    splits = list(cv.split(texts, y))
     try:
-        pred = cross_val_predict(build(2), texts, y, cv=cv)
+        pred = _bow_oof(build, 2, texts, y, splits)
     except ValueError:
         # min_df=2 can empty the vocabulary on very small folds
         print("  (min_df=2 left no vocabulary in a fold, falling back to min_df=1)")
-        pred = cross_val_predict(build(1), texts, y, cv=cv)
+        pred = _bow_oof(build, 1, texts, y, splits)
 
     if show_features:
         _bow_top_features(texts, y)
 
     return [("Fraud" if p == 1 else "Normal", "Fraud" if t == 1 else "Normal")
             for p, t in zip(pred, y)]
+
+
+def trivial_bow_paired(data, data_s, folds=5):
+    """Bag-of-words on the full text and on its stripped twin, one model a fold.
+
+    Same folds, same vectoriser settings and the same min_df fallback as
+    trivial_bow, and its full-text rows are identical to trivial_bow(data) -
+    test_stripped_pairing.py checks that. Each fold's model is fitted on the
+    ORIGINAL text of the training calls only, then scores the held-out calls
+    twice: as given, and stripped. It never sees stripped text in training.
+    Returns (full_rows, stripped_rows).
+    """
+    try:
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.pipeline import make_pipeline
+        from sklearn.model_selection import StratifiedKFold
+        import numpy as np
+    except ImportError:
+        print("  (sklearn not installed - skipping bag-of-words)")
+        return None, None
+
+    texts = [t for t, _ in data]
+    texts_s = [t for t, _ in data_s]
+    y = np.array([1 if lab == "Fraud" else 0 for _, lab in data])
+
+    smallest_class = int(min(y.sum(), len(y) - y.sum()))
+    n_splits = max(2, min(folds, smallest_class))
+    if n_splits < folds:
+        print("  (only %d per smallest class, using %d folds)"
+              % (smallest_class, n_splits))
+
+    def build(min_df):
+        return make_pipeline(
+            TfidfVectorizer(ngram_range=(1, 2), min_df=min_df),
+            LogisticRegression(max_iter=2000))
+
+    cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    splits = list(cv.split(texts, y))
+
+    def run(min_df):
+        pf = np.zeros(len(y), dtype=int)
+        ps = np.zeros(len(y), dtype=int)
+        for k, (tr, te) in enumerate(splits, 1):
+            model = build(min_df).fit([texts[i] for i in tr], y[tr])
+            pf[te] = model.predict([texts[i] for i in te])
+            ps[te] = model.predict([texts_s[i] for i in te])
+            print("    fold %d/%d  train %d  test %d   acc %5.1f%%   "
+                  "stripped %5.1f%%"
+                  % (k, len(splits), len(tr), len(te),
+                     100 * float((pf[te] == y[te]).mean()),
+                     100 * float((ps[te] == y[te]).mean())), flush=True)
+        return pf, ps
+
+    try:
+        pf, ps = run(2)
+    except ValueError:
+        print("  (min_df=2 left no vocabulary in a fold, falling back to min_df=1)")
+        pf, ps = run(1)
+
+    def rows(pred):
+        return [("Fraud" if p == 1 else "Normal", "Fraud" if t == 1 else "Normal")
+                for p, t in zip(pred, y)]
+    return rows(pf), rows(ps)
 
 
 def _bow_top_features(texts, y, k=15):
@@ -407,7 +536,7 @@ def _bow_top_features(texts, y, k=15):
 
 
 # --------------------------------------------------- LLM systems (need Ollama)
-def run_llm_only(data, max_tokens=300, debug=False):
+def run_llm_only(data, max_tokens=300, debug=False, pass_label=""):
     """Control: model decides alone, no retrieval."""
     stats = VerdictStats("llm_only")
     out, raws, reasons = [], [], []
@@ -421,12 +550,12 @@ def run_llm_only(data, max_tokens=300, debug=False):
         raws.append(raw)
         reasons.append(why)
         if i % 20 == 0:
-            print("    LLM-only: %d/%d" % (i, len(data)))
+            print("    LLM-only%s: %d/%d" % (pass_label, i, len(data)))
     stats.report()
     return out, raws, reasons
 
 
-def run_singh(data, max_tokens=300, debug=False):
+def run_singh(data, max_tokens=300, debug=False, pass_label=""):
     """Singh baseline: policy-compliance check vs bank_policies collection."""
     import chromadb
     from chromadb.utils import embedding_functions
@@ -450,12 +579,12 @@ def run_singh(data, max_tokens=300, debug=False):
         raws.append(raw)
         reasons.append(why)
         if i % 20 == 0:
-            print("    Singh: %d/%d" % (i, len(data)))
+            print("    Singh%s: %d/%d" % (pass_label, i, len(data)))
     stats.report()
     return out, raws, reasons
 
 
-def run_webrag(data, debug=False):
+def run_webrag(data, debug=False, pass_label=""):
     """Web-RAG system, KB-only (use_web=False).
 
     NOTE: this delegates to webrag_system.detect(), which does its own
@@ -481,7 +610,7 @@ def run_webrag(data, debug=False):
         if res["gate_note"] == "unreadable":
             gate["judge_unreadable"] += 1
         if i % 20 == 0:
-            print("    WebRAG: %d/%d" % (i, len(data)))
+            print("    WebRAG%s: %d/%d" % (pass_label, i, len(data)))
 
     # How often retrieval actually contributed. If with_evidence is ~100% the
     # gate is not biting and the Fraud prior is back; if it is ~0% this is the
@@ -871,7 +1000,7 @@ def _tag_fold(patterns, fold):
 
 def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
                 max_tokens=300, debug=False, train_csv=None,
-                num_ctx=QWEN_NUM_CTX):
+                num_ctx=QWEN_NUM_CTX, judge_data=None):
     """Learn a KB from a training split, judge held-out calls against it.
 
     Two shapes, because the runner has two:
@@ -882,7 +1011,14 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
         row of `data` is scored against them. This is what makes the single
         transcript mode work: one row cannot be split into train and test, but
         it can be judged against a KB learned from the dataset it came from.
+
+    judge_data, if given, is what gets judged; the patterns are still learned
+    from `data`. The content-deletion test passes the stripped twin here, so
+    the KB is built from the original training calls and only the held-out
+    calls are stripped. It must hold the same calls as `data`, in the same
+    order - load_paired guarantees that.
     """
+    judged = data if judge_data is None else judge_data
     stats = VerdictStats("qwen_kb")
     gate = Counter()
     out = [(None, true) for _, true in data]
@@ -893,8 +1029,8 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
         patterns = _patterns_from_train_csv(train_csv, data, max_examples,
                                             max_patterns, num_ctx, debug)
         kb = QwenPatternKB(patterns, "single")
-        _qwen_judge(range(len(data)), data, kb, stats, out, raws, reasons, gate,
-                    max_tokens, debug)
+        _qwen_judge(range(len(data)), judged, kb, stats, out, raws, reasons,
+                    gate, max_tokens, debug)
         all_patterns = patterns
     else:
         n_splits, splits = _stratified_folds(data, folds)
@@ -908,7 +1044,7 @@ def run_qwen_kb(data, folds=5, max_examples=40, max_patterns=8,
                 num_ctx, debug, label)
             all_patterns.extend(_tag_fold(patterns, fold))
             kb = QwenPatternKB(patterns, "f%d" % fold)
-            _qwen_judge(test_idx, data, kb, stats, out, raws, reasons, gate,
+            _qwen_judge(test_idx, judged, kb, stats, out, raws, reasons, gate,
                         max_tokens, debug, label)
 
     unscored = sum(1 for pred, _ in out if pred is None)
@@ -1037,9 +1173,16 @@ def _hybrid_judge(indices, data, coll, out, raws, reasons, gate, threshold,
 
 
 def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
-               train_csv=None, num_ctx=QWEN_NUM_CTX, threshold=50):
-    """Web-RAG's pipeline over a KB holding both web and learned patterns."""
+               train_csv=None, num_ctx=QWEN_NUM_CTX, threshold=50,
+               judge_data=None):
+    """Web-RAG's pipeline over a KB holding both web and learned patterns.
+
+    judge_data works as in run_qwen_kb: patterns are learned from `data`,
+    judge_data is what gets judged.
+    """
     import webrag_system as W
+
+    judged = data if judge_data is None else judge_data
 
     print("    gate: min similarity %.2f, LLM relevance check %s"
           % (W.MIN_KB_SIMILARITY, "on" if W.USE_LLM_GATE else "off"))
@@ -1055,7 +1198,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
         coll, n_web, n_learned = build_merged_kb(patterns, "single")
         print("    merged KB: %d web-harvested + %d learned patterns"
               % (n_web, n_learned), flush=True)
-        _hybrid_judge(range(len(data)), data, coll, out, raws, reasons, gate,
+        _hybrid_judge(range(len(data)), judged, coll, out, raws, reasons, gate,
                       threshold)
         all_patterns = patterns
     else:
@@ -1072,7 +1215,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
             coll, n_web, n_learned = build_merged_kb(patterns, "f%d" % fold)
             print("    %smerged KB: %d web-harvested + %d learned patterns"
                   % (label, n_web, n_learned), flush=True)
-            _hybrid_judge(test_idx, data, coll, out, raws, reasons, gate,
+            _hybrid_judge(test_idx, judged, coll, out, raws, reasons, gate,
                           threshold, label)
 
     unscored = sum(1 for pred, _ in out if pred is None)
@@ -1098,6 +1241,28 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
 
 
 # ------------------------------------------------------------------ main
+def show_trusted(results):
+    """The trusted-accuracy table, for every system with a stripped twin.
+
+    Printed for people; collect_results.py recomputes the same numbers from
+    the confusion matrices of the rows above through the same function, so
+    the log and the web UI cannot disagree.
+    """
+    pairs = [k for k in results
+             if not k.endswith(trusted.STRIPPED_SUFFIX)
+             and k + trusted.STRIPPED_SUFFIX in results]
+    if not pairs:
+        return
+    print("\nTRUSTED ACCURACY   A = a_full - max(0, a_stripped - 0.5)")
+    print("  %-12s %8s %11s %8s" % ("system", "a_full", "a_stripped", "A"))
+    for k in pairs:
+        af = metrics(results[k])["acc"]
+        ast = metrics(results[k + trusted.STRIPPED_SUFFIX])["acc"]
+        print("  %-12s %7.1f%% %10.1f%% %7.1f%%"
+              % (k, af * 100, ast * 100,
+                 trusted.trusted_accuracy(af, ast) * 100))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -1132,11 +1297,25 @@ def main():
                     help="context window for the KB-building prompts. Ollama "
                          "truncates an over-long prompt from the front, which "
                          "silently removes the instructions")
+    ap.add_argument("--stripped", action="store_true",
+                    help="the content-deletion test: score every system a "
+                         "second time on a copy of these same calls with the "
+                         "content words deleted, built in memory. Systems that "
+                         "learn from the data are trained on the ORIGINAL text "
+                         "only and score both copies of each held-out call; "
+                         "the rest are simply run on the stripped text. Adds a "
+                         "trusted-accuracy table. See scripts/trusted.py")
     args = ap.parse_args()
 
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
+    # suffix of a system's row on the stripped twin, e.g. "bow__stripped"
+    S = trusted.STRIPPED_SUFFIX
     print("Reading %s ..." % args.csv, flush=True)
-    data = load_combined(args.csv, limit=args.limit)
+    if args.stripped:
+        print("  content-deletion test on", flush=True)
+        data, data_s = load_paired(args.csv, args.limit)
+    else:
+        data, data_s = load_combined(args.csv, limit=args.limit), None
     n_fraud = sum(1 for _, l in data if l == "Fraud")
 
     print("=" * 74)
@@ -1144,6 +1323,13 @@ def main():
           (len(data), n_fraud, len(data) - n_fraud))
     print("  source: %s" % args.csv)
     print("  LLM max_tokens: %d" % args.max_tokens)
+    if data_s is not None:
+        print("  stripped copy: built in memory from this dataset")
+        print("  Every system is scored on both copies, so each LLM system")
+        print("  makes TWO passes over the dataset and takes twice as long.")
+        print("  Learning systems are")
+        print("  trained on the original text only; a <system>__stripped row is")
+        print("  that same model scoring the stripped copy of each call.")
     print("  Compare every LLM system against the trivial baselines below.")
     print("  If length or bag-of-words matches the LLM systems, the dataset is")
     print("  separable without understanding scams, and the comparison is")
@@ -1163,17 +1349,34 @@ def main():
         print("  length-only ...", flush=True)
         results["length"] = trivial_length(data)
         show("length-only (>45 words)", metrics(results["length"]))
+        if data_s is not None:
+            # a fixed threshold learns nothing, so it is simply re-applied
+            results["length" + S] = trivial_length(data_s)
+            show("length" + S, metrics(results["length" + S]))
     if "bow" not in skip:
         print("  bag-of-words: %d-fold TF-IDF + logistic regression over %d calls ..."
               % (args.folds, len(data)), flush=True)
-        bow = trivial_bow(data, folds=args.folds, show_features=args.bow_features)
+        if data_s is None:
+            bow = trivial_bow(data, folds=args.folds,
+                              show_features=args.bow_features)
+            bow_s = None
+        else:
+            bow, bow_s = trivial_bow_paired(data, data_s, folds=args.folds)
+            if bow and args.bow_features:
+                _bow_top_features([t for t, _ in data],
+                                  [1 if l == "Fraud" else 0 for _, l in data])
         if bow:
             results["bow"] = bow
             show("bag-of-words (TF-IDF+LR)", metrics(bow))
+        if bow_s:
+            results["bow" + S] = bow_s
+            show("bow" + S, metrics(bow_s))
 
     if args.trivial_only:
         print("\n--trivial-only: stopping before the LLM systems.")
-        _save(results, data, reasons, raw_log, args.debug)
+        if data_s is not None:
+            show_trusted(results)
+        _save(results, data, reasons, raw_log, args.debug, data_s)
         return
 
     if "llm_only" not in skip:
@@ -1184,6 +1387,14 @@ def main():
          reasons["llm_only"]) = run_llm_only(data, args.max_tokens, args.debug)
         show("LLM-only", metrics(results["llm_only"]))
         print("    (%.0fs)" % (time.time() - t0))
+        if data_s is not None:
+            t0 = time.time()
+            print("    stripped copy, %d calls ..." % len(data_s), flush=True)
+            (results["llm_only" + S], raw_log["llm_only" + S],
+             reasons["llm_only" + S]) = run_llm_only(
+                data_s, args.max_tokens, args.debug, " (stripped)")
+            show("llm_only" + S, metrics(results["llm_only" + S]))
+            print("    (%.0fs)" % (time.time() - t0))
 
     if "singh" not in skip:
         print("\nSingh baseline (policy compliance):")
@@ -1193,6 +1404,14 @@ def main():
          reasons["singh"]) = run_singh(data, args.max_tokens, args.debug)
         show("Singh baseline", metrics(results["singh"]))
         print("    (%.0fs)" % (time.time() - t0))
+        if data_s is not None:
+            t0 = time.time()
+            print("    stripped copy, %d calls ..." % len(data_s), flush=True)
+            (results["singh" + S], raw_log["singh" + S],
+             reasons["singh" + S]) = run_singh(
+                data_s, args.max_tokens, args.debug, " (stripped)")
+            show("singh" + S, metrics(results["singh" + S]))
+            print("    (%.0fs)" % (time.time() - t0))
 
     if "webrag" not in skip:
         print("\nWeb-RAG system (KB-only):")
@@ -1202,6 +1421,13 @@ def main():
          reasons["webrag"]) = run_webrag(data, args.debug)
         show("Web-RAG (KB-only)", metrics(results["webrag"]))
         print("    (%.0fs)" % (time.time() - t0))
+        if data_s is not None:
+            t0 = time.time()
+            print("    stripped copy, %d calls ..." % len(data_s), flush=True)
+            (results["webrag" + S], raw_log["webrag" + S],
+             reasons["webrag" + S]) = run_webrag(data_s, args.debug, " (stripped)")
+            show("webrag" + S, metrics(results["webrag" + S]))
+            print("    (%.0fs)" % (time.time() - t0))
 
     if "qwen_kb" not in skip:
         print("\nQwen-KB baseline (patterns learned from a training split):")
@@ -1228,6 +1454,23 @@ def main():
                 json.dump(qwen_patterns, f, indent=2)
             print("    learned KB: %s" % pattern_out)
         print("    (%.0fs)" % (time.time() - t0))
+        if data_s is not None and "qwen_kb" in results:
+            # same folds, same learned patterns (cached per fold); only the
+            # held-out calls are swapped for their stripped twins
+            t0 = time.time()
+            print("    stripped copy: KB learned from original text, held-out "
+                  "calls stripped", flush=True)
+            try:
+                (results["qwen_kb" + S], raw_log["qwen_kb" + S],
+                 reasons["qwen_kb" + S], _) = run_qwen_kb(
+                    data, args.qwen_folds or args.folds, args.qwen_max_examples,
+                    args.qwen_patterns, args.max_tokens, args.debug,
+                    args.qwen_train_csv, args.qwen_num_ctx, judge_data=data_s)
+            except RuntimeError as exc:
+                print("    SKIPPED stripped copy: %s" % exc)
+            else:
+                show("qwen_kb" + S, metrics(results["qwen_kb" + S]))
+            print("    (%.0fs)" % (time.time() - t0))
 
     if "hybrid" not in skip:
         print("\nHybrid baseline (Web-RAG pipeline over web + learned KB):")
@@ -1251,22 +1494,44 @@ def main():
                 json.dump(hybrid_patterns, f, indent=2)
             print("    learned half of the KB: %s" % pattern_out)
         print("    (%.0fs)" % (time.time() - t0))
+        if data_s is not None and "hybrid" in results:
+            t0 = time.time()
+            print("    stripped copy: KB learned from original text, held-out "
+                  "calls stripped", flush=True)
+            try:
+                (results["hybrid" + S], raw_log["hybrid" + S],
+                 reasons["hybrid" + S], _) = run_hybrid(
+                    data, args.qwen_folds or args.folds, args.qwen_max_examples,
+                    args.qwen_patterns, args.debug, args.qwen_train_csv,
+                    args.qwen_num_ctx, judge_data=data_s)
+            except RuntimeError as exc:
+                print("    SKIPPED stripped copy: %s" % exc)
+            else:
+                show("hybrid" + S, metrics(results["hybrid" + S]))
+            print("    (%.0fs)" % (time.time() - t0))
 
     print("\n" + "=" * 74)
     print("SUMMARY")
     print("=" * 74)
     for k in results:
-        show(k, metrics(results[k]))
+        if not k.endswith(S):
+            show(k, metrics(results[k]))
+    if data_s is not None:
+        print("\nSTRIPPED COPY (trained on original text, scored on stripped)")
+        for k in results:
+            if k.endswith(S):
+                show(k, metrics(results[k]))
+        show_trusted(results)
     # Any prompt that did not fit its context window, named by the system that
     # sent it. Printed last because it invalidates the table above it: Ollama
     # truncates from the front, so those rows are verdicts on a transcript
     # whose instructions were cut off.
     import ollama_ctx
     ollama_ctx.report(sys.stdout)
-    _save(results, data, reasons, raw_log, args.debug)
+    _save(results, data, reasons, raw_log, args.debug, data_s)
 
 
-def _save(results, data, reasons=None, raw_log=None, debug=False):
+def _save(results, data, reasons=None, raw_log=None, debug=False, data_s=None):
     if not results:
         return
     reasons = reasons or {}
@@ -1276,6 +1541,9 @@ def _save(results, data, reasons=None, raw_log=None, debug=False):
     # contributes no _why column rather than an empty one. The web UI keys off
     # the _why suffix, so it is part of the interface, not just a name.
     header = ["idx", "true", "text"]
+    if data_s is not None:
+        # the web UI treats text_stripped as text, not as a verdict
+        header.append("text_stripped")
     for k in keys:
         header.append(k)
         if k in reasons:
@@ -1287,6 +1555,8 @@ def _save(results, data, reasons=None, raw_log=None, debug=False):
         for i in range(len(data)):
             true = results[keys[0]][i][1]
             row = [i, true, data[i][0].replace("\n", " ")[:400]]
+            if data_s is not None:
+                row.append(data_s[i][0].replace("\n", " ")[:400])
             for k in keys:
                 row.append(results[k][i][0])
                 if k in reasons:

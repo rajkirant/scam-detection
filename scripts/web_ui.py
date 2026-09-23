@@ -11,15 +11,24 @@ run_all.sh itself - the shell script stays the single source of truth for
 what a baseline actually does, which model gets unloaded before BERT, and
 how the results table is built.
 
-Two pages:
+Five pages:
 
   Benchmark   the form above, the output of a run, its results table and its
               prediction for every call.
-  BERT + MCQ  fine-tune a BERT on one of the datasets and keep the
-              checkpoint, then put knowledge/mcq_ontology.json to it one
-              transcript at a time - the same question set the mcq baseline
-              puts to the LLM, answered instead by a model trained on this
-              data. scripts/bert_mcq.py does the work; this is its front end.
+  BERT        fine-tune a BERT on one of the datasets and keep the
+              checkpoint, then put a transcript to it and get back the
+              probability that the call is a scam. Long calls are scored in
+              windows, because BERT reads 512 tokens at most.
+              scripts/bert_classify.py does the work; this is its front end.
+  Bag of words  TF-IDF into a logistic regression, fitted in about a second
+              and readable back exactly - the control the other two are
+              measured against. scripts/bow_classify.py does the work.
+  Length only the floor: count the words, compare to one number, call it.
+              Nothing in the call is read. scripts/length_classify.py does
+              the work, and whatever a model beats it by is the whole of
+              what that model is worth.
+  LLM judge   one transcript to the local LLM, scam or not, with its reason.
+              scripts/llm_judge.py does the work.
 
 Over SSH, forward the port rather than binding to 0.0.0.0:
 
@@ -57,14 +66,15 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # the two baselines that never call an LLM must not ask for a model.
 BASELINES = [
     ("all",      "all",                   "every system below, in one run",       True),
-    ("trivial",  "length + bag-of-words", "trivial references, no LLM",           False),
+    ("length",   "Length only",           "word count against one threshold, no LLM", False),
+    ("bow",      "Bag of words",          "TF-IDF into logistic regression, no LLM", False),
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
-    ("mcq",      "MCQ ontology",          "mcq_ontology.json, 2 calls per transcript", True),
+    ("mcq",      "BERT ontology",          "mcq_ontology.json, 2 calls per transcript", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
 MODELS = ["qwen2.5:14b", "llama3.1:8b"]
@@ -433,6 +443,8 @@ def start_run(form):
     valid_ds = {d["path"] for d in datasets()}
     if ds not in valid_ds:
         raise ValueError("unknown dataset")
+    want_stripped = bool(form.get("stripped"))
+    stripped = ""
     known = {b[0]: b for b in BASELINES}
     bad = [b for b in picked if b not in known]
     if bad:
@@ -444,6 +456,13 @@ def start_run(form):
     baselines = [b[0] for b in BASELINES if b[0] in set(picked)]
     if not LIMIT_RE.match(limit):
         raise ValueError("limit must be a whole number, id:<value>, or idx:<n>")
+    if want_stripped:
+        # No twin file to find and none to get wrong: the stripped copy is
+        # built from this same dataset, so every dataset can be tested.
+        stripped = ds
+        if limit.startswith(("id:", "idx:")):
+            raise ValueError("the content-deletion test scores every held-out "
+                             "call twice; it cannot run on a single transcript")
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
     if any(known[b][3] for b in baselines):
@@ -467,6 +486,10 @@ def start_run(form):
              "--limit", limit]
     if model:
         flags += ["--model", model]
+    if stripped:
+        # run_all.sh resolves the twin the same way; the path above is only
+        # so this server can refuse a bad pair before starting anything
+        flags.append("--stripped")
 
     # $1 is the script and "${@:2}" the flags, so nothing here is re-parsed as
     # shell syntax. The marker records the exit status in the log itself.
@@ -496,7 +519,8 @@ def start_run(form):
 
     meta = {"id": run_id, "pid": proc.pid, "dataset": ds,
             "baseline": ",".join(baselines), "baselines": baselines,
-            "limit": limit, "model": model, "started": time.time()}
+            "limit": limit, "model": model, "started": time.time(),
+            "stripped": stripped}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -782,21 +806,22 @@ def csv_page(run_id, name, offset, limit):
             "offset": offset, "total": total}
 
 
-# --------------------------------------------------------------- BERT + MCQ
+# ---------------------------------------------------------------------- BERT
 # The second page. Fine-tune a BERT on one of the datasets, keep the
-# checkpoint, then make that checkpoint answer knowledge/mcq_ontology.json for
-# a single transcript - the same question set the mcq baseline puts to the LLM,
-# put instead to a model trained on this data.
+# checkpoint, then put a transcript to it and get back the one thing training
+# actually fits: the probability that this call is a scam.
 #
-# bert_mcq is imported rather than shelled out to for the cheap questions -
-# listing checkpoints, reading the ontology. Its module level is standard
-# library only (torch and transformers are imported inside the functions that
-# need them), so this server still starts on a machine with neither installed.
-import bert_mcq
+# bert_classify is imported rather than shelled out to for the cheap questions
+# - listing checkpoints. Its module level is standard library only (torch and
+# transformers are imported inside the functions that need them), so this
+# server still starts on a machine with neither installed.
+import bert_classify
 
-MCQ_SCRIPT = PROJECT_DIR / "scripts" / "bert_mcq.py"
+BERT_SCRIPT = PROJECT_DIR / "scripts" / "bert_classify.py"
+BOW_SCRIPT = PROJECT_DIR / "scripts" / "bow_classify.py"
+LENGTH_SCRIPT = PROJECT_DIR / "scripts" / "length_classify.py"
 MODELS_DIR = PROJECT_DIR / "models"
-MCQ_NAME_RE = bert_mcq.NAME_RE
+BERT_NAME_RE = bert_classify.NAME_RE
 
 # What training can start from. Any model on the Hub works from the command
 # line; the menu offers the four worth comparing that fit on one GPU.
@@ -808,7 +833,8 @@ BASE_MODELS = [
 ]
 
 # Bounds on the training form. Each is (flag, cast, low, high, default) and the
-# defaults are bert_mcq.py's own, repeated here only so the form can show them.
+# defaults are bert_classify.py's own, repeated here only so the form can
+# show them.
 TRAIN_FIELDS = {
     "epochs":     ("--epochs", int, 1, 20, 4),
     "batch_size": ("--batch-size", int, 1, 64, 8),
@@ -820,12 +846,14 @@ TRAIN_FIELDS = {
 }
 # The same idea for the answering side. These change how options are matched,
 # so changing one restarts the answerer.
+# The same idea for the scoring side. BERT reads 512 tokens at most and these
+# checkpoints are trained at 256 - about 180 words - so a long call is cut
+# into windows of that size and every one is scored. Changing any of these
+# restarts the worker.
 ANSWER_FIELDS = {
-    "window":         ("--window", int, 10, 400, 45),
-    "stride":         ("--stride", int, 5, 400, 15),
-    "max_length":     ("--max-length", int, 64, 512, 256),
-    "min_confidence": ("--min-confidence", float, 0.0, 0.95, 0.30),
-    "min_margin":     ("--min-margin", float, 0.0, 0.95, 0.04),
+    "window":     ("--window", int, 20, 400, 180),
+    "stride":     ("--stride", int, 10, 400, 90),
+    "max_length": ("--max-length", int, 64, 512, 256),
 }
 
 # How long an answerer sits in memory with nothing asked of it before it is
@@ -868,25 +896,30 @@ def numeric(form, fields, key):
 
 
 class Answerer:
-    """One `bert_mcq.py serve` process, kept alive between questions.
+    """One model-serving subprocess, kept alive between questions.
 
     Loading a checkpoint takes seconds and answering it takes a fraction of
     one, so the model stays in memory between clicks rather than being loaded
     per question. It answers on the CPU unless the page asks otherwise: a
     benchmark run wants the whole GPU, and this page is meant to stay usable
     while one is going.
+
+    The script is a parameter because the BERT page and the bag-of-words page
+    speak the same one-JSON-line-per-request protocol to different programs.
     """
 
-    def __init__(self, name, opts):
+    def __init__(self, name, opts, script=None, log="worker.log"):
         self.name, self.opts = name, opts
+        self.script = str(script or BERT_SCRIPT)
+        self.log = log
         self.lock = threading.Lock()
         self.last = time.time()
         self.lines = queue.Queue()
         RUNS_DIR.mkdir(parents=True, exist_ok=True)
         # transformers writes progress bars and load reports to stderr; they
         # go to a file so they neither fill the pipe nor reach the replies
-        self.errlog = open(RUNS_DIR / "mcq_worker.log", "ab", buffering=0)
-        argv = ([venv_python(), "-u", str(MCQ_SCRIPT), "serve", "--name", name]
+        self.errlog = open(RUNS_DIR / log, "ab", buffering=0)
+        argv = ([venv_python(), "-u", self.script, "serve", "--name", name]
                 + opts)
         self.proc = subprocess.Popen(
             argv, cwd=str(PROJECT_DIR), stdin=subprocess.PIPE,
@@ -914,10 +947,10 @@ class Answerer:
             line = self.lines.get(timeout=timeout)
         except queue.Empty:
             raise ValueError("the answerer has not replied in %ds - see "
-                             "results/logs/web/mcq_worker.log" % timeout)
+                             "results/logs/web/%s" % (timeout, self.log))
         if not line.strip():
             raise ValueError("the answerer stopped - see "
-                             "results/logs/web/mcq_worker.log")
+                             "results/logs/web/" + self.log)
         try:
             return json.loads(line)
         except ValueError:
@@ -955,64 +988,85 @@ class Answerer:
 
 # One answerer at a time. Two would be two copies of BERT in memory for no
 # gain: the page only ever asks about the model that is selected.
-WORKER = None
-WORKER_LOCK = threading.Lock()
+class Slot:
+    """One held-open worker, and the lock that guards swapping it.
+
+    There is one of these per page rather than one for the whole server: a
+    bag-of-words model is a few hundred kilobytes, and making it evict a
+    half-gigabyte BERT checkpoint - or the other way round - every time
+    someone switches tab would be a reload nobody asked for.
+    """
+
+    def __init__(self, script, log):
+        self.script, self.log = script, log
+        self.worker = None
+        self.lock = threading.Lock()
+
+    def for_model(self, name, opts):
+        """The live worker for that model, started - or restarted - if the
+        model or the settings it was loaded with have changed."""
+        with self.lock:
+            w = self.worker
+            if w is not None and (w.name != name or w.opts != opts
+                                  or w.proc.poll() is not None):
+                w.close()
+                self.worker = None
+            if self.worker is None:
+                self.worker = Answerer(name, opts, self.script, self.log)
+            return self.worker
+
+    def unload(self):
+        with self.lock:
+            if self.worker is None:
+                return {"unloaded": False, "note": "nothing was loaded"}
+            name = self.worker.name
+            self.worker.close()
+            self.worker = None
+            return {"unloaded": True, "model": name}
+
+    def state(self):
+        w = self.worker
+        if w is None or w.proc.poll() is not None:
+            return {"loaded": False}
+        return {"loaded": True, "model": w.name, "device": w.device,
+                "idle_s": int(time.time() - w.last), "idle_limit": WORKER_IDLE}
+
+    def reap(self):
+        if self.worker is not None and time.time() - self.worker.last > WORKER_IDLE:
+            self.unload()
+
+
+BERT_SLOT = Slot(BERT_SCRIPT, "bert_worker.log")
+BOW_SLOT = Slot(BOW_SCRIPT, "bow_worker.log")
+LENGTH_SLOT = Slot(LENGTH_SCRIPT, "length_worker.log")
+SLOTS = (BERT_SLOT, BOW_SLOT, LENGTH_SLOT)
 
 
 def answerer_for(name, opts):
-    """The live answerer for that checkpoint, started - or restarted - if the
-    model or the settings it was loaded with have changed."""
-    global WORKER
-    with WORKER_LOCK:
-        if WORKER is not None and (WORKER.name != name or WORKER.opts != opts
-                                   or WORKER.proc.poll() is not None):
-            WORKER.close()
-            WORKER = None
-        if WORKER is None:
-            WORKER = Answerer(name, opts)
-        return WORKER
+    return BERT_SLOT.for_model(name, opts)
 
 
 def unload_answerer():
-    global WORKER
-    with WORKER_LOCK:
-        if WORKER is None:
-            return {"unloaded": False, "note": "nothing was loaded"}
-        name = WORKER.name
-        WORKER.close()
-        WORKER = None
-        return {"unloaded": True, "model": name}
+    return BERT_SLOT.unload()
 
 
 def worker_state():
-    w = WORKER
-    if w is None or w.proc.poll() is not None:
-        return {"loaded": False}
-    return {"loaded": True, "model": w.name, "device": w.device,
-            "idle_s": int(time.time() - w.last), "idle_limit": WORKER_IDLE}
+    return BERT_SLOT.state()
 
 
 def worker_reaper():
     while True:
         time.sleep(30)
-        w = WORKER
-        if w is not None and time.time() - w.last > WORKER_IDLE:
-            unload_answerer()
+        for slot in SLOTS:
+            slot.reap()
 
 
-def mcq_config():
-    """Everything the BERT + MCQ page needs to draw itself once."""
-    onto = bert_mcq.load_ontology()
+def bert_config():
+    """Everything the BERT page needs to draw itself once."""
     return {
         "datasets": datasets(),
         "bases": [{"id": k, "note": n} for k, n in BASE_MODELS],
-        "models": bert_mcq.list_models(),
-        "branches": [{"id": o["id"], "text": o.get("text", ""),
-                      "questions": len(o.get("questions", []))}
-                     for o in onto["options"]],
-        "ontology": {"prompt": onto.get("prompt", ""),
-                     "bands": onto.get("bands"),
-                     "scoring": onto.get("scoring")},
+        "models": bert_classify.list_models(),
         "defaults": {k: v[4] for k, v in
                      list(TRAIN_FIELDS.items()) + list(ANSWER_FIELDS.items())},
         "worker": worker_state(),
@@ -1062,10 +1116,10 @@ def dataset_row(path, idx):
             "dataset": path}
 
 
-def mcq_answer(form):
-    """Put the ontology to one checkpoint for one transcript."""
+def bert_verdict(form):
+    """Put one transcript to one checkpoint."""
     name = str(form.get("model", "")).strip()
-    if not MCQ_NAME_RE.match(name):
+    if not BERT_NAME_RE.match(name):
         raise ValueError("pick a trained model first")
     if not (MODELS_DIR / name / "config.json").exists():
         raise ValueError("models/%s is not a trained checkpoint" % name)
@@ -1075,43 +1129,352 @@ def mcq_answer(form):
     if len(text) > 400_000:
         raise ValueError("that is longer than any call in the datasets - "
                          "paste one call, not a whole file")
-    branch = str(form.get("branch") or "auto")
-    try:
-        cutoff = float(form.get("cutoff") or 0.0)
-    except (TypeError, ValueError):
-        raise ValueError("the scam cut-off must be a number")
+    threshold = numeric(form, {"threshold": ("threshold", float, 0.0, 1.0,
+                                             None)}, "threshold")
 
     opts = []
     for key in ANSWER_FIELDS:
         val = numeric(form, ANSWER_FIELDS, key)
         if val is not None:
             opts += [ANSWER_FIELDS[key][0], str(val)]
+    aggregate = str(form.get("aggregate") or "max")
+    if aggregate not in ("max", "mean"):
+        raise ValueError("aggregate must be max or mean")
     if form.get("gpu"):
         # the one thing that would actually fight a benchmark for VRAM
         if any(r["status"] == "running" for r in all_runs()):
-            raise ValueError("a run is going, and answering on the GPU would "
-                             "fight it for VRAM. Untick \"answer on the GPU\", "
+            raise ValueError("a run is going, and scoring on the GPU would "
+                             "fight it for VRAM. Untick \"score on the GPU\", "
                              "or stop the run first.")
         opts.append("--gpu")
-    # The comparison the thesis wants: the same questions matched in the
-    # checkpoint's own hidden states rather than in a sentence-similarity
-    # space. Worth running once to see the difference; not the default,
-    # because a binary classification objective never built a space that can
-    # tell one option from another.
-    if form.get("self_encoder"):
-        opts += ["--encoder", "self"]
-    if form.get("raw_text"):
-        opts.append("--raw")
 
+    # aggregate, threshold and strip_tags ride with the request rather than
+    # the worker's argv: they change what is done with the window scores, not
+    # how the model reads, and a toggle should not cost a model reload.
     out = answerer_for(name, opts).ask(
-        {"transcript": text, "branch": branch, "cutoff": cutoff})
+        {"transcript": text, "threshold": threshold, "aggregate": aggregate,
+         "strip_tags": bool(form.get("strip_tags"))})
     if not out.get("ok"):
-        raise ValueError(out.get("error") or "the answerer could not answer that")
+        raise ValueError(out.get("error") or "the model could not score that")
     return out
 
 
+# -------------------------------------------------------------- Bag of words
+# The third page, and the control the other two are measured against. Same
+# shape as the BERT page on purpose: train a model on a dataset, keep it, put
+# a transcript to it, get a probability. TF-IDF over unigrams and bigrams into
+# a logistic regression - the same vectoriser and classifier the `bow`
+# baseline cross-validates on the Benchmark page.
+#
+# It trains in about a second and it can be read back exactly, which is the
+# reason it earns a page rather than a row in a table: if it scores near a
+# fine-tuned BERT, the dataset is separable on vocabulary and neither number
+# is about understanding scams.
+import bow_classify
+
+BOW_TRAIN_FIELDS = {
+    "ngram_max": ("--ngram-max", int, 1, 3, 2),
+    "min_df":    ("--min-df", int, 1, 50, 2),
+    "holdout":   ("--holdout", float, 0.0, 0.5, 0.2),
+    "seed":      ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":     ("--limit", int, 0, 100000, 0),
+}
+
+
+def bow_config():
+    """Everything the Bag of words page needs to draw itself once."""
+    return {
+        "datasets": datasets(),
+        "models": bow_classify.list_models(),
+        "defaults": {k: v[4] for k, v in BOW_TRAIN_FIELDS.items()},
+        "worker": BOW_SLOT.state(),
+    }
+
+
+def bow_verdict(form):
+    """Put one transcript to one bag-of-words model."""
+    name = str(form.get("model", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("pick a trained model first")
+    if not (MODELS_DIR / name / bow_classify.MODEL_FILE).exists():
+        raise ValueError("models/%s is not a bag-of-words model" % name)
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("paste a transcript, or load one from a dataset")
+    if len(text) > 400_000:
+        raise ValueError("that is longer than any call in the datasets - "
+                         "paste one call, not a whole file")
+    threshold = numeric(form, {"threshold": ("threshold", float, 0.0, 1.0,
+                                             None)}, "threshold")
+    top = numeric(form, {"top": ("top", int, 3, 50, None)}, "top")
+
+    # Nothing here changes how the model reads, so it all rides with the
+    # request and no toggle costs a reload.
+    out = BOW_SLOT.for_model(name, []).ask(
+        {"transcript": text, "threshold": threshold, "top": top,
+         "strip_tags": bool(form.get("strip_tags"))})
+    if not out.get("ok"):
+        raise ValueError(out.get("error") or "the model could not score that")
+    return out
+
+
+def remove_bow_model(name):
+    name = (name or "").strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("bad model name")
+    d = MODELS_DIR / name
+    if not (d / bow_classify.MODEL_FILE).exists():
+        raise ValueError("no such bag-of-words model: %s" % name)
+    for slot in SLOTS:
+        if slot.worker is not None and slot.worker.name == name:
+            slot.unload()
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_bow_train_run(form):
+    """Fit a bag-of-words model. Detached and logged like every other run.
+
+    It finishes in about a second, so unlike BERT training it does not take
+    the run lock - there is nothing for it to fight a benchmark over. No GPU,
+    no VRAM, no epochs.
+    """
+    name = str(form.get("name", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("a name is letters, digits, dot, dash or underscore")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick replace" % name)
+
+    flags = ["train", "--csv", ds, "--name", name]
+    for key, (flag, _c, _lo, _hi, _d) in BOW_TRAIN_FIELDS.items():
+        val = numeric(form, BOW_TRAIN_FIELDS, key)
+        if val is None or (key == "limit" and not val):
+            continue
+        flags += [flag, str(val)]
+    if form.get("strip_tags"):
+        flags.append("--strip-tags")
+    if overwrite:
+        flags.append("--overwrite")
+        for slot in SLOTS:
+            if slot.worker is not None and slot.worker.name == name:
+                slot.unload()
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_bow_" + name
+    log = run_path(run_id, "log")
+
+    # The same venv preamble start_train_run uses, for the same reason:
+    # run_all.sh is not involved, and the server's own python is not the one
+    # with sklearn on it.
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "fit() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> fit\\n"',
+        '  "$PY" -u scripts/bow_classify.py ' + quoted
+        + ' || { printf "  fail fit\\n"; return 1; }',
+        '  printf "  ok fit\\n"',
+        "}", "fit",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/bow_classify.py " + quoted
+                   + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "bow_train",
+            "model_name": name, "label": "fit bag of words \u00b7 " + name,
+            "dataset": ds, "baseline": "bow:" + name, "limit": "-",
+            "model": "tfidf+logreg", "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
+# --------------------------------------------------------------- Length only
+# The fourth page, and the floor. Count the words, compare the count to one
+# number, call it. Nothing in the call is read - not a word of it - so
+# whatever BERT or the bag of words beats this by is the whole of what those
+# models are worth on that dataset.
+#
+# It is the `length` baseline on the Benchmark page, given a page of its own
+# because the number it produces is not the interesting part: the interesting
+# parts are which direction the rule has to point (on two of the datasets
+# here the scam calls are the SHORTER ones, the opposite of what
+# combined_evaluate's threshold of 45 assumes) and how flat the sweep curve
+# is around the chosen threshold.
+import length_classify
+
+LENGTH_TRAIN_FIELDS = {
+    "threshold": ("--threshold", int, 1, 200000, None),
+    "holdout":   ("--holdout", float, 0.0, 0.5, 0.2),
+    "seed":      ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":     ("--limit", int, 0, 100000, 0),
+}
+
+
+def length_config():
+    """Everything the Length only page needs to draw itself once."""
+    return {
+        "datasets": datasets(),
+        "models": length_classify.list_models(),
+        "defaults": {k: v[4] for k, v in LENGTH_TRAIN_FIELDS.items()},
+        "benchmark_threshold": length_classify.BENCHMARK_THRESHOLD,
+        "worker": LENGTH_SLOT.state(),
+    }
+
+
+def length_verdict(form):
+    """Put one transcript to one length-only model."""
+    name = str(form.get("model", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("pick a fitted model first")
+    if not (MODELS_DIR / name / length_classify.MODEL_FILE).exists():
+        raise ValueError("models/%s is not a length-only model" % name)
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("paste a transcript, or load one from a dataset")
+    if len(text) > 400_000:
+        raise ValueError("that is longer than any call in the datasets - "
+                         "paste one call, not a whole file")
+    threshold = numeric(form, {"threshold": ("threshold", int, 1, 200000,
+                                             None)}, "threshold")
+    direction = str(form.get("direction") or "").strip()
+    if direction and direction not in (length_classify.LONGER,
+                                       length_classify.SHORTER):
+        raise ValueError("direction is 'longer' or 'shorter'")
+
+    out = LENGTH_SLOT.for_model(name, []).ask(
+        {"transcript": text, "threshold": threshold,
+         "direction": direction or None,
+         "strip_tags": bool(form.get("strip_tags"))})
+    if not out.get("ok"):
+        raise ValueError(out.get("error") or "the model could not score that")
+    return out
+
+
+def remove_length_model(name):
+    name = (name or "").strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("bad model name")
+    d = MODELS_DIR / name
+    if not (d / length_classify.MODEL_FILE).exists():
+        raise ValueError("no such length-only model: %s" % name)
+    for slot in SLOTS:
+        if slot.worker is not None and slot.worker.name == name:
+            slot.unload()
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_length_train_run(form):
+    """Fit a threshold. Detached and logged like every other run.
+
+    It is one sort of the fitting set, so it finishes faster than the page
+    can ask about it, and like the bag of words it does not take the run lock
+    - there is nothing for it to fight a benchmark over.
+    """
+    name = str(form.get("name", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("a name is letters, digits, dot, dash or underscore")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick replace" % name)
+
+    flags = ["fit", "--csv", ds, "--name", name]
+    pinned = bool(form.get("pin"))
+    for key, (flag, _c, _lo, _hi, _d) in LENGTH_TRAIN_FIELDS.items():
+        # the threshold rides only when the form asked for it to be pinned:
+        # sending it otherwise would turn every fit into a pinned one
+        if key == "threshold" and not pinned:
+            continue
+        val = numeric(form, LENGTH_TRAIN_FIELDS, key)
+        if val is None or (key == "limit" and not val):
+            continue
+        flags += [flag, str(val)]
+    if pinned and "--threshold" not in flags:
+        raise ValueError("pinning the threshold needs a number to pin it to")
+    if pinned:
+        flags += ["--direction", str(form.get("direction")
+                                     or length_classify.LONGER)]
+    metric = str(form.get("metric") or "f1")
+    if metric not in ("f1", "acc"):
+        raise ValueError("the sweep maximises f1 or acc")
+    flags += ["--metric", metric]
+    if form.get("strip_tags"):
+        flags.append("--strip-tags")
+    if overwrite:
+        flags.append("--overwrite")
+        for slot in SLOTS:
+            if slot.worker is not None and slot.worker.name == name:
+                slot.unload()
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_length_" + name
+    log = run_path(run_id, "log")
+
+    # The same venv preamble the other two fits use: run_all.sh is not
+    # involved, and the server's own python is not the one with pandas on it.
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "fit() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> fit\\n"',
+        '  "$PY" -u scripts/length_classify.py ' + quoted
+        + ' || { printf "  fail fit\\n"; return 1; }',
+        '  printf "  ok fit\\n"',
+        "}", "fit",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/length_classify.py " + quoted
+                   + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "length_train",
+            "model_name": name, "label": "fit length · " + name,
+            "dataset": ds, "baseline": "length:" + name, "limit": "-",
+            "model": "one threshold", "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
 # ---------------------------------------------------------------- LLM judge
-# The third page, and the simplest thing in the project: no retrieval, no
+# The last page, and the simplest thing in the project: no retrieval, no
 # ontology, no fine-tuned anything. The transcript goes to the local model,
 # which says Fraud or Normal and gives its reason. It is the llm_only control
 # from the Benchmark page asked one call at a time, using the same prompt and
@@ -1122,6 +1485,9 @@ def mcq_answer(form):
 # over plain HTTP, so this page works from the system python like the rest of
 # the server - no venv, no subprocess, nothing to keep alive between clicks.
 import llm_judge
+# Also standard library only, and for the same reason: it is the fitting side
+# of the same page, and this server starts without the venv.
+import llm_fit
 
 # (kwarg, cast, low, high, default) - the same shape numeric() reads for the
 # other two pages.
@@ -1130,6 +1496,24 @@ LLM_FIELDS = {
     "num_ctx":     ("num_ctx", int, 512, 131072, llm_judge.DEFAULT_NUM_CTX),
     "temperature": ("temperature", float, 0.0, 2.0, 0.0),
 }
+# The fitting side of the LLM page. Nothing here fine-tunes anything - the
+# weights Ollama is holding do not move and cannot be moved from here. What is
+# fitted is the prompt: worked examples drawn from a dataset, a rubric the
+# model writes from them, and the standing instructions box made durable. The
+# page says so in those words, because "trained" next to a page that really
+# does train a BERT would be a lie.
+#
+# The one thing that makes it worth doing rather than guessing is that fitting
+# scores the holdout twice, fitted and bare, so the run reports what the
+# prompt bought rather than just an accuracy.
+LLM_FIT_FIELDS = {
+    "shots":         ("--shots", int, 0, llm_fit.MAX_SHOTS, 4),
+    "shot_words":    ("--shot-words", int, 20, llm_fit.MAX_SHOT_WORDS, 120),
+    "holdout_calls": ("--holdout-calls", int, 0, 400, 20),
+    "seed":          ("--seed", int, 0, 2 ** 31 - 1, 42),
+    "limit":         ("--limit", int, 0, 100000, 0),
+}
+
 LLM_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]{0,120}$")
 LLM_TIMEOUT = 600
 # One generation at a time. Ollama will queue a second, but a 14B model is
@@ -1145,6 +1529,8 @@ def llm_config():
         "host": llm_judge.OLLAMA_HOST,
         "default_model": llm_judge.DEFAULT_MODEL,
         "defaults": {k: v[4] for k, v in LLM_FIELDS.items()},
+        "fit_defaults": {k: v[4] for k, v in LLM_FIT_FIELDS.items()},
+        "profiles": llm_fit.list_models(),
         "models": [],
     }
     # ollama being down is a normal state for this page to be in - the box may
@@ -1176,12 +1562,23 @@ def llm_verdict(form):
     if len(guidance) > llm_judge.MAX_GUIDANCE:
         raise ValueError("that is a lot of instructions - keep them under %d "
                          "characters" % llm_judge.MAX_GUIDANCE)
+    # A fitted prompt, if one is picked. "" means the bare llm_only control,
+    # which is the page's default and the only setting whose answer is
+    # comparable with a benchmark row.
+    profile = None
+    pname = str(form.get("profile") or "").strip()
+    if pname:
+        if not BERT_NAME_RE.match(pname):
+            raise ValueError("bad profile name")
+        if not (MODELS_DIR / pname / llm_fit.PROFILE_FILE).exists():
+            raise ValueError("models/%s is not a fitted prompt" % pname)
+        profile = llm_fit.load_profile(pname)
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     try:
         return llm_judge.judge(text, model=model, timeout=LLM_TIMEOUT,
-                               guidance=guidance, **kw)
+                               guidance=guidance, profile=profile, **kw)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -1192,13 +1589,14 @@ def remove_model(name):
     """Delete one checkpoint. Several hundred megabytes each, so the page asks
     first and this says exactly what went."""
     name = (name or "").strip()
-    if not MCQ_NAME_RE.match(name):
+    if not BERT_NAME_RE.match(name):
         raise ValueError("bad model name")
     d = MODELS_DIR / name
     if not d.is_dir() or d.resolve().parent != MODELS_DIR.resolve():
         raise ValueError("no such model: %s" % name)
-    if WORKER is not None and WORKER.name == name:
-        unload_answerer()           # cannot delete a checkpoint that is open
+    for slot in SLOTS:              # cannot delete a model that is open
+        if slot.worker is not None and slot.worker.name == name:
+            slot.unload()
     shutil.rmtree(d)
     return {"deleted": True, "id": name}
 
@@ -1207,7 +1605,7 @@ def start_train_run(form):
     """Fine-tune a checkpoint. Detached and logged like every other run, so it
     appears in Recent runs and can be stopped with the same button."""
     name = str(form.get("name", "")).strip()
-    if not MCQ_NAME_RE.match(name):
+    if not BERT_NAME_RE.match(name):
         raise ValueError("the model needs a name: letters, digits, dot, dash "
                          "or underscore, starting with a letter or digit")
     ds = form.get("dataset", "")
@@ -1237,8 +1635,9 @@ def start_train_run(form):
     if overwrite:
         flags.append("--overwrite")
         # the checkpoint is about to be rewritten underneath anything holding it
-        if WORKER is not None and WORKER.name == name:
-            unload_answerer()
+        for slot in SLOTS:
+            if slot.worker is not None and slot.worker.name == name:
+                slot.unload()
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime("%Y%m%d_%H%M%S") + "_train_" + name
@@ -1254,7 +1653,7 @@ def start_train_run(form):
         '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
         '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
         '  printf "\\n==> train\\n"',
-        '  "$PY" -u scripts/bert_mcq.py ' + quoted
+        '  "$PY" -u scripts/bert_classify.py ' + quoted
         + ' || { printf "  fail train\\n"; return 1; }',
         '  printf "  ok train\\n"',
         "}", "train",
@@ -1265,7 +1664,7 @@ def start_train_run(form):
     env["TERM"] = "dumb"
 
     with open(log, "wb") as out:
-        out.write(("$ python scripts/bert_mcq.py " + quoted + "\n\n").encode())
+        out.write(("$ python scripts/bert_classify.py " + quoted + "\n\n").encode())
         out.flush()
         proc = subprocess.Popen(
             [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
@@ -1328,6 +1727,10 @@ class Handler(BaseHTTPRequestHandler):
             # default - these two endpoints were the only ones carrying the
             # word "log", and the only ones that never arrived there. The old
             # paths stay as aliases so a page left open somewhere still works.
+            # Two names for one endpoint. The page must ask for /api/output:
+            # ad blockers and Edge tracking prevention block "/api/log" as a
+            # telemetry path, and a blocked poll leaves a run looking hung or
+            # failed. /api/log stays for anything already pointed at it.
             if u.path in ("/api/output", "/api/log"):
                 rid = q.get("id", [""])[0]
                 off = int(q.get("offset", ["0"])[0])
@@ -1351,18 +1754,34 @@ class Handler(BaseHTTPRequestHandler):
                     q.get("id", [""])[0], q.get("name", [""])[0],
                     int(q.get("offset", ["0"])[0]),
                     min(200, int(q.get("limit", ["50"])[0]))))
-            # ---- the BERT + MCQ page
-            if u.path == "/api/mcq/config":
-                return self._send(200, mcq_config())
-            if u.path == "/api/mcq/models":
-                return self._send(200, {"models": bert_mcq.list_models(),
+            # ---- the BERT page
+            if u.path == "/api/bert/config":
+                return self._send(200, bert_config())
+            if u.path == "/api/bert/models":
+                return self._send(200, {"models": bert_classify.list_models(),
                                         "worker": worker_state()})
-            if u.path == "/api/mcq/sample":
+            if u.path == "/api/dataset/sample":
                 return self._send(200, dataset_row(
                     q.get("dataset", [""])[0], int(q.get("idx", ["0"])[0])))
             if u.path == "/api/dataset/context":
                 return self._send(200,
                                   dataset_context(q.get("dataset", [""])[0]))
+            # ---- the Bag of words page
+            if u.path == "/api/bow/config":
+                return self._send(200, bow_config())
+            if u.path == "/api/bow/models":
+                return self._send(200, {"models": bow_classify.list_models(),
+                                        "worker": BOW_SLOT.state()})
+            if u.path == "/api/eval/result":
+                return self._send(200, eval_result(q.get("id", [""])[0]))
+            if u.path == "/api/llm/profiles":
+                return self._send(200, {"profiles": llm_fit.list_models()})
+            if u.path == "/api/length/config":
+                return self._send(200, length_config())
+            if u.path == "/api/length/models":
+                return self._send(200,
+                                  {"models": length_classify.list_models(),
+                                   "worker": LENGTH_SLOT.state()})
             # ---- the LLM judge page
             if u.path == "/api/llm/config":
                 return self._send(200, llm_config())
@@ -1398,28 +1817,394 @@ class Handler(BaseHTTPRequestHandler):
                        else delete_run(form.get("id", "")))
                 sys.stderr.write("deleted %s\n" % json.dumps(out))
                 return self._send(200, out)
-            # ---- the BERT + MCQ page
-            if u.path == "/api/mcq/train":
+            # ---- the BERT page
+            if u.path == "/api/bert/train":
                 meta = start_train_run(form)
                 sys.stderr.write("started %s  train %s on %s\n"
                                  % (meta["id"], meta["model"], meta["dataset"]))
                 return self._send(200, meta)
-            if u.path == "/api/mcq/answer":
-                return self._send(200, mcq_answer(form))
-            if u.path == "/api/mcq/unload":
+            if u.path == "/api/bert/classify":
+                return self._send(200, bert_verdict(form))
+            if u.path == "/api/bert/unload":
                 return self._send(200, unload_answerer())
-            if u.path == "/api/mcq/delete_model":
+            if u.path == "/api/bert/delete_model":
                 out = remove_model(form.get("name", ""))
                 sys.stderr.write("deleted checkpoint %s\n" % out["id"])
                 return self._send(200, out)
+            # ---- the Bag of words page
+            if u.path == "/api/bow/train":
+                meta = start_bow_train_run(form)
+                sys.stderr.write("started %s  fit bow %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/bow/classify":
+                return self._send(200, bow_verdict(form))
+            if u.path == "/api/bow/unload":
+                return self._send(200, BOW_SLOT.unload())
+            if u.path == "/api/bow/delete_model":
+                out = remove_bow_model(form.get("name", ""))
+                sys.stderr.write("deleted bow model %s\n" % out["id"])
+                return self._send(200, out)
+            # ---- the Length only page
+            if u.path == "/api/length/train":
+                meta = start_length_train_run(form)
+                sys.stderr.write("started %s  fit length %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/length/classify":
+                return self._send(200, length_verdict(form))
+            if u.path == "/api/length/unload":
+                return self._send(200, LENGTH_SLOT.unload())
+            if u.path == "/api/length/delete_model":
+                out = remove_length_model(form.get("name", ""))
+                sys.stderr.write("deleted length model %s\n" % out["id"])
+                return self._send(200, out)
+            # ---- scoring a whole dataset, from any of the four pages
+            if u.path.startswith("/api/") and u.path.endswith("/evaluate"):
+                page = u.path[len("/api/"):-len("/evaluate")]
+                meta = start_eval_run(page, form)
+                sys.stderr.write("started %s  score %s %s on %s\n"
+                                 % (meta["id"], page, meta["model_name"]
+                                    or "(bare)", meta["dataset"]))
+                return self._send(200, meta)
             # ---- the LLM judge page
             if u.path == "/api/llm/judge":
                 return self._send(200, llm_verdict(form))
+            if u.path == "/api/llm/fit":
+                meta = start_llm_fit_run(form)
+                sys.stderr.write("started %s  fit prompt %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
+            if u.path == "/api/llm/delete_profile":
+                out = remove_llm_profile(form.get("name", ""))
+                sys.stderr.write("deleted fitted prompt %s\n" % out["id"])
+                return self._send(200, out)
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
         except Exception as e:
             return self._send(500, {"error": str(e)})
+
+
+# ------------------------------------------------------- scoring a dataset
+# The fourth thing each model page can do, and the one that turns four toys
+# into four measurements: put a whole dataset to a fitted model and report the
+# confusion matrix.
+#
+# All four go out through the same shape - a detached run with a log, writing
+# a metrics JSON beside it - so the page code is one form and one card rather
+# than four, and the numbers from the four pages are computed by the same
+# function in eval_common and can be read side by side.
+#
+# What it is NOT is the Benchmark page. That cross-validates: every call is
+# predicted by a model that never saw it. This scores calls with one already
+# fitted model, so pointing a model at its own training set measures memory.
+# Every evaluate run says so when the two datasets match, and the page repeats
+# it on the card.
+EVAL_PAGES = {
+    # page id -> (script, subcommand flags builder)
+    "bert":   BERT_SCRIPT,
+    "bow":    BOW_SCRIPT,
+    "length": LENGTH_SCRIPT,
+    "llm":    PROJECT_DIR / "scripts" / "llm_fit.py",
+}
+
+EVAL_FIELDS = {
+    "limit":     ("--limit", int, 0, 100000, 0),
+    "threshold": ("--threshold", float, 0.0, 1.0, None),
+}
+
+
+def eval_result(run_id):
+    """The metrics a finished evaluate run wrote, or why there are none.
+
+    "Not ready" is three different things - still going, finished and wrote
+    nothing, crashed - and a page that cannot tell them apart can only say
+    "no output", which is what it said. So the reason and the tail of the run
+    come back with the answer, and the page prints them where the numbers
+    would have been rather than leaving someone to go and find a log.
+    """
+    run_id = checked_run_id(run_id)
+    path = run_path(run_id, "metrics.json")
+    meta = load_run(run_id)
+    status = (meta or {}).get("status")
+
+    if path.exists():
+        try:
+            out = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            return {"ready": False, "status": status,
+                    "why": "the results file is there but could not be read "
+                           "(%s)" % e, "tail": log_tail(run_id)}
+        out["ready"] = True
+        out["status"] = status
+        return out
+
+    if status == "running":
+        return {"ready": False, "status": status, "why": "still going"}
+    return {
+        "ready": False,
+        "status": status,
+        "why": ("the run stopped before it scored anything"
+                if status == "stopped" else
+                "the run ended without writing a score" if status == "done"
+                else "the run failed"),
+        "tail": log_tail(run_id),
+    }
+
+
+def log_tail(run_id, lines=30):
+    """The last few meaningful lines of a run's log.
+
+    Blank lines are dropped from the end: read_log strips the exit marker and
+    leaves its newlines behind, so a log shown scrolled to the bottom can be
+    all whitespace - which is exactly how a crash comes to look like no
+    output at all.
+    """
+    log = run_path(run_id, "log")
+    if not log.exists():
+        return ("(the run left no log at all - the process could not be "
+                "started, or something removed it)")
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return "(could not read the log: %s)" % e
+    text = ANSI.sub("", text)
+    text = re.sub(re.escape(EXIT_MARK) + r"\s+\d+\s*", "", text)
+    kept = [ln for ln in text.rstrip().split("\n")]
+    return "\n".join(kept[-lines:])
+
+
+def start_eval_run(page, form):
+    """Score a whole dataset with one fitted model, on any of the four pages.
+
+    Only the flags differ between pages; everything else - the detached run,
+    the log, the metrics file the page reads afterwards - is shared, because
+    a score that was computed differently per page could not be compared
+    across them, which is the entire point of having four of them.
+    """
+    script = EVAL_PAGES.get(page)
+    if script is None:
+        raise ValueError("unknown page")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+
+    name = str(form.get("model", "")).strip()
+    flags = ["evaluate", "--csv", ds]
+
+    if page == "llm":
+        # the LLM page's "model" is what ollama has pulled; the fitted prompt
+        # is a separate, optional thing
+        base = str(form.get("base_model") or llm_judge.DEFAULT_MODEL).strip()
+        if not LLM_MODEL_RE.match(base):
+            raise ValueError("%r is not a name ollama would accept" % base[:60])
+        flags += ["--model", base]
+        if name:
+            if not BERT_NAME_RE.match(name):
+                raise ValueError("bad profile name")
+            if not (MODELS_DIR / name / llm_fit.PROFILE_FILE).exists():
+                raise ValueError("models/%s is not a fitted prompt" % name)
+            flags += ["--profile", name]
+        for key in ("num_ctx", "max_tokens", "temperature"):
+            val = numeric(form, LLM_FIELDS, key)
+            if val is not None:
+                flags += ["--" + key.replace("_", "-"), str(val)]
+        running = [r for r in all_runs() if r["status"] == "running"]
+        if running:
+            raise ValueError("a run is already going (%s). Stop it first - "
+                             "this wants the model ollama is holding, and so "
+                             "does that." % running[0]["id"])
+    else:
+        if not BERT_NAME_RE.match(name):
+            raise ValueError("pick a fitted model first")
+        marker = {"bert": "config.json", "bow": bow_classify.MODEL_FILE,
+                  "length": length_classify.MODEL_FILE}[page]
+        if not (MODELS_DIR / name / marker).exists():
+            raise ValueError("models/%s is not a %s model" % (name, page))
+        flags += ["--name", name]
+        if form.get("strip_tags"):
+            flags.append("--strip-tags")
+
+    if page == "bert":
+        # a whole dataset through BERT is the one evaluate that wants the GPU,
+        # and the one that fights a benchmark for it
+        if form.get("gpu"):
+            flags.append("--gpu")
+        running = [r for r in all_runs() if r["status"] == "running"]
+        if running and form.get("gpu"):
+            raise ValueError("a run is already going (%s). Stop it first - "
+                             "the GPU cannot hold two." % running[0]["id"])
+
+    limit = numeric(form, EVAL_FIELDS, "limit")
+    if limit:
+        flags += ["--limit", str(limit)]
+    if page in ("bert", "bow"):
+        thr = numeric(form, EVAL_FIELDS, "threshold")
+        if thr is not None:
+            flags += ["--threshold", str(thr)]
+    if page == "length":
+        thr = numeric(form, {"threshold": ("threshold", int, 1, 200000, None)},
+                      "threshold")
+        if thr is not None:
+            flags += ["--threshold", str(thr)]
+        way = str(form.get("direction") or "").strip()
+        if way in (length_classify.LONGER, length_classify.SHORTER):
+            flags += ["--direction", way]
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = (time.strftime("%Y%m%d_%H%M%S") + "_eval_" + page + "_"
+              + (name or "bare"))
+    flags += ["--out", str(run_path(run_id, "metrics.json"))]
+
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    rel = script.relative_to(PROJECT_DIR).as_posix()
+    body = [
+        "score() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> score\\n"',
+        '  "$PY" -u %s ' % shlex.quote(rel) + quoted
+        + ' || { printf "  fail score\\n"; return 1; }',
+        '  printf "  ok score\\n"',
+        "}", "score",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    log = run_path(run_id, "log")
+    with open(log, "wb") as out:
+        out.write(("$ python %s %s\n\n" % (rel, quoted)).encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "eval",
+            "page": page, "model_name": name,
+            "label": "score %s · %s" % (page, name or "bare"),
+            "dataset": ds, "baseline": "%s:%s" % (page, name or "bare"),
+            "limit": str(limit or "-"), "model": name or page,
+            "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
+def remove_llm_profile(name):
+    name = (name or "").strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("bad profile name")
+    d = MODELS_DIR / name
+    if not (d / llm_fit.PROFILE_FILE).exists():
+        raise ValueError("no such fitted prompt: %s" % name)
+    shutil.rmtree(d)
+    return {"deleted": True, "id": name}
+
+
+def start_llm_fit_run(form):
+    """Fit a prompt. Detached and logged like every other run.
+
+    This one is not quick: it scores the holdout twice, so it is two LLM calls
+    per held-out call plus one for the rubric, and on a 14B model that is
+    minutes rather than seconds. It refuses to start alongside another run for
+    the same reason a BERT training run does - it wants the model Ollama is
+    holding, and a benchmark running at the same time wants the same one.
+    """
+    name = str(form.get("name", "")).strip()
+    if not BERT_NAME_RE.match(name):
+        raise ValueError("a name is letters, digits, dot, dash or underscore")
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    model = str(form.get("model") or llm_judge.DEFAULT_MODEL).strip()
+    if not LLM_MODEL_RE.match(model):
+        raise ValueError("%r is not a name ollama would accept" % model[:60])
+    overwrite = bool(form.get("overwrite"))
+    if (MODELS_DIR / name).exists() and not overwrite:
+        raise ValueError("models/%s already exists - pick another name, or "
+                         "tick replace" % name)
+
+    running = [r for r in all_runs() if r["status"] == "running"]
+    if running:
+        raise ValueError("a run is already going (%s). Stop it first - this "
+                         "wants the model ollama is holding, and so does "
+                         "that." % running[0]["id"])
+
+    flags = ["fit", "--csv", ds, "--name", name, "--model", model]
+    for key, (flag, _c, _lo, _hi, _d) in LLM_FIT_FIELDS.items():
+        val = numeric(form, LLM_FIT_FIELDS, key)
+        if val is None or (key == "limit" and not val):
+            continue
+        flags += [flag, str(val)]
+    if form.get("rubric"):
+        flags.append("--rubric")
+    if overwrite:
+        flags.append("--overwrite")
+
+    num_ctx = numeric(form, LLM_FIELDS, "num_ctx")
+    if num_ctx:
+        flags += ["--num-ctx", str(num_ctx)]
+
+    # The standing instructions go through a file rather than the command
+    # line: they are free text a person typed, they can run to pages, and a
+    # command line is not where either of those belongs.
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_llmfit_" + name
+    guidance = (form.get("guidance") or "").strip()
+    if len(guidance) > llm_judge.MAX_GUIDANCE:
+        raise ValueError("that is a lot of instructions - keep them under %d "
+                         "characters" % llm_judge.MAX_GUIDANCE)
+    if guidance:
+        gfile = run_path(run_id, "guidance.txt")
+        with open(gfile, "w", encoding="utf-8") as f:
+            f.write(guidance)
+        flags += ["--guidance-file", str(gfile)]
+
+    log = run_path(run_id, "log")
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "fit() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  printf "\\n==> fit\\n"',
+        '  "$PY" -u scripts/llm_fit.py ' + quoted
+        + ' || { printf "  fail fit\\n"; return 1; }',
+        '  printf "  ok fit\\n"',
+        "}", "fit",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/llm_fit.py " + quoted + "\n\n").encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "llm_fit",
+            "model_name": name, "label": "fit prompt · " + name,
+            "dataset": ds, "baseline": "llm_prompt:" + name, "limit": "-",
+            "model": model, "started": time.time()}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
 
 
 PAGE = r"""<!doctype html>
@@ -1583,6 +2368,11 @@ PAGE = r"""<!doctype html>
           color:var(--dim); }
   .pill.running { color:var(--accent); border-color:var(--accent); }
   .pill.failed  { color:var(--bad); border-color:var(--bad); }
+  /* the dataset's own label for a loaded row - the answer, before the model
+     has been asked. Same colours the verdict uses, so agreeing and
+     disagreeing read at a glance. */
+  .pill.truth-scam { color:var(--bad); border-color:var(--bad); font-weight:700; }
+  .pill.truth-legit { color:var(--accent); border-color:var(--accent); font-weight:700; }
   /* Capped so fifteen runs cannot push the run form below the fold - the
      whole point of moving the list up here. */
   .hist { font-size:13px; max-height:34vh; overflow-y:auto; }
@@ -1639,7 +2429,7 @@ PAGE = r"""<!doctype html>
   nav.pages button.on { background:var(--accent); border-color:var(--accent);
                         color:#fff; }
 
-  /* ---- BERT + MCQ ---- */
+  /* ---- BERT ---- */
   textarea { width:100%; padding:10px 12px; border:1px solid var(--line);
              border-radius:6px; background:var(--panel); color:var(--ink);
              font:12.5px/1.6 var(--mono); resize:vertical; min-height:150px; }
@@ -1656,9 +2446,9 @@ PAGE = r"""<!doctype html>
   details.adv[open] > summary::before { content:"\25be "; }
   details.adv .advbody { padding-bottom:12px; }
 
-  /* the headline: what the ontology made of the call, and what the trained
-     head made of it, side by side - they are different claims and the page
-     should never let them be read as one number */
+  /* the headline: the verdict, the probability behind it, and how it moved
+     across the call - side by side, because the interesting case is the one
+     where reading only the opening would have said something else */
   .verdict { display:flex; gap:30px; flex-wrap:wrap; align-items:flex-end; }
   .big { font-size:30px; font-weight:700; line-height:1.05; letter-spacing:-.02em;
          font-variant-numeric:tabular-nums; }
@@ -1668,30 +2458,63 @@ PAGE = r"""<!doctype html>
   .cap { font-size:11px; font-weight:700; letter-spacing:.08em; margin-bottom:5px;
          text-transform:uppercase; color:var(--dim); }
 
-  /* one answered question */
-  .q { border-top:1px solid var(--line); padding:14px 0; }
-  .q:first-child { border-top:none; padding-top:0; }
-  .q:last-child { padding-bottom:0; }
   .qp { font-weight:600; margin-bottom:8px; }
-  .qa { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .qa .pick { flex:1; min-width:220px; }
-  .chip { font-size:12px; font-weight:700; padding:2px 9px; border-radius:99px;
-          border:1px solid var(--line); font-variant-numeric:tabular-nums;
-          white-space:nowrap; }
-  .chip.pos  { color:var(--bad); border-color:var(--bad); }
-  .chip.neg  { color:var(--accent); border-color:var(--accent); }
-  .chip.zero { color:var(--dim); }
   .bar { height:5px; background:var(--line); border-radius:99px; margin-top:9px;
          overflow:hidden; }
   .bar i { display:block; height:100%; background:var(--accent); border-radius:99px; }
   .bar.low i { background:var(--warn); }
-  /* the stretch of transcript the chosen option actually matched against -
-     without it an answer is a claim with nothing behind it */
+  /* the stretch of the call that scored highest - without it a probability
+     is a claim with nothing behind it */
   .ev { margin-top:9px; color:var(--dim); font-size:12.5px; font-style:italic;
         border-left:2px solid var(--line); padding-left:11px; }
   table.opts td, table.opts th { font-size:12.5px; }
   table.opts td.optname { text-align:left; white-space:normal; font-family:inherit; }
   table.opts tr.chosen td { color:var(--ink); font-weight:700; }
+  /* ---- the length axis ----
+     One call against the two fitting distributions, on a log scale because
+     the transcripts here run from a dozen words to sixty thousand. The bands
+     are p10-p90 with the median ticked; the line is the threshold; the
+     diamond is the call being asked about. */
+  .lenaxis { position:relative; height:64px; margin-top:4px;
+             border-bottom:1px solid var(--line); }
+  .lenband { position:absolute; height:14px; border-radius:99px; opacity:.45; }
+  .lenband.legit { top:12px; background:var(--accent); }
+  .lenband.scam { top:34px; background:var(--bad); }
+  .lentick { position:absolute; width:2px; height:14px; }
+  .lentick.legit { top:12px; background:var(--accent); }
+  .lentick.scam { top:34px; background:var(--bad); }
+  .lenline { position:absolute; top:4px; bottom:0; width:0;
+             border-left:2px dashed var(--dim); }
+  .lenhere { position:absolute; top:22px; width:12px; height:12px;
+             margin-left:-6px; transform:rotate(45deg); background:var(--ink);
+             border:2px solid var(--panel); }
+  .lenhere.scam { background:var(--bad); }
+  .lenhere.legitimate { background:var(--accent); }
+  .lenkey { display:inline-block; width:11px; height:7px; border-radius:99px;
+            vertical-align:middle; margin-right:3px; }
+  .lenkey.legit { background:var(--accent); }
+  .lenkey.scam { background:var(--bad); }
+  .lenkey.line { height:0; border-top:2px dashed var(--dim); border-radius:0; }
+  .lenkey.here { background:var(--ink); border-radius:0;
+                 transform:rotate(45deg) scale(.8); width:8px; height:8px; }
+  /* said out loud, not tucked into a hint: the rule has just contradicted
+     the data it was fitted on */
+  .card.warn { border-color:var(--warn); color:var(--ink); font-size:12.5px; }
+
+  /* a fitted prompt that beat the control, and one that did not - the
+     second is the more useful of the two and must not be hidden */
+  /* the four cells every other number on the card comes off, so they can be
+     checked rather than taken on trust */
+  table.cm { border-collapse:collapse; margin-top:4px; }
+  table.cm th, table.cm td { padding:7px 14px; text-align:right;
+                             border:1px solid var(--line); font-size:13px; }
+  table.cm th { color:var(--dim); font-weight:600; font-size:12px; }
+  table.cm tr th:first-child { text-align:left; }
+  table.cm td { font-variant-numeric:tabular-nums; }
+  table.cm td.good { color:var(--accent); }
+  table.cm td.bad { color:var(--bad); }
+  .gain-up { color:var(--accent); }
+  .gain-down { color:var(--bad); }
   .note { color:var(--dim); font-size:12.5px; }
   .note p { margin:0 0 10px; }
   .note p:last-child { margin-bottom:0; }
@@ -1709,7 +2532,9 @@ PAGE = r"""<!doctype html>
   <h1>scam-detection</h1>
   <nav class="pages" id="pages">
     <button data-page="bench" class="on">Benchmark</button>
-    <button data-page="mcq">BERT + MCQ</button>
+    <button data-page="bert">BERT</button>
+    <button data-page="bow">Bag of words</button>
+    <button data-page="length">Length only</button>
     <button data-page="llm">LLM judge</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
@@ -1735,6 +2560,25 @@ PAGE = r"""<!doctype html>
       <div class="secthead">New run</div>
       <label for="dataset">Dataset</label>
       <select id="dataset"></select>
+
+      <label class="inline" style="margin-top:12px">
+        <input type="checkbox" id="stripped">
+        <span><span class="name">Content-deletion test</span>
+        <span class="note">also score every held-out call with its content
+          words deleted</span></span>
+      </label>
+      <div class="hint" id="strippedhint">The folds do not change. A system
+        that learns from the data is trained on the original text of the four
+        training folds, then the held-out fold is scored twice by those same
+        weights &mdash; as written, and with the content words deleted &mdash;
+        and that rotates through all five. Nothing is ever trained on stripped
+        text. The results gain a stripped-accuracy column and a trusted
+        accuracy beside it. A word survives only if it is a determiner,
+        pronoun, preposition, conjunction, auxiliary or negation &mdash; the
+        closed class in <code>scripts/trusted.py</code>; everything else goes.
+        The stripped copy is built from the dataset itself, so this works on
+        any dataset in the list &mdash; there is no second file to make or to
+        keep in step.</div>
 
       <label>Baselines</label>
       <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
@@ -1864,14 +2708,14 @@ results table, and the prediction it made for every single call.</pre>
   </div>
 </div>
 
-<!-- ==================== page two: BERT + MCQ ==================== -->
-<div class="wrap" id="page-mcq" hidden>
+<!-- ==================== page two: BERT ==================== -->
+<div class="wrap" id="page-bert" hidden>
   <div class="side">
     <div class="sect">
       <div class="secthead">Trained models</div>
-      <div class="hint" style="margin-top:0">the checkpoint the questions are
-        put to · hover to delete one</div>
-      <div class="hist" id="mcqmodels"></div>
+      <div class="hint" style="margin-top:0">the checkpoint a call is put to ·
+        hover to delete one</div>
+      <div class="hist" id="bertmodels"></div>
       <div class="row" style="margin-top:8px">
         <span class="hint" id="workerstate" style="flex:1"></span>
         <button class="link" id="unload" hidden>unload it</button>
@@ -1931,19 +2775,20 @@ results table, and the prediction it made for every single call.</pre>
   <div class="main">
     <div class="card">
       <div class="row">
-        <strong id="mcqtitle">No model selected</strong>
-        <span class="pill" id="mcqpill" hidden></span>
+        <strong id="berttitle">No model selected</strong>
+        <span class="pill" id="bertpill" hidden></span>
         <span style="flex:1"></span>
         <button class="stop" id="trainstop" hidden>Stop</button>
       </div>
-      <div class="hint" id="mcqsub">Train one on the left, then put the
-        ontology's questions to it.</div>
+      <div class="hint" id="bertsub">Train one on the left, then put a
+        transcript to it.</div>
     </div>
 
-    <div class="tabs" id="mcqtabs">
-      <button data-mtab="ask" class="on">Ask</button>
+    <div class="tabs" id="berttabs">
+      <button data-mtab="ask" class="on">Classify</button>
+      <button data-mtab="eval">Score a dataset</button>
       <button data-mtab="train">Training output</button>
-      <button data-mtab="about">How it answers</button>
+      <button data-mtab="about">How it decides</button>
     </div>
 
     <!-- ask -->
@@ -1957,15 +2802,18 @@ results table, and the prediction it made for every single call.</pre>
         </div>
         <textarea id="transcript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
         <div class="askrow">
-          <label class="inline" for="branch">Branch
-            <select id="branch"></select></label>
-          <label class="inline" for="cutoff">Scam cut-off
-            <input type="text" id="cutoff" class="num" value="0"></label>
+          <label class="inline" for="aggregate">Combine windows by
+            <select id="aggregate">
+              <option value="max">the strongest stretch</option>
+              <option value="mean">the average</option>
+            </select></label>
+          <label class="inline" for="threshold">Scam at
+            <input type="text" id="threshold" class="num" placeholder="0.5"></label>
           <label class="inline"><input type="checkbox" id="agpu">
-            answer on the GPU</label>
+            score on the GPU</label>
         </div>
         <details class="adv">
-          <summary>How the options are matched</summary>
+          <summary>How the call is read</summary>
           <div class="advbody">
             <div class="grid2">
               <div><label for="awindow">Window (words)</label>
@@ -1974,43 +2822,60 @@ results table, and the prediction it made for every single call.</pre>
                    <input type="text" id="astride" style="width:100%"></div>
               <div><label for="amaxlen">Tokens per window</label>
                    <input type="text" id="amaxlen" style="width:100%"></div>
-              <div><label for="aminconf">Abstain below</label>
-                   <input type="text" id="aminconf" style="width:100%"></div>
-              <div><label for="aminmargin">Least margin</label>
-                   <input type="text" id="aminmargin" style="width:100%"></div>
             </div>
-            <div class="hint">The transcript is cut into overlapping windows and
-              an option scores its best match against any one of them. The
-              margin is how far the best option is clear of the runner-up, in
-              raw cosine; under it the question abstains rather than picking
-              between scores that are the same number twice. Changing any of
-              these reloads the model, so the next answer is slower.</div>
+            <div class="hint">BERT reads 512 tokens at most and these
+              checkpoints are trained at 256 — about 180 words. A call longer
+              than that is cut into overlapping windows of the size training
+              used, each is scored, and the call takes the strongest (or the
+              average). Handing it the whole transcript instead would score
+              the first two minutes and ignore the rest. Changing any of these
+              reloads the model, so the next answer is slower.</div>
             <div style="margin-top:11px">
-              <label class="inline"><input type="checkbox" id="aself">
-                match in the checkpoint's own hidden states</label>
-              <div class="hint">Off by default. Fine-tuning fits a binary
-                scam/legitimate head and never asks the encoder to tell "a
-                courier" from "a customs agency", so matching there gives
-                every option nearly the same score and the winner is decided
-                by noise. Tick it to see that happen.</div>
-            </div>
-            <div style="margin-top:9px">
-              <label class="inline"><input type="checkbox" id="araw">
-                match against the raw transcript</label>
-              <div class="hint">Off by default. Normally the tone tags
-                ([curious], [long pause]) come out and the apostrophes ASR
-                dropped go back in, because "i m" and "don t" are not words
-                any encoder was trained on.</div>
+              <label class="inline"><input type="checkbox" id="astrip">
+                strip the tone tags first</label>
+              <div class="hint">Off by default. Takes out
+                <code>[curious]</code>, <code>[long pause]</code> and the rest
+                — nobody said them out loud, but training read them, so this
+                asks the model about text of a kind it never saw. Worth one
+                run both ways: in
+                <code>scamai_full_1000.csv</code>, <code>[satisfied]</code>
+                sits on 54.8% of legitimate calls and 31.0% of scams, so a
+                score that moves a lot here was partly reading the annotation
+                style rather than the call.</div>
             </div>
           </div>
         </details>
-        <button class="go" id="askgo">Answer the questions</button>
+        <button class="go" id="askgo">Classify this call</button>
         <div class="hint" id="askerr" style="color:var(--bad)"></div>
       </div>
       <div id="answer"></div>
     </div>
 
     <!-- training output -->
+
+    <div id="m-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="berteds"></select>
+          <input type="text" id="bertevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <label class="inline" for="bertevthr">Scam at
+            <input type="text" id="bertevthr" class="num" placeholder="model's own"></label>
+          <label class="inline"><input type="checkbox" id="bertevstrip">
+            strip tone tags</label>
+          <label class="inline"><input type="checkbox" id="bertevgpu">
+            use the GPU</label></div>
+        <button class="go" id="bertevgo">Score every call</button>
+        <div class="hint" id="berteverr" style="color:var(--bad)"></div>
+        <div class="hint">Every call is scored by the one model selected on the left, so pointing it at the dataset it was fitted on measures memory rather than skill — the card says so when the two match. The Benchmark page cross-validates instead, which is the number to quote. A long call is scored in windows, as on the Classify tab.</div>
+      </div>
+      <div id="bertevout"></div>
+      <pre class="log" id="bertevlog" hidden></pre>
+    </div>
+
     <div id="m-train" hidden>
       <pre class="log" id="trainlog">No training run selected.
 
@@ -2022,56 +2887,412 @@ shows up in Recent runs on the Benchmark page too.</pre>
     <!-- about -->
     <div id="m-about" hidden>
       <div class="card note">
-        <p><strong>Two different claims, kept apart.</strong> Training fits a
-        binary scam/legitimate classifier, and <code>prob_scam</code> is that
-        head speaking — it is the only number the model was directly trained to
-        produce. The MCQ score beside it is the ontology's: the sum of the
-        values of the options chosen below, banded by the cut-offs in
-        <code>knowledge/mcq_ontology.json</code>. They can disagree, and when
-        they do that is worth reading, not averaging.</p>
+        <p><strong>One number, and it is the one training fits.</strong> The
+        checkpoint is a binary classifier: it was shown labelled calls and
+        fitted to separate scam from legitimate. <code>prob_scam</code> is
+        that head speaking. Nothing else on this page is inferred, weighted or
+        scored — the model was trained to produce this and only this.</p>
 
-        <p><strong>How a question gets answered without MCQ labels.</strong>
-        By similarity. The transcript is cut into overlapping word windows;
-        each window and each option text is mean-pooled into a vector; an
-        option scores the best cosine similarity it reaches against any
-        window. The mean direction of the whole option corpus is subtracted
-        from both sides first — sentence vectors out of any BERT sit in a
-        narrow cone, so two unrelated phrases still score .85 against each
-        other, and taking that shared direction out is what gives the options
-        room to differ.</p>
+        <p><strong>Why the call is cut into windows.</strong> BERT reads 512
+        tokens at most, and these checkpoints are trained at 256 — roughly 180
+        words. Some calls in <code>datasets/</code> run past ten thousand.
+        Handing the whole transcript to the tokenizer scores its opening and
+        silently drops the rest, which on a long call means judging it by the
+        hellos. So the transcript is cut into overlapping windows the size
+        training used, every window is scored, and the call takes either the
+        strongest window or the average of them.</p>
 
-        <p><strong>Why the options are not matched in the checkpoint.</strong>
-        They were, and it was the reason the answers looked arbitrary.
-        Fine-tuning fits a binary scam/legitimate head; nothing in that
-        objective asks the encoder to tell "a courier" from "a customs
-        agency", which is the distinction every question here turns on. Every
-        option came back within a few hundredths of every other, and a softmax
-        over noise still has to hand its probability to somebody. So the match
-        runs in <code>all-MiniLM-L6-v2</code> — the model that already indexes
-        the policy KB — and the checkpoint keeps the job it was trained for,
-        which is <code>prob_scam</code>. The tickbox under <em>How the options
-        are matched</em> puts it back the old way if you want to see the
-        difference.</p>
+        <p><strong>Strongest or average.</strong> <em>Strongest</em> says a
+        scam signal anywhere is a scam signal, which suits calls that are
+        mostly small talk around one telling exchange. <em>Average</em> is
+        steadier but dilutes that exchange in a long friendly call. Both are
+        shown whichever you pick, along with <strong>first window</strong> —
+        what a single truncated read would have said. When those three
+        disagree, the disagreement is the finding.</p>
 
-        <p><strong>The margin is the number to read.</strong> A question is
-        only answered when its best option is clear of the runner-up by the
-        margin you set, in raw cosine. Confidence cannot carry that on its
-        own: four scores that are the same number twice still produce a
-        confident-looking softmax. Under the margin the question abstains to
-        its "not stated" answer and contributes nothing to the score —
-        not knowing whether the caller asked for anything is not evidence that
-        they asked for nothing.</p>
+        <p><strong>What the holdout number is not.</strong> The accuracy
+        beside a trained model is a stratified slice of its own training file,
+        kept back. It says the checkpoint learnt something; it does not say
+        the something is scam detection. On
+        <code>scambait_bank_422.csv</code> a checkpoint reaches 100% — the
+        scam side is YouTube scam-baiting and the legitimate side is the
+        HarperValleyBank corpus, so the two are separable on recording
+        pipeline alone. Compare against the bag-of-words baseline on the
+        Benchmark page before believing any of it.</p>
+      </div>
+    </div>
+  </div>
+</div>
 
-        <p><strong>Where it is weak.</strong> Similarity reads subject matter,
-        not negation — "I will <em>not</em> ask for your PIN" sits close to the
-        option about asking for a PIN. That is the honest limit of matching
-        rather than reasoning, and it is the gap the LLM-driven
-        <code>mcq</code> baseline on the other page exists to close.</p>
+<!-- ==================== page three: Bag of words ==================== -->
+<div class="wrap" id="page-bow" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Fitted models</div>
+      <div class="hint" style="margin-top:0">the model a call is put to ·
+        hover to delete one</div>
+      <div class="hist" id="bowmodels"></div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" id="bowworkerstate" style="flex:1"></span>
+        <button class="link" id="bowunload" hidden>unload it</button>
+      </div>
+      <div class="hint" id="bowmodelerr" style="color:var(--bad)"></div>
+    </div>
 
-        <p><strong>The evidence line</strong> under each answer is the window
-        that scored highest for the chosen option — the stretch of the call the
-        answer actually came from. Open <em>all options</em> to see what every
-        other option scored, and what it would have contributed.</p>
+    <div class="sect">
+      <div class="secthead">Fit a model</div>
+
+      <label for="bowname">Name</label>
+      <input type="text" id="bowname" placeholder="e.g. bank-bow" spellcheck="false">
+      <div class="hint">saved as models/&lt;name&gt;/ — a few hundred KB, and
+        gitignored. It sits beside the BERT checkpoints without colliding:
+        they are told apart by what is in the directory.</div>
+
+      <label for="bowdataset">Dataset</label>
+      <select id="bowdataset"></select>
+
+      <div class="grid2">
+        <div><label for="bowngram">N-grams up to</label>
+             <input type="text" id="bowngram" style="width:100%"></div>
+        <div><label for="bowmindf">Least calls per term</label>
+             <input type="text" id="bowmindf" style="width:100%"></div>
+        <div><label for="bowholdout">Held back to score it</label>
+             <input type="text" id="bowholdout" style="width:100%"></div>
+        <div><label for="bowseed">Seed</label>
+             <input type="text" id="bowseed" style="width:100%"></div>
+      </div>
+      <div class="hint">2 and 2 are what the <code>bow</code> baseline on the
+        Benchmark page cross-validates with, so leave them there if you want
+        the two numbers to be about the same model.</div>
+
+      <label class="inline" style="margin-top:14px">
+        <input type="checkbox" id="bowstriptrain">
+        <span><span class="name">Strip tone tags before fitting</span>
+        <span class="note">drops [curious], [long pause] and the rest</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="bowoverwrite">
+        <span><span class="name">Replace a model of that name</span>
+        <span class="note">the old one is overwritten, not kept</span></span>
+      </label>
+
+      <button class="go" id="bowtrain">Fit</button>
+      <div class="hint" id="bowtrainerr" style="color:var(--bad)"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="row">
+        <strong id="bowtitle">No model selected</strong>
+        <span style="flex:1"></span>
+      </div>
+      <div class="hint" id="bowsub">Fit one on the left — it takes about a
+        second — then put a transcript to it.</div>
+    </div>
+
+    <div class="tabs" id="bowtabs">
+      <button data-btab="ask" class="on">Classify</button>
+      <button data-btab="eval">Score a dataset</button>
+      <button data-btab="train">Fitting output</button>
+      <button data-btab="about">How it decides</button>
+    </div>
+
+    <div id="b-ask">
+      <div class="card">
+        <div class="filepick">
+          <select id="bowds"></select>
+          <input type="text" id="bowidx" class="num" value="0" spellcheck="false">
+          <button class="link" id="bowload">load that row</button>
+          <span class="hint" id="bowinfo"></span>
+        </div>
+        <textarea id="bowtranscript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
+        <div class="askrow">
+          <label class="inline" for="bowthreshold">Scam at
+            <input type="text" id="bowthreshold" class="num" placeholder="0.5"></label>
+          <label class="inline" for="bowtop">Terms to show
+            <input type="text" id="bowtop" class="num" placeholder="12"></label>
+          <label class="inline"><input type="checkbox" id="bowstrip">
+            strip tone tags</label>
+        </div>
+        <button class="go" id="bowgo">Classify this call</button>
+        <div class="hint" id="bowaskerr" style="color:var(--bad)"></div>
+      </div>
+      <div id="bowanswer"></div>
+    </div>
+
+
+    <div id="b-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="boweds"></select>
+          <input type="text" id="bowevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <label class="inline" for="bowevthr">Scam at
+            <input type="text" id="bowevthr" class="num" placeholder="model's own"></label>
+          <label class="inline"><input type="checkbox" id="bowevstrip">
+            strip tone tags</label></div>
+        <button class="go" id="bowevgo">Score every call</button>
+        <div class="hint" id="boweverr" style="color:var(--bad)"></div>
+        <div class="hint">Every call is scored by the one model selected on the left, so pointing it at the dataset it was fitted on measures memory rather than skill — the card says so when the two match. The Benchmark page cross-validates instead, which is the number to quote.</div>
+      </div>
+      <div id="bowevout"></div>
+      <pre class="log" id="bowevlog" hidden></pre>
+    </div>
+
+    <div id="b-train" hidden>
+      <pre class="log" id="bowtrainlog">No fitting run selected.
+
+Fill in the form on the left and press Fit. It takes about a second, and the
+run appears under Recent runs on the Benchmark page like any other.</pre>
+    </div>
+
+    <div id="b-about" hidden>
+      <div class="card note">
+        <p><strong>What it is.</strong> TF-IDF over word unigrams and bigrams
+        into a logistic regression — the same vectoriser and classifier the
+        <code>bow</code> baseline on the Benchmark page cross-validates. No
+        embeddings, no attention, no GPU. It fits in about a second.</p>
+
+        <p><strong>It reads the whole call.</strong> BERT takes 512 tokens, so
+        that page cuts a long transcript into windows. TF-IDF has no length
+        limit: every word is counted. So on a long call the two pages are not
+        being asked the same question, and this is the one that saw all of
+        it.</p>
+
+        <p><strong>Why it can be read back exactly.</strong> A linear model
+        over TF-IDF decomposes: the score is the intercept plus, for every
+        term in the call, its TF-IDF weight times its coefficient. The terms
+        listed under a verdict are those products, largest first, and they sum
+        to the score shown. This is arithmetic, not a story told about the
+        model afterwards — and it is the thing BERT cannot give you.</p>
+
+        <p><strong>Read the terms, not the accuracy.</strong> If this scores
+        near a fine-tuned BERT on a dataset, that dataset is separable on
+        vocabulary and neither number is evidence about understanding scams.
+        On <code>scambait_bank_422.csv</code> it reaches 100% held-out in a
+        tenth of a second — the same as BERT — and the terms doing the work
+        are <code>so</code>, <code>me</code>, <code>yes</code>,
+        <code>to</code>, <code>is</code>, <code>what</code>. Those are
+        function words: the two halves of that dataset come from different
+        recording pipelines, and this is what separating on transcription
+        style looks like from the inside.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== page four: Length only ==================== -->
+<div class="wrap" id="page-length" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Fitted thresholds</div>
+      <div class="hint" style="margin-top:0">the rule a call is put to &middot;
+        hover to delete one</div>
+      <div class="hist" id="lenmodels"></div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" id="lenworkerstate" style="flex:1"></span>
+        <button class="link" id="lenunload" hidden>unload it</button>
+      </div>
+      <div class="hint" id="lenmodelerr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Fit a threshold</div>
+
+      <label for="lenname">Name</label>
+      <input type="text" id="lenname" placeholder="e.g. bank-length" spellcheck="false">
+      <div class="hint">saved as models/&lt;name&gt;/ &mdash; a few kilobytes of
+        JSON. It sits beside the BERT checkpoints and the bag-of-words models
+        without colliding: the three are told apart by what is in the
+        directory.</div>
+
+      <label for="lendataset">Dataset</label>
+      <select id="lendataset"></select>
+
+      <div class="grid2">
+        <div><label for="lenmetric">Sweep maximises</label>
+             <select id="lenmetric" style="width:100%">
+               <option value="f1">F1</option>
+               <option value="acc">accuracy</option>
+             </select></div>
+        <div><label for="lenholdout">Held back to score it</label>
+             <input type="text" id="lenholdout" style="width:100%"></div>
+        <div><label for="lenseed">Seed</label>
+             <input type="text" id="lenseed" style="width:100%"></div>
+        <div><label for="lenlimit">Calls (0 = all)</label>
+             <input type="text" id="lenlimit" style="width:100%"></div>
+      </div>
+      <div class="hint">The sweep tries every threshold the fitting calls
+        suggest, in both directions, and keeps the best. That is one number
+        fitted to one dataset &mdash; it overfits happily, which is why the
+        output lists the runner-up thresholds and says when the curve is
+        flat.</div>
+
+      <label class="inline" style="margin-top:14px">
+        <input type="checkbox" id="lenpin">
+        <span><span class="name">Pin the threshold instead of sweeping</span>
+        <span class="note">no fitting at all &mdash; use the benchmark's own
+          rule</span></span>
+      </label>
+      <div class="grid2" id="lenpinrow" hidden>
+        <div><label for="lenthreshold">Words</label>
+             <input type="text" id="lenthreshold" style="width:100%"></div>
+        <div><label for="lendirection">Scam is the</label>
+             <select id="lendirection" style="width:100%">
+               <option value="longer">longer side</option>
+               <option value="shorter">shorter side</option>
+             </select></div>
+      </div>
+
+      <label class="inline">
+        <input type="checkbox" id="lenstriptrain">
+        <span><span class="name">Strip tone tags before counting</span>
+        <span class="note">drops [curious], [long pause] and the rest</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="lenoverwrite">
+        <span><span class="name">Replace a model of that name</span>
+        <span class="note">the old one is overwritten, not kept</span></span>
+      </label>
+
+      <button class="go" id="lenfit">Fit</button>
+      <div class="hint" id="lenfiterr" style="color:var(--bad)"></div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="card">
+      <div class="row">
+        <strong id="lentitle">No model selected</strong>
+        <span style="flex:1"></span>
+      </div>
+      <div class="hint" id="lensub">Fit one on the left &mdash; it is one sort
+        of the dataset &mdash; then put a transcript to it.</div>
+    </div>
+
+    <div class="tabs" id="lentabs">
+      <button data-ltab="ask" class="on">Classify</button>
+      <button data-ltab="eval">Score a dataset</button>
+      <button data-ltab="train">Fitting output</button>
+      <button data-ltab="about">How it decides</button>
+    </div>
+
+    <div id="l-ask">
+      <div class="card">
+        <div class="filepick">
+          <select id="lends"></select>
+          <input type="text" id="lenidx" class="num" value="0" spellcheck="false">
+          <button class="link" id="lenload">load that row</button>
+          <span class="hint" id="leninfo"></span>
+        </div>
+        <textarea id="lentranscript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
+        <div class="askrow">
+          <label class="inline" for="lenaskthreshold">Scam past
+            <input type="text" id="lenaskthreshold" class="num" placeholder="fitted"></label>
+          <label class="inline" for="lenaskdirection">on the
+            <select id="lenaskdirection" style="width:auto">
+              <option value="">fitted side</option>
+              <option value="longer">longer side</option>
+              <option value="shorter">shorter side</option>
+            </select></label>
+          <label class="inline"><input type="checkbox" id="lenstrip">
+            strip tone tags</label>
+        </div>
+        <button class="go" id="lengo">Classify this call</button>
+        <div class="hint" id="lenaskerr" style="color:var(--bad)"></div>
+      </div>
+      <div id="lenanswer"></div>
+    </div>
+
+
+    <div id="l-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="leneds"></select>
+          <input type="text" id="lenevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <label class="inline" for="lenevthr">Scam past
+            <input type="text" id="lenevthr" class="num" placeholder="fitted"></label>
+          <label class="inline" for="lenevdir">on the
+            <select id="lenevdir" style="width:auto">
+              <option value="">fitted side</option>
+              <option value="longer">longer side</option>
+              <option value="shorter">shorter side</option>
+            </select></label>
+          <label class="inline"><input type="checkbox" id="lenevstrip">
+            strip tone tags</label></div>
+        <button class="go" id="lenevgo">Score every call</button>
+        <div class="hint" id="leneverr" style="color:var(--bad)"></div>
+        <div class="hint">Every call is scored by the one model selected on the left, so pointing it at the dataset it was fitted on measures memory rather than skill — the card says so when the two match. The Benchmark page cross-validates instead, which is the number to quote. The card also reports what the same threshold pointing the other way would have scored.</div>
+      </div>
+      <div id="lenevout"></div>
+      <pre class="log" id="lenevlog" hidden></pre>
+    </div>
+
+    <div id="l-train" hidden>
+      <pre class="log" id="lentrainlog">No fitting run selected.
+
+Fill in the form on the left and press Fit. It is one sort of the dataset, and
+the run appears under Recent runs on the Benchmark page like any other.</pre>
+    </div>
+
+    <div id="l-about" hidden>
+      <div class="card note">
+        <p><strong>What it is.</strong> The number of words in the transcript,
+        compared to one other number. That is the whole model. It is the
+        <code>length</code> baseline on the Benchmark page, which is
+        <code>trivial_length</code> in <code>combined_evaluate.py</code>:
+        <em>Fraud if the call is longer than 45 words</em>.</p>
+
+        <p><strong>Why it has a page.</strong> Not because the accuracy is
+        interesting &mdash; because it is the floor. Nothing in the call is
+        read: not a word, not an entity, not a tone tag. Whatever BERT or the
+        bag of words beats this by is the whole of what those models are
+        worth on that dataset, and on several of the datasets here the gap is
+        smaller than the write-up would like.</p>
+
+        <p><strong>&ldquo;Fit&rdquo; is a sweep, not learning.</strong> There
+        is one parameter and it is chosen by trying every threshold the
+        fitting calls suggest and keeping the best-scoring one. That will
+        overfit a single number to a single dataset without complaint, so the
+        fitting output lists the runner-up thresholds and says out loud when
+        the curve is flat &mdash; when a couple of hundred thresholds come
+        within a point of the winner, the exact number means nothing. Tick
+        <em>pin the threshold</em> to skip the fitting entirely and use the
+        benchmark's own 45.</p>
+
+        <p><strong>The direction is not a given.</strong> &ldquo;Scams are
+        longer&rdquo; is an assumption about a corpus, not a fact about
+        scams, and the sweep tests both ways round. On
+        <code>scambait_bank_422.csv</code> and
+        <code>zhi_english_646.csv</code> the scam calls are the longer ones.
+        On <code>scamai_full_1000.csv</code> and
+        <code>everything_7013.csv</code> they are the <em>shorter</em> ones
+        &mdash; so <code>trivial_length</code>'s rule is pointing the wrong
+        way on those two, and the number it reports there is worse than the
+        same threshold read backwards.</p>
+
+        <p><strong>There is no probability here, so none is invented.</strong>
+        A threshold cannot say how confident it is. What is shown in place of
+        one is a fact about the fitting set: the share of fitting calls on
+        this side of the line that really were scams. When that share
+        contradicts the verdict &mdash; the rule calls a call a scam, but most
+        fitting calls on that side were not &mdash; the page says so rather
+        than dressing the number up.</p>
+
+        <p><strong>Read this next to the other pages.</strong> On
+        <code>scambait_bank_422.csv</code> a fitted threshold reaches about
+        72% held out. BERT and the bag of words both reach 100% on the same
+        split. The distance between 72% and 100% is what reading the words
+        bought; the distance between 50% and 72% is what counting them
+        bought, from a model that is one integer.</p>
       </div>
     </div>
   </div>
@@ -2086,6 +3307,64 @@ shows up in Recent runs on the Benchmark page too.</pre>
       <select id="llmmodel" style="width:100%; margin-top:8px"></select>
       <div class="hint" id="llmhost"></div>
       <div class="hint" id="llmerr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Fitted prompts</div>
+      <div class="hint" style="margin-top:0">what goes in the prompt before
+        the call &middot; hover to delete one</div>
+      <div class="hist" id="llmprofiles"></div>
+      <div class="hint" id="llmproferr" style="color:var(--bad)"></div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Fit a prompt</div>
+      <div class="hint" style="margin-top:0"><strong>This does not fine-tune
+        anything.</strong> The weights Ollama is holding do not move and
+        cannot be moved from here. What is fitted is the prompt: worked
+        examples out of a dataset, a rubric the model writes from them, and
+        your standing instructions made durable. That is in-context learning,
+        and it is the only kind of training a frozen local model can be
+        given.</div>
+
+      <label for="llmfitname">Name</label>
+      <input type="text" id="llmfitname" placeholder="e.g. zhi-prompt" spellcheck="false">
+
+      <label for="llmfitds">Dataset</label>
+      <select id="llmfitds"></select>
+
+      <div class="grid2">
+        <div><label for="llmshots">Worked examples</label>
+             <input type="text" id="llmshots" style="width:100%"></div>
+        <div><label for="llmshotwords">Words from each</label>
+             <input type="text" id="llmshotwords" style="width:100%"></div>
+        <div><label for="llmholdcalls">Calls to score on</label>
+             <input type="text" id="llmholdcalls" style="width:100%"></div>
+        <div><label for="llmfitseed">Seed</label>
+             <input type="text" id="llmfitseed" style="width:100%"></div>
+      </div>
+
+      <label class="inline" style="margin-top:14px">
+        <input type="checkbox" id="llmrubric" checked>
+        <span><span class="name">Have the model write the rubric</span>
+        <span class="note">it reads the examples and writes the rules, which
+          then ride in every prompt</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="llmfitguide" checked>
+        <span><span class="name">Carry the standing instructions in</span>
+        <span class="note">whatever is in the box on the right, made durable
+          instead of lost on reload</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="llmfitover">
+        <span><span class="name">Replace a prompt of that name</span>
+        <span class="note">the old one is overwritten, not kept</span></span>
+      </label>
+
+      <div class="hint" id="llmfitcost"></div>
+      <button class="go" id="llmfitgo">Fit</button>
+      <div class="hint" id="llmfiterr" style="color:var(--bad)"></div>
     </div>
 
     <div class="sect">
@@ -2117,6 +3396,23 @@ shows up in Recent runs on the Benchmark page too.</pre>
 
   <div class="main">
     <div class="card">
+      <div class="row">
+        <strong id="llmtitle">Bare llm_only control</strong>
+        <span style="flex:1"></span>
+      </div>
+      <div class="hint" id="llmsub">No fitted prompt — the transcript and the
+        question, exactly as the benchmark asks it.</div>
+    </div>
+
+    <div class="tabs" id="llmtabs">
+      <button data-jtab="ask" class="on">Ask</button>
+      <button data-jtab="eval">Score a dataset</button>
+      <button data-jtab="fit">Fitting output</button>
+      <button data-jtab="about">How it decides</button>
+    </div>
+
+    <div id="j-ask">
+    <div class="card">
       <div class="filepick">
         <select id="llmds"></select>
         <input type="text" id="llmidx" class="num" value="0" spellcheck="false">
@@ -2147,6 +3443,81 @@ shows up in Recent runs on the Benchmark page too.</pre>
       <div class="hint" id="llmasker" style="color:var(--bad)"></div>
     </div>
     <div id="llmanswer"></div>
+    </div>
+
+
+    <div id="j-eval" hidden>
+      <div class="card">
+        <div class="filepick">
+          <select id="llmeds"></select>
+          <input type="text" id="llmevlimit" class="num" placeholder="all"
+                 spellcheck="false" title="calls to score, 0 or blank for all">
+          <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+        </div>
+        <div class="askrow">
+          <span class="hint" id="llmevcost" style="flex:1"></span></div>
+        <button class="go" id="llmevgo">Score every call</button>
+        <div class="hint" id="llmeverr" style="color:var(--bad)"></div>
+        <div class="hint">One generation per call, so this is the slow one: a thousand-call dataset is hours on a 14B model. Set a limit. It scores under whichever fitted prompt is picked on the left, or bare with <em>None</em> — running it both ways on the same calls is how you find out whether the fitting helped on more than its own holdout.</div>
+      </div>
+      <div id="llmevout"></div>
+      <pre class="log" id="llmevlog" hidden></pre>
+    </div>
+
+    <div id="j-fit" hidden>
+      <pre class="log" id="llmfitlog">No fitting run selected.
+
+Fill in "Fit a prompt" on the left and press Fit. It scores the held-out calls
+twice - once with the fitted prompt and once with the bare one - so what comes
+back is what the fitting bought, not just an accuracy. That is two LLM calls
+per held-out call, so it takes minutes, not seconds.</pre>
+    </div>
+
+    <div id="j-about" hidden>
+      <div class="card note">
+        <p><strong>What this is.</strong> The <code>llm_only</code> control
+        from the Benchmark page, asked one call at a time. No retrieval, no
+        ontology. With no fitted prompt selected it uses the same prompt and
+        the same verdict parser as the benchmark, so the answer here is the
+        answer that would have been recorded there.</p>
+
+        <p><strong>Fitting a prompt is not fine-tuning.</strong> The weights
+        Ollama is holding do not move, and nothing in this project can move
+        them. A fitted prompt is text that gets prepended to every question:
+        worked examples drawn from a dataset, a rubric the model wrote after
+        reading them, and your standing instructions. The other three pages
+        train a model; this one writes a better question. They are not the
+        same thing and the page will not call them the same thing.</p>
+
+        <p><strong>Why the fit scores everything twice.</strong> A longer
+        prompt always <em>feels</em> like an improvement, and often is not. So
+        fitting runs the held-out calls through the fitted prompt and through
+        the bare one, in the same order, and reports the difference. If the
+        fitted prompt did not beat the control it has cost you context window
+        and bought nothing — and the run says so in those words rather than
+        quietly reporting a number that looks fine on its own.</p>
+
+        <p><strong>Where the parts sit in the prompt, and why it matters.</strong>
+        Ollama truncates an overlong prompt from the <em>front</em>. So the
+        order is worst-to-best: worked examples, then the rubric, then the
+        transcript, then the rules and the answer format. A fitted prompt that
+        overflows loses its examples first and decays into the control, rather
+        than into a headless wall of transcript with no question attached. The
+        fitting run counts how many held-out prompts this happened to.</p>
+
+        <p><strong>Standing instructions.</strong> The box under the
+        transcript is sent with every question, fenced off so the model reads
+        it as a rule rather than as something the caller said. On its own it
+        is not stored — closing the page empties it. Tick <em>carry the
+        standing instructions in</em> when fitting and they become part of the
+        saved prompt instead.</p>
+
+        <p><strong>A verdict under either is not the control.</strong> The
+        moment a fitted prompt or standing instructions are in play, the
+        answer stops being comparable with an <code>llm_only</code> row on the
+        Benchmark page. The answer card says which applied.</p>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -2159,6 +3530,30 @@ let RUNS = {};
 let page = 0, PAGE_SIZE = 50;
 
 const $ = id => document.getElementById(id);
+
+// A run is over when the output endpoint stops calling it running. The field is
+// `status`; there is no `done` key, and a poller that waits for one polls
+// until the tab is closed while its pane sits on "scoring…" forever.
+const runOver = r => !!(r.status && r.status !== 'running');
+
+// poller name -> how many polls in a row have failed, so a dropped request
+// does not end a watch that is still worth keeping
+const POLL_FAILS = {};
+
+// Every poller reads a run's output through here, and it asks for
+// /api/output rather than /api/log on purpose.
+//
+// The two are the same endpoint. But ad blockers and privacy extensions ship
+// rules against paths that look like telemetry, and "/api/log" looks exactly
+// like one: uBlock and Edge tracking prevention both refuse it, the fetch
+// fails with a bare "Failed to fetch", and the page is left polling something
+// that will never answer. That is not hypothetical - it is what happened on
+// the Bag of words page, where a blocked poll meant a finished run reported
+// no score at all.
+//
+// Do not "tidy" this back to /api/log.
+const runLog = (id, offset) =>
+  api(`/api/output?id=${encodeURIComponent(id)}&offset=${offset || 0}`);
 
 // Always resolves to an object. A fetch that fails, or a reply that is not
 // JSON - a proxy's error page, say - used to reject and take the whole poll
@@ -2249,7 +3644,7 @@ async function boot() {
   ).join('');
 
   if (!o.up) {
-    $('ollama').textContent = 'Ollama is not answering — only the trivial and BERT baselines can run';
+    $('ollama').textContent = 'Ollama is not answering — only the length, bag-of-words and BERT baselines can run';
     $('ollama').style.color = 'var(--bad)';
   } else if (o.loaded.length) {
     $('ollama').textContent = 'Ollama up · holding ' + o.loaded.join(', ') + ' in VRAM';
@@ -2410,6 +3805,7 @@ async function go() {
     limit: limit,
     model: $('model').value,
     num_ctx: $('numctx').value,
+    stripped: $('stripped').checked,
   });
   onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }
@@ -2631,17 +4027,31 @@ function showView(which) {
 }
 
 function paintTable() {
-  const head = ['system','acc','P','R','F1','TP','FP','FN','TN'];
+  // A run given a stripped twin adds two columns: accuracy on the stripped
+  // copy, from the same trained model, and trusted accuracy
+  // A = a_full - max(0, a_stripped - 0.5). collect_results.py computes A.
+  const paired = !!RESULTS.paired;
+  const head = ['system','acc','P','R','F1','TP','FP','FN','TN']
+    .concat(paired ? ['stripped acc', 'trusted A'] : []);
   let h = '<tr>' + head.map(x => `<th>${x}</th>`).join('') + '</tr>';
   for (const s of RESULTS.systems) {
     if (!s.ran) {
-      h += `<tr class="skipped"><td>${s.system}</td><td colspan="8">not run</td></tr>`;
+      h += `<tr class="skipped"><td>${s.system}</td>` +
+           `<td colspan="${head.length - 1}">not run</td></tr>`;
       continue;
     }
     h += `<tr><td>${s.system}</td><td>${s.acc.toFixed(1)}%</td>` +
          `<td>${s.p.toFixed(3)}</td><td>${s.r.toFixed(3)}</td>` +
          `<td>${s.f1.toFixed(3)}</td><td>${s.tp}</td><td>${s.fp}</td>` +
-         `<td>${s.fn}</td><td>${s.tn}</td></tr>`;
+         `<td>${s.fn}</td><td>${s.tn}</td>`;
+    if (paired) {
+      h += s.stripped
+        ? `<td title="stripped copy: TP${s.stripped.tp} FP${s.stripped.fp} ` +
+          `FN${s.stripped.fn} TN${s.stripped.tn}">${s.stripped.acc.toFixed(1)}%</td>` +
+          `<td>${s.trusted.toFixed(1)}%</td>`
+        : '<td class="muted">—</td><td class="muted">—</td>';
+    }
+    h += '</tr>';
   }
   $('results').innerHTML = h;
 }
@@ -2837,7 +4247,7 @@ async function loadCalls() {
     h += '<tr>' + row.map((v, i) => {
       if (!keep(i)) return '';
       const c = cols[i];
-      if (c === 'text' || c === 'transcript')
+      if (c === 'text' || c === 'transcript' || c === 'text_stripped')
         return `<td class="text">${esc(v.length > 260 ? v.slice(0, 260) + '…' : v)}</td>`;
       // the cell is clipped by CSS, so the full sentence goes in the tooltip
       if (why[i])
@@ -2962,26 +4372,30 @@ function markHistory() {
     a.classList.toggle('on', a.dataset.id === current);
 }
 
-// ============================================================ BERT + MCQ
+// ================================================================ BERT
 // The second page keeps its own state throughout - its own selected run, its
 // own poller - so switching pages never disturbs a benchmark streaming into
 // the first one. The only thing the two share is the run machinery on the
 // server: a training run is a detached run like any other, which is why it
 // also turns up under Recent runs.
-const PAGES = ['bench', 'mcq', 'llm'];
-const pageInUrl = () => PAGES.includes(location.hash.slice(1))
-  ? location.hash.slice(1) : 'bench';
+const PAGES = ['bench', 'bert', 'bow', 'length', 'llm'];
+// The BERT page was #mcq until the ontology came off it. Someone's bookmark
+// should not quietly land on the benchmark form.
+const PAGE_WAS = {mcq: 'bert'};
+const pageInUrl = () => {
+  const h = PAGE_WAS[location.hash.slice(1)] || location.hash.slice(1);
+  return PAGES.includes(h) ? h : 'bench';
+};
 
-let MCQ = null, model = null, MODELS = [];
+let BERT = null, model = null, MODELS = [];
 let trainRun = null, mtimer = null, moffset = 0;
 
-// form field -> the key /api/mcq/config sends its default under
+// form field -> the key /api/bert/config sends its default under
 const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
                  tlr: 'lr', tseed: 'seed', tlimit: 'limit', tholdout: 'holdout',
-                 awindow: 'window', astride: 'stride', amaxlen: 'max_length',
-                 aminconf: 'min_confidence', aminmargin: 'min_margin'};
+                 awindow: 'window', astride: 'stride', amaxlen: 'max_length'};
 
-// The page is in the URL, so #mcq can be bookmarked, reloaded, and sent to
+// The page is in the URL, so #bert can be bookmarked, reloaded, and sent to
 // someone - and reloading while reading an answer comes back to the answer
 // pane rather than to the benchmark form.
 function showPage(name) {
@@ -2990,35 +4404,34 @@ function showPage(name) {
   for (const b of $('pages').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.page === name);
   $('page-bench').hidden = name !== 'bench';
-  $('page-mcq').hidden = name !== 'mcq';
+  $('page-bert').hidden = name !== 'bert';
+  $('page-bow').hidden = name !== 'bow';
+  $('page-length').hidden = name !== 'length';
   $('page-llm').hidden = name !== 'llm';
   // drawn on first visit rather than at boot: someone who only ever runs
   // benchmarks should not be made to wait for a directory scan of models/,
   // nor for ollama to be asked what it has pulled
-  if (name === 'mcq' && !MCQ) mcqBoot();
+  if (name === 'bert' && !BERT) bertBoot();
+  if (name === 'bow' && !BOW) bowBoot();
+  if (name === 'length' && !LEN) lenBoot();
   if (name === 'llm' && !LLM) llmBoot();
 }
 
-async function mcqBoot() {
-  const cfg = await api('/api/mcq/config');
-  if (cfg.error || !cfg.branches) {
-    $('modelerr').textContent = cfg.error || 'unexpected reply from /api/mcq/config';
+async function bertBoot() {
+  const cfg = await api('/api/bert/config');
+  if (cfg.error || !cfg.bases) {
+    $('modelerr').textContent = cfg.error || 'unexpected reply from /api/bert/config';
     return;
   }
-  MCQ = cfg;
+  BERT = cfg;
 
-  $('tdataset').innerHTML = $('sampleds').innerHTML = MCQ.datasets.map(d =>
+  $('tdataset').innerHTML = $('sampleds').innerHTML = BERT.datasets.map(d =>
     `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
   ).join('');
-  $('tbase').innerHTML = MCQ.bases.map(b =>
+  $('tbase').innerHTML = BERT.bases.map(b =>
     `<option value="${b.id}">${b.id}</option>`).join('');
-  // "auto" is the interesting setting - forcing a branch is for checking what
-  // the questions of another branch would have made of the same call
-  $('branch').innerHTML =
-    '<option value="auto">let the model route it</option>' +
-    MCQ.branches.map(b => `<option value="${b.id}">${esc(b.text)}` +
-      ` (${b.questions} question${b.questions === 1 ? '' : 's'})</option>`).join('');
-  for (const [id, key] of Object.entries(MFIELDS)) $(id).value = MCQ.defaults[key];
+  for (const [id, key] of Object.entries(MFIELDS))
+    if ($(id) && BERT.defaults[key] !== undefined) $(id).value = BERT.defaults[key];
 
   $('tbase').onchange = onBase;
   onBase();
@@ -3026,9 +4439,18 @@ async function mcqBoot() {
   $('trainstop').onclick = () => trainRun && api('/api/stop', {id: trainRun});
   $('askgo').onclick = ask;
   $('sampleload').onclick = loadSample;
+  forgetRowOnEdit('transcript', 'sampleinfo');
   $('sampleidx').onkeydown = e => { if (e.key === 'Enter') loadSample(); };
   $('unload').onclick = unloadModel;
-  for (const b of $('mcqtabs').querySelectorAll('button'))
+  $('berteds').innerHTML = BERT.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  $('bertevgo').onclick = () => evalRun('bert', evalIds('bert', 'm-eval'), {
+    model: model, dataset: $('berteds').value, limit: $('bertevlimit').value,
+    threshold: $('bertevthr').value, strip_tags: $('bertevstrip').checked,
+    gpu: $('bertevgpu').checked,
+  });
+  for (const b of $('berttabs').querySelectorAll('button'))
     b.onclick = () => showMtab(b.dataset.mtab);
 
   await refreshModels();
@@ -3040,19 +4462,20 @@ async function mcqBoot() {
 }
 
 function onBase() {
-  const b = MCQ.bases.find(x => x.id === $('tbase').value);
+  const b = BERT.bases.find(x => x.id === $('tbase').value);
   $('tbasenote').textContent = b ? b.note : '';
 }
 
 function showMtab(name) {
-  for (const b of $('mcqtabs').querySelectorAll('button'))
+  for (const b of $('berttabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.mtab === name);
-  for (const t of ['ask', 'train', 'about']) $('m-' + t).hidden = t !== name;
+  for (const t of ['ask', 'eval', 'train', 'about'])
+    $('m-' + t).hidden = t !== name;
 }
 
 // ------------------------------------------------------- trained models
 async function refreshModels() {
-  const r = await api('/api/mcq/models');
+  const r = await api('/api/bert/models');
   if (r.error) { $('modelerr').textContent = r.error; return; }
   $('modelerr').textContent = '';
   paintModels(r.models || [], r.worker || {loaded: false});
@@ -3062,13 +4485,13 @@ function paintModels(models, worker) {
   MODELS = models;
   paintWorker(worker);
   if (!models.length) {
-    $('mcqmodels').innerHTML = '<div class="muted">nothing trained yet</div>';
+    $('bertmodels').innerHTML = '<div class="muted">nothing trained yet</div>';
     model = null;
-    paintMcqHeader();
+    paintBertHeader();
     return;
   }
   if (!models.some(m => m.name === model)) model = models[0].name;
-  $('mcqmodels').innerHTML = models.map(m => {
+  $('bertmodels').innerHTML = models.map(m => {
     const acc = m.holdout && m.holdout.acc != null
       ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%'
       : 'not scored';
@@ -3083,16 +4506,16 @@ function paintModels(models, worker) {
         ${esc((m.dataset || 'dataset unrecorded').replace('datasets/', ''))} · ${kb(m.bytes)}</div>
     </a>`;
   }).join('');
-  for (const a of $('mcqmodels').querySelectorAll('a'))
-    a.onclick = () => { model = a.dataset.model; markModels(); paintMcqHeader(); };
-  for (const b of $('mcqmodels').querySelectorAll('[data-delmodel]'))
+  for (const a of $('bertmodels').querySelectorAll('a'))
+    a.onclick = () => { model = a.dataset.model; markModels(); paintBertHeader(); };
+  for (const b of $('bertmodels').querySelectorAll('[data-delmodel]'))
     b.onclick = e => { e.stopPropagation(); delModel(b.dataset.delmodel); };
   markModels();
-  paintMcqHeader();
+  paintBertHeader();
 }
 
 function markModels() {
-  for (const a of $('mcqmodels').querySelectorAll('a'))
+  for (const a of $('bertmodels').querySelectorAll('a'))
     a.classList.toggle('on', a.dataset.model === model);
 }
 
@@ -3105,10 +4528,10 @@ function paintWorker(w) {
       + 'takes a few seconds';
 }
 
-function paintMcqHeader(status) {
+function paintBertHeader(status) {
   const m = MODELS.find(x => x.name === model);
   if (m) {
-    $('mcqtitle').textContent = m.name;
+    $('berttitle').textContent = m.name;
     const bits = [m.base];
     if (m.dataset) bits.push(m.dataset.replace('datasets/', '')
                              + (m.rows ? ' · ' + m.rows + ' calls' : ''));
@@ -3116,14 +4539,14 @@ function paintMcqHeader(status) {
       bits.push('holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%'
                 + ' · F1 ' + m.holdout.f1.toFixed(3));
     if (m.trained_at) bits.push(new Date(m.trained_at).toLocaleString());
-    $('mcqsub').textContent = bits.join(' · ');
+    $('bertsub').textContent = bits.join(' · ');
   } else {
-    $('mcqtitle').textContent = 'No model selected';
-    $('mcqsub').textContent = "Train one on the left, then put the ontology's "
-                            + 'questions to it.';
+    $('berttitle').textContent = 'No model selected';
+    $('bertsub').textContent = 'Train one on the left, then put a transcript '
+                            + 'to it.';
   }
   const st = status || (trainRun && RUNS[trainRun] && RUNS[trainRun].status);
-  const pill = $('mcqpill');
+  const pill = $('bertpill');
   pill.hidden = !st;
   if (st) { pill.textContent = 'training · ' + st; pill.className = 'pill ' + st; }
   $('trainstop').hidden = st !== 'running';
@@ -3135,14 +4558,14 @@ async function delModel(name) {
              + `${m ? kb(m.bytes) + ' on disk. ' : ''}It cannot be recovered - `
              + `it would have to be trained again. Nothing else is touched.`)) return;
   $('modelerr').textContent = '';
-  const r = await api('/api/mcq/delete_model', {name});
+  const r = await api('/api/bert/delete_model', {name});
   if (r.error) { $('modelerr').textContent = r.error; return; }
   if (model === name) { model = null; $('answer').innerHTML = ''; }
   await refreshModels();
 }
 
 async function unloadModel() {
-  const r = await api('/api/mcq/unload', {});
+  const r = await api('/api/bert/unload', {});
   if (r.error) { $('modelerr').textContent = r.error; return; }
   await refreshModels();
 }
@@ -3151,7 +4574,7 @@ async function unloadModel() {
 async function train() {
   $('trainerr').textContent = '';
   $('traingo').disabled = true;
-  const res = await api('/api/mcq/train', {
+  const res = await api('/api/bert/train', {
     name: $('tname').value, dataset: $('tdataset').value, base: $('tbase').value,
     epochs: $('tepochs').value, batch_size: $('tbatch').value,
     max_length: $('tmaxlen').value, lr: $('tlr').value, seed: $('tseed').value,
@@ -3187,7 +4610,7 @@ async function mpoll() {
   moffset = r.offset;
   if (r.text) append(r.text, 'trainlog');
   if (RUNS[trainRun]) RUNS[trainRun].status = r.status;
-  paintMcqHeader(r.status);
+  paintBertHeader(r.status);
   if (r.status !== 'running') {
     clearInterval(mtimer); mtimer = null;
     // the checkpoint that just appeared is the point of the whole run
@@ -3197,40 +4620,55 @@ async function mpoll() {
 }
 
 // ----------------------------------------------------------- asking it
+// The dataset's own label for the row just loaded. It is the ground truth,
+// not a prediction, so it is worth showing before the model is asked - and
+// worth taking away the moment the text stops being that row.
+function truthPill(label) {
+  const v = String(label || '').trim().toLowerCase();
+  if (!v) return '';
+  const scam = ['scam', 'fraud', 'fraudulent', '1', 'true', 'yes'].includes(v);
+  return ` <span class="pill ${scam ? 'truth-scam' : 'truth-legit'}">`
+       + `labelled ${scam ? 'SCAM' : 'LEGITIMATE'}</span>`;
+}
+
+// Wires a transcript box so that editing it clears the row's label: once the
+// text is not that row any more, the label is about nothing.
+function forgetRowOnEdit(boxId, infoId) {
+  $(boxId).addEventListener('input', () => { $(infoId).innerHTML = ''; });
+}
+
 async function loadSample() {
   $('sampleinfo').textContent = 'loading…';
-  const r = await api(`/api/mcq/sample?dataset=${encodeURIComponent($('sampleds').value)}`
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('sampleds').value)}`
                     + `&idx=${encodeURIComponent($('sampleidx').value || 0)}`);
   if (r.error) { $('sampleinfo').textContent = r.error; return; }
   $('transcript').value = r.text;
   $('sampleidx').value = r.idx;
-  $('sampleinfo').textContent = `row ${r.idx} of ${r.total}`
-    + (r.row_id ? ' · id ' + r.row_id : '')
-    + (r.label ? ' · labelled ' + r.label : '');
+  $('sampleinfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
 }
 
 async function ask() {
   $('askerr').textContent = '';
   if (!model) { $('askerr').textContent = 'train a model first - there is '
-                                        + 'nothing to put the questions to'; return; }
+                                        + 'nothing to ask'; return; }
   const text = $('transcript').value.trim();
   if (!text) { $('askerr').textContent = 'paste a transcript, or load one from '
                                        + 'a dataset above'; return; }
   $('askgo').disabled = true;
-  $('askgo').textContent = 'Answering…';
-  $('answer').innerHTML = '<div class="card muted">putting the questions to '
+  $('askgo').textContent = 'Classifying…';
+  $('answer').innerHTML = '<div class="card muted">putting the call to '
     + esc(model) + '… the first one after a model or a setting changes also '
     + 'loads the checkpoint, which takes a few seconds</div>';
-  const res = await api('/api/mcq/answer', {
-    model: model, transcript: text, branch: $('branch').value,
-    cutoff: $('cutoff').value, gpu: $('agpu').checked,
+  const res = await api('/api/bert/classify', {
+    model: model, transcript: text, gpu: $('agpu').checked,
+    aggregate: $('aggregate').value, threshold: $('threshold').value,
+    strip_tags: $('astrip').checked,
     window: $('awindow').value, stride: $('astride').value,
-    max_length: $('amaxlen').value, min_confidence: $('aminconf').value,
-    min_margin: $('aminmargin').value, self_encoder: $('aself').checked,
-    raw_text: $('araw').checked,
+    max_length: $('amaxlen').value,
   });
   $('askgo').disabled = false;
-  $('askgo').textContent = 'Answer the questions';
+  $('askgo').textContent = 'Classify this call';
   if (res.error) {
     $('askerr').textContent = res.error;
     $('answer').innerHTML = '';
@@ -3241,109 +4679,769 @@ async function ask() {
 }
 
 function paintAnswer(a) {
-  const v = a.score.verdict;
-  const p = a.classifier.prob_scam;
-  const cls = p >= a.classifier.threshold ? 'scam' : 'legitimate';
-  const sum = (a.score.sum > 0 ? '+' : '') + a.score.sum.toFixed(2);
+  const pct = x => (100 * x).toFixed(1) + '%';
+  const cls = a.verdict;
 
-  // The two numbers side by side and never combined: one is the sum of the
-  // options chosen below, the other is the head that was actually trained.
+  // The three numbers side by side, because the interesting case is when they
+  // disagree: "first window" is what a single truncated read would have said,
+  // and on a long call that is a verdict on the hellos.
   const head = `
   <div class="card">
     <div class="verdict">
       <div>
-        <div class="cap">MCQ score</div>
-        <div class="big ${v}">${sum}</div>
-        <div class="hint">${esc(v)}${a.score.cutoff
-            ? ' · cut-off ' + a.score.cutoff : ''}</div>
+        <div class="cap">Verdict</div>
+        <div class="big ${cls}">${a.verdict.toUpperCase()}</div>
+        <div class="hint">scam at ${a.threshold}</div>
       </div>
       <div>
-        <div class="cap">Trained head</div>
-        <div class="big ${cls}">${(100 * p).toFixed(1)}%</div>
-        <div class="hint">prob_scam · ${cls} at ${a.classifier.threshold}</div>
+        <div class="cap">prob_scam</div>
+        <div class="big ${cls}">${pct(a.prob_scam)}</div>
+        <div class="hint">${a.aggregate === 'max' ? 'strongest of'
+          : 'average over'} ${a.windows} window${a.windows === 1 ? '' : 's'}</div>
       </div>
       <div style="flex:1; min-width:210px">
-        <div class="cap">Routed to</div>
-        <div style="font-weight:600">${esc(a.route.chosen_text)}</div>
-        <div class="hint">${a.route.forced ? 'the branch you chose'
-          : (100 * a.route.confidence).toFixed(0) + '% confident'} · ${
-          a.questions.length} question${a.questions.length === 1 ? '' : 's'}</div>
+        <div class="cap">Across the call</div>
+        <div style="font-weight:600">max ${pct(a.max)} · mean ${pct(a.mean)}
+          · first ${pct(a.first_window)}</div>
+        <div class="hint">${a.words} words · ${a.window_words}-word windows,
+          stride ${a.stride}</div>
       </div>
     </div>
-    ${a.route.legit_contrast ? `<div class="ev" style="font-style:normal; margin-top:15px">
-      <strong>A real call of this kind:</strong> ${esc(a.route.legit_contrast)}</div>` : ''}
   </div>`;
 
-  const body = a.questions.length
-    ? '<div class="card">' + a.questions.map(qBlock).join('') + '</div>'
-    : '<div class="card muted">that branch asks no questions, so there is '
-      + 'nothing to score - the call did not look like any of the kinds the '
-      + 'ontology covers</div>';
+  const notes = [];
+  if (a.windows > 1 && Math.abs(a.max - a.first_window) >= 0.2)
+    notes.push(`The opening of this call scores ${pct(a.first_window)} and its `
+      + `strongest stretch ${pct(a.max)}. Reading only the first `
+      + `${a.window_words} words — which is what a single pass through the `
+      + `tokenizer does — would have said something else.`);
+  if (a.stripped_tags)
+    notes.push('Tone tags were stripped before scoring. Training read them, so '
+      + 'this is the model being asked about text of a kind it never saw — a '
+      + 'useful experiment, not a like-for-like number.');
+  if (a.windows === 1)
+    notes.push('This call fits in one window, so there was nothing to combine '
+      + 'and all three numbers are the same read.');
 
-  const m = a.matching || {};
-  $('answer').innerHTML = head + body + `
-    <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
-      · ${a.windows} window${a.windows === 1 ? '' : 's'} · ${a.elapsed_ms} ms
-      on ${esc(a.device)}${m.encoder ? `<br>options matched in
-      ${esc(m.encoder === 'self' ? "the checkpoint's own hidden states"
-        : m.encoder)}${m.centred ? ', centred' : ', uncentred'}${
-        m.normalised ? '' : ', raw transcript'} · answered ${m.answered} of
-      ${m.asked} question${m.asked === 1 ? '' : 's'}` : ''}</div>`;
+  const bars = a.profile.map((s, i) => `
+    <tr class="${i === a.hottest.index ? 'chosen' : ''}">
+      <td class="optname">window ${i + 1}</td>
+      <td>${pct(s)}</td>
+      <td style="width:60%"><div class="bar ${s < 0.5 ? 'low' : ''}"
+        style="margin:0"><i style="width:${Math.max(2, 100 * s)}%"></i></div></td>
+    </tr>`).join('');
+
+  $('answer').innerHTML = head
+    + notes.map(n => `<div class="card hint">${n}</div>`).join('')
+    + `
+  <div class="card">
+    <div class="qp">Strongest stretch — window ${a.hottest.index + 1} of
+      ${a.windows}, ${pct(a.hottest.prob)}</div>
+    <div class="ev">…${esc(a.hottest.text.slice(0, 400))}${
+      a.hottest.text.length > 400 ? '…' : ''}</div>
+    <details class="adv" style="margin-bottom:0; margin-top:14px">
+      <summary>every window</summary>
+      <div class="advbody"><div class="scroll"><table class="opts">
+        <tr><th>window</th><th>prob_scam</th><th></th></tr>
+        ${bars}
+      </table></div></div>
+    </details>
+  </div>
+  <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.base || '?')}
+    · ${a.max_length} tokens per window · ${a.elapsed_ms} ms on
+    ${esc(a.device)}</div>`;
 }
 
-function qBlock(q) {
-  const pct = Math.round(100 * q.confidence);
-  const chip = q.recorded
-    ? '<span class="chip zero">recorded</span>'
-    : `<span class="chip ${q.contributes > 0 ? 'pos'
-        : q.contributes < 0 ? 'neg' : 'zero'}">${
-        q.contributes > 0 ? '+' : ''}${q.contributes.toFixed(1)}</span>`;
-  const val = o => (o.value === null || o.value === undefined) ? '—'
-    : (o.value > 0 ? '+' : '') + o.value.toFixed(1);
-  const rows = q.options.map(o => `
-    <tr class="${o.id === q.chosen ? 'chosen' : ''}">
-      <td class="optname">${esc(o.text)}</td>
-      <td>${val(o)}</td>
-      <td>${(100 * o.confidence).toFixed(0)}%</td>
-      <td>${o.similarity.toFixed(3)}</td>
-    </tr>`).join('');
-  const ev = q.evidence
-    ? `<div class="ev">…${esc(q.evidence.slice(0, 320))}${
-        q.evidence.length > 320 ? '…' : ''}</div>` : '';
-  return `
-  <div class="q">
-    <div class="qp">${esc(q.prompt)}</div>
-    <div class="qa">
-      <span class="pick">${esc(q.chosen_text)}${q.abstained
-        ? ' <span class="hint">— abstained</span>' : ''}</span>
-      ${chip}<span class="hint">${pct}%${q.margin === undefined ? ''
-        : ' · margin ' + q.margin.toFixed(3)}</span>
-    </div>
-    ${q.abstained && q.why_abstained ? `<div class="hint">${esc(q.why_abstained)}${
-      q.best_text ? ' — the best option was “' + esc(q.best_text) + '”' : ''}</div>` : ''}
-    <div class="bar ${q.abstained || q.confidence < 0.4 ? 'low' : ''}">
-      <i style="width:${Math.max(2, pct)}%"></i></div>
-    ${ev}
-    <details class="adv" style="margin-bottom:0">
-      <summary>all ${q.options.length} options${q.recorded
-        ? ' · recorded for the explanation, scores nothing' : ''}</summary>
-      <div class="advbody">
-        <div class="scroll"><table class="opts">
-          <tr><th>option</th><th>value</th><th>confidence</th><th>similarity</th></tr>
-          ${rows}
-        </table></div>
-        ${q.note ? `<div class="hint" style="margin-top:11px">${esc(q.note)}</div>` : ''}
+// ========================================================== Bag of words
+// The control page. Same shape as BERT - fit, then classify - but the model
+// is a few hundred kilobytes and can be read back exactly, so the answer is
+// the terms that decided it rather than a window profile.
+let BOW = null, bowModel = null, bowModels = [], bowTimer = null, bowRun = null;
+const BFIELDS = {bowngram: 'ngram_max', bowmindf: 'min_df',
+                 bowholdout: 'holdout', bowseed: 'seed'};
+
+async function bowBoot() {
+  const cfg = await api('/api/bow/config');
+  if (cfg.error || !cfg.datasets) {
+    $('bowmodelerr').textContent = cfg.error || 'unexpected reply from /api/bow/config';
+    return;
+  }
+  BOW = cfg;
+  $('bowdataset').innerHTML = $('bowds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  for (const [id, key] of Object.entries(BFIELDS))
+    if (cfg.defaults[key] !== undefined) $(id).value = cfg.defaults[key];
+
+  $('bowload').onclick = bowLoadRow;
+  forgetRowOnEdit('bowtranscript', 'bowinfo');
+  $('bowgo').onclick = bowAsk;
+  $('bowtrain').onclick = bowFit;
+  $('bowunload').onclick = async () => {
+    await api('/api/bow/unload', {}); await bowRefresh();
+  };
+  $('boweds').innerHTML = $('bowdataset').innerHTML;
+  $('bowevgo').onclick = () => evalRun('bow', evalIds('bow', 'b-eval'), {
+    model: bowModel, dataset: $('boweds').value, limit: $('bowevlimit').value,
+    threshold: $('bowevthr').value, strip_tags: $('bowevstrip').checked,
+  });
+  for (const b of $('bowtabs').querySelectorAll('button'))
+    b.onclick = () => bowTab(b.dataset.btab);
+  await bowRefresh();
+}
+
+function bowTab(name) {
+  for (const b of $('bowtabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.btab === name);
+  for (const t of ['ask', 'eval', 'train', 'about'])
+    $('b-' + t).hidden = t !== name;
+}
+
+async function bowRefresh() {
+  const r = await api('/api/bow/models');
+  if (r.error) { $('bowmodelerr').textContent = r.error; return; }
+  bowModels = r.models || [];
+  const w = r.worker || {};
+  $('bowworkerstate').textContent = w.loaded
+    ? `models/${w.model} is in memory` : '';
+  $('bowunload').hidden = !w.loaded;
+
+  if (!bowModels.length) {
+    $('bowmodels').innerHTML = '<div class="muted">nothing fitted yet</div>';
+    bowModel = null;
+  } else {
+    if (!bowModels.some(m => m.name === bowModel)) bowModel = bowModels[0].name;
+    $('bowmodels').innerHTML = bowModels.map(m => {
+      const acc = m.holdout && m.holdout.acc;
+      return `<div class="row">
+        <a href="#bow" data-bow="${esc(m.name)}"
+           class="${m.name === bowModel ? 'on' : ''}">
+          <strong>${esc(m.name)}</strong>
+          <span class="muted">${esc(m.dataset || '')}
+            · ${m.features || '?'} features${acc
+              ? ' · holdout acc ' + (100 * acc).toFixed(1) + '%' : ''}</span>
+        </a>
+        <button class="link" data-bowdel="${esc(m.name)}">delete</button>
+      </div>`;
+    }).join('');
+    for (const a of $('bowmodels').querySelectorAll('a'))
+      a.onclick = e => { e.preventDefault(); bowModel = a.dataset.bow; bowRefresh(); };
+    for (const b of $('bowmodels').querySelectorAll('[data-bowdel]'))
+      b.onclick = async () => {
+        if (!confirm('Delete models/' + b.dataset.bowdel + '?')) return;
+        const r = await api('/api/bow/delete_model', {name: b.dataset.bowdel});
+        if (r.error) { $('bowmodelerr').textContent = r.error; return; }
+        await bowRefresh();
+      };
+  }
+  const m = bowModels.find(x => x.name === bowModel);
+  $('bowtitle').textContent = m ? m.name : 'No model selected';
+  $('bowsub').textContent = m
+    ? [m.dataset, (m.rows || '?') + ' calls', (m.features || '?') + ' features',
+       'n-grams to ' + (m.ngram_max || '?'),
+       m.holdout && m.holdout.acc
+         ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%' : null,
+       m.elapsed_s !== undefined ? 'fitted in ' + m.elapsed_s + 's' : null,
+      ].filter(Boolean).join(' · ')
+    : 'Fit one on the left — it takes about a second — then put a transcript to it.';
+}
+
+async function bowLoadRow() {
+  $('bowinfo').textContent = 'loading…';
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('bowds').value)}`
+                    + `&idx=${encodeURIComponent($('bowidx').value || 0)}`);
+  if (r.error) { $('bowinfo').textContent = r.error; return; }
+  $('bowtranscript').value = r.text;
+  $('bowidx').value = r.idx;
+  $('bowinfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
+}
+
+async function bowFit() {
+  $('bowtrainerr').textContent = '';
+  const body = {name: $('bowname').value, dataset: $('bowdataset').value,
+                strip_tags: $('bowstriptrain').checked,
+                overwrite: $('bowoverwrite').checked};
+  for (const [id, key] of Object.entries(BFIELDS)) body[key] = $(id).value;
+  const res = await api('/api/bow/train', body);
+  if (res.error) { $('bowtrainerr').textContent = res.error; return; }
+  bowRun = res.id;
+  bowTab('train');
+  bowPoll();
+}
+
+// It finishes in about a second, so this polls briefly rather than streaming.
+async function bowPoll() {
+  if (!bowRun) return;
+  const r = await runLog(bowRun);
+  if (!r.error) $('bowtrainlog').textContent = r.text || '(no output yet)';
+  clearTimeout(bowTimer);
+  // A failed poll is not a finished run. Retry a few times before giving up,
+  // rather than concluding the run ended because one request did not land.
+  if (r.error) {
+    if ((POLL_FAILS['bowPoll'] = (POLL_FAILS['bowPoll'] || 0) + 1) < 5) {
+      bowTimer = setTimeout(bowPoll, 2000);
+    } else {
+      $('bowtrainlog').textContent = 'lost contact with the run: ' + r.error;
+    }
+    return;
+  }
+  POLL_FAILS['bowPoll'] = 0;
+  if (runOver(r)) { await bowRefresh(); return; }
+  bowTimer = setTimeout(bowPoll, 900);
+}
+
+async function bowAsk() {
+  $('bowaskerr').textContent = '';
+  if (!bowModel) { $('bowaskerr').textContent = 'fit a model first - there is '
+                                              + 'nothing to ask'; return; }
+  const text = $('bowtranscript').value.trim();
+  if (!text) { $('bowaskerr').textContent = 'paste a transcript, or load one '
+                                          + 'from a dataset above'; return; }
+  $('bowgo').disabled = true;
+  $('bowgo').textContent = 'Classifying…';
+  const res = await api('/api/bow/classify', {
+    model: bowModel, transcript: text, threshold: $('bowthreshold').value,
+    top: $('bowtop').value, strip_tags: $('bowstrip').checked,
+  });
+  $('bowgo').disabled = false;
+  $('bowgo').textContent = 'Classify this call';
+  if (res.error) {
+    $('bowaskerr').textContent = res.error;
+    $('bowanswer').innerHTML = '';
+    return;
+  }
+  bowPaint(res);
+  await bowRefresh();
+}
+
+function bowPaint(a) {
+  const pct = x => (100 * x).toFixed(1) + '%';
+  const terms = (list, cls) => list.length ? list.map(t => `
+    <tr><td class="optname">${esc(t.term)}</td>
+        <td class="${cls}">${t.contribution > 0 ? '+' : ''}${t.contribution.toFixed(4)}</td>
+        <td style="width:55%"><div class="bar" style="margin:0"><i
+          style="width:${Math.min(100, Math.abs(t.contribution) * 100 / Math.max(
+            0.0001, Math.abs((list[0] || {}).contribution || 1)))}%;
+          background:var(${cls === 'up' ? '--bad' : '--accent'})"></i></div></td>
+    </tr>`).join('') : '<tr><td class="optname muted">nothing</td><td></td><td></td></tr>';
+
+  $('bowanswer').innerHTML = `
+  <div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">Verdict</div>
+        <div class="big ${a.verdict}">${a.verdict.toUpperCase()}</div>
+        <div class="hint">scam at ${a.threshold}</div>
       </div>
-    </details>
+      <div>
+        <div class="cap">prob_scam</div>
+        <div class="big ${a.verdict}">${pct(a.prob_scam)}</div>
+        <div class="hint">score ${a.score > 0 ? '+' : ''}${a.score.toFixed(3)}</div>
+      </div>
+      <div style="flex:1; min-width:230px">
+        <div class="cap">What it could see</div>
+        <div style="font-weight:600">${a.vocab_known} of ${a.vocab_distinct}
+          distinct words known · ${a.matched} features matched</div>
+        <div class="hint">${a.words} words${a.stripped_tags
+          ? ' · tone tags stripped' : ''}</div>
+      </div>
+    </div>
+  </div>
+  <div class="card hint">The score is the intercept
+    (${a.intercept > 0 ? '+' : ''}${a.intercept.toFixed(3)}) plus every term's
+    TF-IDF weight times its coefficient. The terms below are those products,
+    largest first — they sum to
+    ${(a.score - a.intercept) > 0 ? '+' : ''}${(a.score - a.intercept).toFixed(3)},
+    which with the intercept is the score. This is the arithmetic, not a story
+    about it.</div>
+  <div class="card">
+    <div class="qp">Towards SCAM</div>
+    <div class="scroll"><table class="opts">${terms(a.toward_scam, 'up')}</table></div>
+    <div class="qp" style="margin-top:18px">Towards LEGITIMATE</div>
+    <div class="scroll"><table class="opts">${terms(a.toward_legit, 'down')}</table></div>
+  </div>
+  <div class="card hint">models/${esc(a.model.name)} · ${esc(a.model.dataset || '?')}
+    · ${a.model.features || '?'} features · ${a.elapsed_ms} ms</div>`;
+}
+
+// ====================================================== scoring a dataset
+// One implementation for all four pages. The four models are different
+// enough that they each get their own page, but a confusion matrix is a
+// confusion matrix, and four copies of this would be four chances for the
+// numbers to stop meaning the same thing.
+const EVAL = {};     // page -> {run, ids, timer}
+
+function evalIds(pre, pane) {
+  return {ds: pre + 'eds', limit: pre + 'evlimit', go: pre + 'evgo',
+          err: pre + 'everr', out: pre + 'evout', log: pre + 'evlog',
+          pane: pane};
+}
+
+// Each page says what it is scoring and with what; everything after the POST
+// is shared.
+async function evalRun(page, ids, body) {
+  $(ids.err).textContent = '';
+  if (!body.dataset) { $(ids.err).textContent = 'pick a dataset'; return; }
+  $(ids.go).disabled = true;
+  const res = await api('/api/' + page + '/evaluate', body);
+  $(ids.go).disabled = false;
+  if (res.error) { $(ids.err).textContent = res.error; return; }
+  clearTimeout((EVAL[page] || {}).timer);
+  EVAL[page] = {run: res.id, ids: ids};
+  $(ids.out).innerHTML = '<div class="card muted">scoring…</div>';
+  $(ids.log).hidden = false;
+  evalPoll(page);
+}
+
+async function evalPoll(page) {
+  const st = EVAL[page];
+  if (!st || !st.run) return;
+  const r = await runLog(st.run);
+  if (r.error) {
+    // A failed poll is not a finished run. Treating it as one is what turned
+    // a blocked or dropped request into "the run finished without writing a
+    // score", with an empty log pane under it and no way to tell that the
+    // run was in fact still going. So: say so, keep trying, and only give up
+    // after several in a row.
+    st.fails = (st.fails || 0) + 1;
+    $(st.ids.log).textContent = 'could not read the run log (attempt '
+      + st.fails + '): ' + r.error;
+    if (st.fails < 5) {
+      st.timer = setTimeout(() => evalPoll(page), 2000);
+      return;
+    }
+  } else {
+    st.fails = 0;
+    // the tail is the interesting part while it runs - a 7,000-call log is
+    // 7,000 lines and the browser should not be asked to lay all of them out.
+    // Trailing blank lines go: read_log strips the exit marker and leaves its
+    // newlines, and a pane scrolled to the bottom of those is a blank box.
+    const text = (r.text || '').replace(/\s+$/, '');
+    const lines = text.split('\n');
+    $(st.ids.log).textContent = lines.length > 400
+      ? '… ' + (lines.length - 400) + ' earlier lines\n'
+        + lines.slice(-400).join('\n')
+      : (text || '(no output yet)');
+    $(st.ids.log).scrollTop = $(st.ids.log).scrollHeight;
+  }
+  clearTimeout(st.timer);
+  if (r.error || runOver(r)) {
+    const m = await api(`/api/eval/result?id=${encodeURIComponent(st.run)}`);
+    // the result endpoint knows whether the run is still going even when the
+    // log could not be read, so a run that is merely unreachable keeps being
+    // waited on rather than being declared over
+    if (!m.error && !m.ready && m.status === 'running') {
+      st.timer = setTimeout(() => evalPoll(page), 2000);
+      return;
+    }
+    if (m.error || !m.ready) {
+      // Say what went wrong here, not "see the log": the log pane is below
+      // the fold and is scrolled to its end, where a stripped exit marker
+      // leaves blank lines - so a crash used to look like no output at all.
+      $(st.ids.out).innerHTML = `<div class="card">
+        <div class="qp">No score — ${esc(m.error || m.why || 'the run did not finish')}</div>
+        <div class="hint">The run is <code>${esc(st.run)}</code>${
+          m.status ? ' and its status is <code>' + esc(m.status) + '</code>' : ''}.
+          ${m.error ? 'The server could not be asked for the result.'
+                    : 'This is the end of what it printed:'}</div>
+        ${m.tail ? `<pre class="log" style="margin-top:12px">${esc(m.tail)}</pre>`
+                 : ''}</div>`;
+      return;
+    }
+    $(st.ids.out).innerHTML = evalCard(m);
+    return;
+  }
+  st.timer = setTimeout(() => evalPoll(page), 1200);
+}
+
+const pc = x => (100 * x).toFixed(1) + '%';
+
+// The confusion matrix as a table, because the four cells are what every
+// other number on the card is derived from and a reader should be able to
+// check the arithmetic.
+function evalMatrix(m) {
+  const cell = (n, tot, cls) => `<td class="${cls}"><strong>${n}</strong>`
+    + `<span class="muted"> ${tot ? pc(n / tot) : '—'}</span></td>`;
+  const scam = m.tp + m.fn, legit = m.fp + m.tn;
+  return `<table class="cm">
+    <tr><th></th><th>said scam</th><th>said legitimate</th></tr>
+    <tr><th>really scam</th>${cell(m.tp, scam, 'good')}${cell(m.fn, scam, 'bad')}</tr>
+    <tr><th>really legitimate</th>${cell(m.fp, legit, 'bad')}${cell(m.tn, legit, 'good')}</tr>
+  </table>`;
+}
+
+function missList(title, list, note) {
+  if (!list || !list.length) return '';
+  return `<div class="qp" style="margin-top:16px">${title}
+      <span class="muted" style="font-weight:400">— ${note}</span></div>`
+    + list.map(x => `<div class="ev">
+        <span class="muted">id ${esc(String(x.id))} · ${x.words} words${
+          x.prob_scam ? ' · p(scam) ' + x.prob_scam : ''}${
+          x.words_counted !== undefined ? ' · counted ' + x.words_counted : ''}${
+          x.verdict ? ' · said ' + esc(x.verdict) : ''}</span><br>${esc(x.excerpt)}${
+          x.reason ? '<br><em>' + esc(x.reason) + '</em>' : ''}</div>`).join('');
+}
+
+function evalCard(d) {
+  const m = d.metrics, b = d.baselines;
+  const floor = Math.max(b.always_scam.acc, b.never_scam.acc);
+  const over = m.acc - floor;
+  const notes = [];
+
+  // Which of three experiments this is. They are not comparable with each
+  // other, and none of them is the Benchmark page's cross-validated figure -
+  // a 100% there next to a 50% here is two experiments, not a disagreement,
+  // and that is exactly the reading this note exists to stop.
+  // The LLM was never fitted on anything, so none of the three applies to
+  // it; what matters there is which prompt was used, which is below.
+  if (d.kind === 'llm') {
+    notes.push(d.profile
+      ? 'Scored under the fitted prompt <code>models/' + esc(d.profile)
+        + '</code>. Run it again with <em>None</em> picked to see what the '
+        + 'bare <code>llm_only</code> prompt gets on the same calls — that '
+        + 'difference is what the fitting bought outside its own holdout.'
+      : 'Scored with the bare <code>llm_only</code> prompt, so this is the '
+        + 'control. It is the same prompt the Benchmark page uses, over the '
+        + 'same calls.');
+  } else if (d.same_dataset) notes.push('<strong>This model was fitted on this '
+    + 'dataset.</strong> Unless rows were held back, it has read these calls '
+    + 'before, so the score is a memory test rather than a measurement. Point '
+    + 'it at a dataset it has never seen for the number worth quoting.');
+  else if (d.trained_on) notes.push('<strong>This is a transfer test.</strong> '
+    + 'The model was fitted on <code>' + esc(d.trained_on) + '</code> and '
+    + 'scored on <code>' + esc(d.dataset) + '</code> — how far what it learned '
+    + 'on one corpus carries to another. That is a harder question than the '
+    + 'Benchmark page asks: its figure is k-fold cross-validation <em>within</em> '
+    + 'one dataset, so it trains and scores on the same kind of text. A low '
+    + 'number here beside a high one there is a finding, not a contradiction.');
+  else notes.push('This model does not record what it was fitted on, so '
+    + 'whether it has already read these calls cannot be told from here.');
+  if (m.acc <= floor) notes.push('<strong>This does not beat answering the '
+    + 'same thing every time</strong> (' + pc(floor) + ' by always saying '
+    + (b.always_scam.acc >= b.never_scam.acc ? 'scam' : 'legitimate')
+    + '). On this dataset the model is adding nothing to the class balance.');
+  if (m.unreadable) notes.push(m.unreadable + ' call(s) got no readable '
+    + 'answer. They are left out of the scores above rather than counted as '
+    + 'legitimate — which is what would quietly turn every one of them into a '
+    + 'false negative.');
+  if (d.truncated) notes.push(d.truncated + ' prompt(s) were truncated by '
+    + 'ollama, so those verdicts are about part of the call. Raise the '
+    + 'context window and score again before quoting this.');
+  if (d.mirror && d.mirror.acc > m.acc) notes.push('The same threshold '
+    + 'pointing the other way would get <strong>' + pc(d.mirror.acc)
+    + '</strong>. The rule is the wrong way round for this dataset.');
+
+  const big = (label, val, sub) => `<div>
+      <div class="cap">${label}</div>
+      <div class="big">${val}</div>
+      <div class="hint">${sub}</div></div>`;
+
+  return `
+  <div class="card">
+    <div class="verdict">
+      ${big('Accuracy', pc(m.acc),
+            (over > 0 ? '+' + (100 * over).toFixed(1) + ' over ' : 'under ')
+            + 'the best constant answer')}
+      ${big('Precision', m.precision.toFixed(3), 'of the calls it called scam')}
+      ${big('Recall', m.recall.toFixed(3), 'of the scams it found')}
+      ${big('F1', m.f1.toFixed(3), 'balanced acc ' + pc(m.balanced_acc))}
+    </div>
+  </div>
+  <div class="card">
+    <div class="qp">Where the ${m.scored} scored calls went</div>
+    ${evalMatrix(m)}
+    <div class="hint" style="margin-top:12px">
+      always scam would get ${pc(b.always_scam.acc)} ·
+      never scam ${pc(b.never_scam.acc)} ·
+      specificity ${m.specificity.toFixed(3)} ·
+      ${d.calls} calls in ${d.elapsed_s}s</div>
+  </div>
+  ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
+  <div class="card">
+    ${missList('Called scam, was not', d.misses && d.misses.false_scam,
+               'false positives')}
+    ${missList('Called legitimate, was a scam', d.misses && d.misses.missed_scam,
+               'false negatives — the expensive kind')}
+    ${missList('No readable answer', d.misses && d.misses.unreadable,
+               'scored as neither')}
+    ${(d.misses && (d.misses.false_scam.length || d.misses.missed_scam.length
+      || d.misses.unreadable.length)) ? '' :
+      '<div class="qp">Nothing to show — it got every call right.</div>'}
+    <div class="hint" style="margin-top:14px">Up to ten of each are sampled
+      here. Every call is in <code>${esc(d.per_call_csv)}</code>, with the
+      prediction, the truth and the transcript.</div>
   </div>`;
+}
+
+// =========================================================== Length only
+// The floor. Same shape as the other two - fit, then classify - but the
+// model is one integer, so the answer is the comparison itself: where the
+// call falls against the line, against the two fitting distributions, and
+// what share of fitting calls on that side of the line really were scams.
+let LEN = null, lenModel = null, lenModels = [], lenTimer = null, lenRun = null;
+const LFIELDS2 = {lenholdout: 'holdout', lenseed: 'seed', lenlimit: 'limit',
+                  lenthreshold: 'threshold'};
+
+async function lenBoot() {
+  const cfg = await api('/api/length/config');
+  if (cfg.error || !cfg.datasets) {
+    $('lenmodelerr').textContent = cfg.error
+      || 'unexpected reply from /api/length/config';
+    return;
+  }
+  LEN = cfg;
+  $('lendataset').innerHTML = $('lends').innerHTML = cfg.datasets.map(d =>
+    `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  for (const [id, key] of Object.entries(LFIELDS2))
+    if (cfg.defaults[key] !== undefined && cfg.defaults[key] !== null)
+      $(id).value = cfg.defaults[key];
+  // the pinned box opens on the benchmark's own rule, since that is the only
+  // reason to pin it rather than sweep
+  $('lenthreshold').value = cfg.benchmark_threshold;
+
+  $('lenpin').onchange = () => { $('lenpinrow').hidden = !$('lenpin').checked; };
+  $('lenload').onclick = lenLoadRow;
+  forgetRowOnEdit('lentranscript', 'leninfo');
+  $('lengo').onclick = lenAsk;
+  $('lenfit').onclick = lenFit;
+  $('lenunload').onclick = async () => {
+    await api('/api/length/unload', {}); await lenRefresh();
+  };
+  $('leneds').innerHTML = $('lendataset').innerHTML;
+  $('lenevgo').onclick = () => evalRun('length', evalIds('len', 'l-eval'), {
+    model: lenModel, dataset: $('leneds').value, limit: $('lenevlimit').value,
+    threshold: $('lenevthr').value, direction: $('lenevdir').value,
+    strip_tags: $('lenevstrip').checked,
+  });
+  for (const b of $('lentabs').querySelectorAll('button'))
+    b.onclick = () => lenTab(b.dataset.ltab);
+  await lenRefresh();
+}
+
+function lenTab(name) {
+  for (const b of $('lentabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.ltab === name);
+  for (const t of ['ask', 'eval', 'train', 'about'])
+    $('l-' + t).hidden = t !== name;
+}
+
+const lenRule = m => `${m.direction || '?'} than ${m.threshold} words`;
+
+async function lenRefresh() {
+  const r = await api('/api/length/models');
+  if (r.error) { $('lenmodelerr').textContent = r.error; return; }
+  lenModels = r.models || [];
+  const w = r.worker || {};
+  $('lenworkerstate').textContent = w.loaded
+    ? `models/${w.model} is loaded` : '';
+  $('lenunload').hidden = !w.loaded;
+
+  if (!lenModels.length) {
+    $('lenmodels').innerHTML = '<div class="muted">nothing fitted yet</div>';
+    lenModel = null;
+  } else {
+    if (!lenModels.some(m => m.name === lenModel)) lenModel = lenModels[0].name;
+    $('lenmodels').innerHTML = lenModels.map(m => {
+      const acc = m.holdout && m.holdout.acc;
+      return `<div class="row">
+        <a href="#length" data-len="${esc(m.name)}"
+           class="${m.name === lenModel ? 'on' : ''}">
+          <strong>${esc(m.name)}</strong>
+          <span class="muted">${esc(m.dataset || '')}
+            · ${esc(lenRule(m))}${m.swept === false ? ' · pinned' : ''}${acc
+              ? ' · holdout acc ' + (100 * acc).toFixed(1) + '%' : ''}</span>
+        </a>
+        <button class="link" data-lendel="${esc(m.name)}">delete</button>
+      </div>`;
+    }).join('');
+    for (const a of $('lenmodels').querySelectorAll('a'))
+      a.onclick = e => { e.preventDefault(); lenModel = a.dataset.len; lenRefresh(); };
+    for (const b of $('lenmodels').querySelectorAll('[data-lendel]'))
+      b.onclick = async () => {
+        if (!confirm('Delete models/' + b.dataset.lendel + '?')) return;
+        const r = await api('/api/length/delete_model', {name: b.dataset.lendel});
+        if (r.error) { $('lenmodelerr').textContent = r.error; return; }
+        await lenRefresh();
+      };
+  }
+  const m = lenModels.find(x => x.name === lenModel);
+  $('lentitle').textContent = m ? m.name : 'No model selected';
+  $('lensub').textContent = m
+    ? [m.dataset, (m.rows || '?') + ' calls', lenRule(m),
+       m.swept === false ? 'pinned, not swept' : 'swept',
+       m.holdout && m.holdout.acc
+         ? 'holdout acc ' + (100 * m.holdout.acc).toFixed(1) + '%' : null,
+      ].filter(Boolean).join(' · ')
+    : 'Fit one on the left — it is one sort of the dataset — then put a '
+      + 'transcript to it.';
+}
+
+async function lenLoadRow() {
+  $('leninfo').textContent = 'loading…';
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('lends').value)}`
+                    + `&idx=${encodeURIComponent($('lenidx').value || 0)}`);
+  if (r.error) { $('leninfo').textContent = r.error; return; }
+  $('lentranscript').value = r.text;
+  $('lenidx').value = r.idx;
+  $('leninfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
+}
+
+async function lenFit() {
+  $('lenfiterr').textContent = '';
+  const body = {name: $('lenname').value, dataset: $('lendataset').value,
+                metric: $('lenmetric').value,
+                pin: $('lenpin').checked,
+                direction: $('lendirection').value,
+                strip_tags: $('lenstriptrain').checked,
+                overwrite: $('lenoverwrite').checked};
+  for (const [id, key] of Object.entries(LFIELDS2)) body[key] = $(id).value;
+  const res = await api('/api/length/train', body);
+  if (res.error) { $('lenfiterr').textContent = res.error; return; }
+  lenRun = res.id;
+  lenTab('train');
+  lenPoll();
+}
+
+async function lenPoll() {
+  if (!lenRun) return;
+  const r = await runLog(lenRun);
+  if (!r.error) $('lentrainlog').textContent = r.text || '(no output yet)';
+  clearTimeout(lenTimer);
+  // A failed poll is not a finished run. Retry a few times before giving up,
+  // rather than concluding the run ended because one request did not land.
+  if (r.error) {
+    if ((POLL_FAILS['lenPoll'] = (POLL_FAILS['lenPoll'] || 0) + 1) < 5) {
+      lenTimer = setTimeout(lenPoll, 2000);
+    } else {
+      $('lentrainlog').textContent = 'lost contact with the run: ' + r.error;
+    }
+    return;
+  }
+  POLL_FAILS['lenPoll'] = 0;
+  if (runOver(r)) { await lenRefresh(); return; }
+  lenTimer = setTimeout(lenPoll, 900);
+}
+
+async function lenAsk() {
+  $('lenaskerr').textContent = '';
+  if (!lenModel) { $('lenaskerr').textContent = 'fit a threshold first - '
+                                              + 'there is nothing to ask'; return; }
+  const text = $('lentranscript').value.trim();
+  if (!text) { $('lenaskerr').textContent = 'paste a transcript, or load one '
+                                          + 'from a dataset above'; return; }
+  $('lengo').disabled = true;
+  $('lengo').textContent = 'Classifying…';
+  const res = await api('/api/length/classify', {
+    model: lenModel, transcript: text,
+    threshold: $('lenaskthreshold').value,
+    direction: $('lenaskdirection').value,
+    strip_tags: $('lenstrip').checked,
+  });
+  $('lengo').disabled = false;
+  $('lengo').textContent = 'Classify this call';
+  if (res.error) {
+    $('lenaskerr').textContent = res.error;
+    $('lenanswer').innerHTML = '';
+    return;
+  }
+  lenPaint(res);
+  await lenRefresh();
+}
+
+// Where this call sits on a log scale between the two fitting distributions,
+// with the line drawn through it. Lengths here run from a dozen words to
+// sixty thousand, so a linear axis would put every short call on the same
+// pixel.
+function lenScale(a) {
+  const d = a.dist || {};
+  const pts = [a.words, a.threshold];
+  for (const k of ['scam', 'legit'])
+    if (d[k]) for (const p of ['p10', 'p50', 'p90']) pts.push(d[k][p]);
+  const lo = Math.max(1, Math.min(...pts.filter(x => x > 0)) * 0.7);
+  const hi = Math.max(...pts) * 1.3;
+  const L = Math.log(lo), H = Math.log(hi);
+  return x => 100 * (Math.log(Math.max(1, x)) - L) / Math.max(0.0001, H - L);
+}
+
+function lenPaint(a) {
+  const d = a.dist || {}, at = lenScale(a);
+  const span = (k, cls) => d[k] ? `
+    <div class="lenband ${cls}" style="left:${at(d[k].p10)}%;
+      width:${Math.max(0.6, at(d[k].p90) - at(d[k].p10))}%"></div>
+    <div class="lentick ${cls}" style="left:${at(d[k].p50)}%"></div>` : '';
+
+  const rate = a.prob_scam === null || a.prob_scam === undefined
+    ? '<span class="muted">not known</span>'
+    : `${(100 * a.prob_scam).toFixed(1)}%`;
+
+  $('lenanswer').innerHTML = `
+  <div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">Verdict</div>
+        <div class="big ${a.verdict}">${a.verdict.toUpperCase()}</div>
+        <div class="hint">${esc(a.direction)} than ${a.threshold} words${
+          a.moved ? ' · moved from the fitted rule' : ''}</div>
+      </div>
+      <div>
+        <div class="cap">This call</div>
+        <div class="big">${a.words}</div>
+        <div class="hint">words · ${a.margin > 0 ? '+' : ''}${a.margin} past
+          the line</div>
+      </div>
+      <div style="flex:1; min-width:230px">
+        <div class="cap">Of the fitting calls on this side</div>
+        <div style="font-weight:600">${rate} were scams</div>
+        <div class="hint">${a.side_n} calls ${a.side === 'above'
+          ? 'longer than' : 'at or under'} ${a.threshold} words${
+          a.stripped_tags ? ' · tone tags stripped' : ''}</div>
+      </div>
+    </div>
+  </div>
+
+  ${a.rate_disagrees ? `<div class="card warn">Most fitting calls on this side
+    of the line were <strong>not</strong> what the rule just called this one.
+    The threshold is past the point where it carries anything — the verdict is
+    the rule being applied, not evidence.</div>` : ''}
+
+  <div class="card">
+    <div class="qp">Where it falls</div>
+    <div class="lenaxis">
+      ${span('legit', 'legit')}
+      ${span('scam', 'scam')}
+      <div class="lenline" style="left:${at(a.threshold)}%"></div>
+      <div class="lenhere ${a.verdict}" style="left:${at(a.words)}%"></div>
+    </div>
+    <div class="hint" style="margin-top:10px">
+      <span class="lenkey legit"></span> legitimate calls in the fitting set
+        (p10–p90, median marked)${d.legit
+          ? ` — median ${d.legit.p50} words` : ''}
+      &nbsp;&nbsp;<span class="lenkey scam"></span> scam calls${d.scam
+          ? ` — median ${d.scam.p50} words` : ''}
+      &nbsp;&nbsp;<span class="lenkey line"></span> the threshold
+      &nbsp;&nbsp;<span class="lenkey here"></span> this call.
+      Log scale: calls here run from a dozen words to tens of thousands.</div>
+  </div>
+
+  <div class="card hint">Nothing in the call was read — not a word of it, only
+    how much of it there was. models/${esc(a.model.name)} ·
+    ${esc(a.model.dataset || '?')} ·
+    ${a.model.swept === false ? 'threshold pinned' : 'threshold swept'} ·
+    ${a.elapsed_ms} ms</div>`;
 }
 
 // ============================================================== LLM judge
 // The third page. One transcript, one question, one verdict with a reason.
 // It holds nothing between clicks - there is no worker to keep alive, since
 // ollama is the thing holding the model.
-let LLM = null;
+let LLM = null, llmProf = '', llmProfs = [];
+let llmFitRun = null, llmFitTimer = null;
 const LFIELDS = {llmmaxtok: 'max_tokens', llmctx: 'num_ctx', llmtemp: 'temperature'};
+const JFIELDS = {llmshots: 'shots', llmshotwords: 'shot_words',
+                 llmholdcalls: 'holdout_calls', llmfitseed: 'seed'};
 
 async function llmBoot() {
   const cfg = await api('/api/llm/config');
@@ -3375,11 +5473,174 @@ async function llmBoot() {
   $('llmds').innerHTML = cfg.datasets.map(d =>
     `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
   $('llmload').onclick = llmLoadRow;
+  forgetRowOnEdit('llmtranscript', 'llminfo');
   $('llmgo').onclick = llmAsk;
   $('llmguideclear').onclick = () => { $('llmguidance').value = ''; llmSize(); };
   for (const id of ['llmtranscript', 'llmguidance', 'llmctx'])
     $(id).addEventListener('input', llmSize);
+
+  // the fitting side
+  $('llmfitds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  for (const [id, key] of Object.entries(JFIELDS))
+    if (cfg.fit_defaults[key] !== undefined) $(id).value = cfg.fit_defaults[key];
+  $('llmfitgo').onclick = llmFit;
+  for (const id of ['llmshots', 'llmholdcalls', 'llmrubric'])
+    $(id).addEventListener('input', llmFitCost);
+  $('llmeds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  $('llmevlimit').addEventListener('input', llmEvalCost);
+  $('llmeds').addEventListener('change', llmEvalCost);
+  $('llmevgo').onclick = () => evalRun('llm', evalIds('llm', 'j-eval'), {
+    model: llmProf, base_model: $('llmmodel').value,
+    dataset: $('llmeds').value, limit: $('llmevlimit').value,
+    num_ctx: $('llmctx').value, max_tokens: $('llmmaxtok').value,
+    temperature: $('llmtemp').value,
+  });
+  llmEvalCost();
+  for (const b of $('llmtabs').querySelectorAll('button'))
+    b.onclick = () => llmTab(b.dataset.jtab);
+  llmFitCost();
+  await llmProfiles();
   llmSize();
+}
+
+function llmTab(name) {
+  for (const b of $('llmtabs').querySelectorAll('button'))
+    b.classList.toggle('on', b.dataset.jtab === name);
+  for (const t of ['ask', 'eval', 'fit', 'about'])
+    $('j-' + t).hidden = t !== name;
+}
+
+// What a fit is going to cost, before it is started rather than after. Two
+// calls per held-out call is the honest price of knowing whether the fitted
+// prompt beat the control, and it is not obvious from the form.
+function llmFitCost() {
+  const hold = parseInt($('llmholdcalls').value, 10) || 0;
+  const n = hold * 2 + ($('llmrubric').checked ? 1 : 0);
+  $('llmfitcost').innerHTML = n
+    ? `about <strong>${n}</strong> calls to the model: ${hold} held-out `
+      + `call${hold === 1 ? '' : 's'} scored twice, fitted and bare`
+      + ($('llmrubric').checked ? ', plus one to write the rubric' : '')
+      + '. On a 14B model that is minutes, not seconds.'
+    : 'no holdout — the prompt will be saved unmeasured, which means you will '
+      + 'not know whether it beat the bare one.';
+}
+
+// The one evaluate that has to be budgeted rather than just started. One
+// generation per call, and the datasets here run to seven thousand.
+function llmEvalCost() {
+  const opt = $('llmeds').selectedOptions[0];
+  const rows = opt ? parseInt((opt.textContent.match(/([0-9]+) rows/) || [])[1], 10) : 0;
+  const asked = parseInt($('llmevlimit').value, 10) || 0;
+  const n = asked ? Math.min(asked, rows || asked) : rows;
+  if (!n) { $('llmevcost').textContent = ''; return; }
+  // 6s/call is a 14B model on a GPU with a short transcript; long calls and
+  // CPU are both far worse, so this is the optimistic end and is labelled so
+  const secs = n * 6;
+  const h = secs >= 3600 ? (secs / 3600).toFixed(1) + ' hours'
+          : secs >= 60 ? Math.round(secs / 60) + ' minutes'
+          : secs + ' seconds';
+  $('llmevcost').innerHTML = `<strong>${n}</strong> generation`
+    + (n === 1 ? '' : 's') + ` — at best about ${h} on a 14B model with the `
+    + `GPU, and a good deal longer on CPU or with long calls`;
+}
+
+async function llmProfiles() {
+  const r = await api('/api/llm/profiles');
+  if (r.error) { $('llmproferr').textContent = r.error; return; }
+  llmProfs = r.profiles || [];
+  if (!llmProfs.some(p => p.name === llmProf)) llmProf = '';
+  const row = (name, label, sub, on) => `<div class="row">
+      <a href="#llm" data-prof="${esc(name)}" class="${on ? 'on' : ''}">
+        <strong>${esc(label)}</strong>
+        <span class="muted">${sub}</span>
+      </a>${name ? `<button class="link" data-profdel="${esc(name)}">delete</button>`
+                 : ''}</div>`;
+
+  let html = row('', 'None — the bare control', 'the transcript and the '
+    + 'question, nothing else. The only setting comparable with a benchmark '
+    + 'row.', !llmProf);
+  html += llmProfs.map(p => {
+    const acc = p.holdout && p.holdout.acc;
+    const gain = p.gain;
+    const bits = [esc(p.dataset || ''), (p.shots || 0) + ' example'
+      + (p.shots === 1 ? '' : 's')];
+    if (p.rubric) bits.push('rubric');
+    if (p.guided) bits.push('instructions');
+    if (acc !== undefined && acc !== null)
+      bits.push(`holdout ${(100 * acc).toFixed(1)}%`
+        + (gain === null || gain === undefined ? ''
+           : `, <strong class="${gain > 0 ? 'gain-up' : 'gain-down'}">`
+             + `${gain > 0 ? '+' : ''}${(100 * gain).toFixed(1)} vs control</strong>`));
+    return row(p.name, p.name, bits.join(' · '), p.name === llmProf);
+  }).join('');
+  $('llmprofiles').innerHTML = html;
+
+  for (const a of $('llmprofiles').querySelectorAll('a'))
+    a.onclick = e => { e.preventDefault(); llmProf = a.dataset.prof; llmProfiles(); };
+  for (const b of $('llmprofiles').querySelectorAll('[data-profdel]'))
+    b.onclick = async () => {
+      if (!confirm('Delete models/' + b.dataset.profdel + '?')) return;
+      const r = await api('/api/llm/delete_profile', {name: b.dataset.profdel});
+      if (r.error) { $('llmproferr').textContent = r.error; return; }
+      await llmProfiles();
+    };
+
+  const p = llmProfs.find(x => x.name === llmProf);
+  $('llmtitle').textContent = p ? p.name : 'Bare llm_only control';
+  $('llmsub').innerHTML = p
+    ? [esc(p.dataset || '?'), (p.shots || 0) + ' worked example'
+        + (p.shots === 1 ? '' : 's'),
+       p.rubric ? 'a rubric' : null,
+       p.guided ? 'standing instructions' : null,
+       p.prompt_tokens ? '~' + p.prompt_tokens + ' extra tokens per call' : null,
+       (p.gain === null || p.gain === undefined) ? null
+         : `${p.gain > 0 ? '+' : ''}${(100 * p.gain).toFixed(1)} points against `
+           + `the control on ${p.holdout_rows} held-out calls`,
+      ].filter(Boolean).join(' · ')
+    : 'No fitted prompt — the transcript and the question, exactly as the '
+      + 'benchmark asks it.';
+}
+
+async function llmFit() {
+  $('llmfiterr').textContent = '';
+  const model = $('llmmodel').value;
+  if (!model) { $('llmfiterr').textContent = 'no model to fit against - pull '
+                                           + 'one with ollama first'; return; }
+  const body = {name: $('llmfitname').value, dataset: $('llmfitds').value,
+                model: model, rubric: $('llmrubric').checked,
+                overwrite: $('llmfitover').checked,
+                num_ctx: $('llmctx').value,
+                guidance: $('llmfitguide').checked ? $('llmguidance').value : ''};
+  for (const [id, key] of Object.entries(JFIELDS)) body[key] = $(id).value;
+  const res = await api('/api/llm/fit', body);
+  if (res.error) { $('llmfiterr').textContent = res.error; return; }
+  llmFitRun = res.id;
+  llmTab('fit');
+  llmFitPoll();
+}
+
+async function llmFitPoll() {
+  if (!llmFitRun) return;
+  const r = await runLog(llmFitRun);
+  if (!r.error) $('llmfitlog').textContent = r.text || '(no output yet)';
+  clearTimeout(llmFitTimer);
+  // A failed poll is not a finished run. Retry a few times before giving up,
+  // rather than concluding the run ended because one request did not land.
+  if (r.error) {
+    if ((POLL_FAILS['llmFitPoll'] = (POLL_FAILS['llmFitPoll'] || 0) + 1) < 5) {
+      llmFitTimer = setTimeout(llmFitPoll, 2000);
+    } else {
+      $('llmfitlog').textContent = 'lost contact with the run: ' + r.error;
+    }
+    return;
+  }
+  POLL_FAILS['llmFitPoll'] = 0;
+  if (runOver(r)) { await llmProfiles(); return; }
+  llmFitTimer = setTimeout(llmFitPoll, 1500);
 }
 
 const wordsIn = id => $(id).value.trim().split(/\s+/).filter(Boolean).length;
@@ -3415,14 +5676,13 @@ function llmSize() {
 
 async function llmLoadRow() {
   $('llminfo').textContent = 'loading…';
-  const r = await api(`/api/mcq/sample?dataset=${encodeURIComponent($('llmds').value)}`
+  const r = await api(`/api/dataset/sample?dataset=${encodeURIComponent($('llmds').value)}`
                     + `&idx=${encodeURIComponent($('llmidx').value || 0)}`);
   if (r.error) { $('llminfo').textContent = r.error; return; }
   $('llmtranscript').value = r.text;
   $('llmidx').value = r.idx;
-  $('llminfo').textContent = `row ${r.idx} of ${r.total}`
-    + (r.row_id ? ' · id ' + r.row_id : '')
-    + (r.label ? ' · labelled ' + r.label : '');
+  $('llminfo').innerHTML = `row ${r.idx} of ${r.total}`
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
   llmSize();
 }
 
@@ -3439,7 +5699,7 @@ async function llmAsk() {
   $('llmanswer').innerHTML = '<div class="card muted">' + esc(model)
     + ' is reading the call… a 14B model takes a few seconds on a GPU and '
     + 'rather longer on a CPU</div>';
-  const body = {model: model, transcript: text,
+  const body = {model: model, transcript: text, profile: llmProf,
                 guidance: $('llmguidance').value};
   for (const [id, key] of Object.entries(LFIELDS)) body[key] = $(id).value;
   const res = await api('/api/llm/judge', body);
@@ -3457,6 +5717,12 @@ function paintVerdict(r) {
   const cls = r.unreadable ? 'uncertain' : (r.scam ? 'scam' : 'legitimate');
   const word = r.unreadable ? 'UNREADABLE' : (r.scam ? 'SCAM' : 'LEGITIMATE');
   const notes = [];
+  if (r.profile) notes.push('Judged under the fitted prompt <strong>models/'
+    + esc(r.profile) + '</strong> — ' + r.shots + ' worked example'
+    + (r.shots === 1 ? '' : 's') + (r.rubric ? ' and a rubric' : '')
+    + ' went in ahead of the call. Nothing was fine-tuned: that is text in the '
+    + 'prompt, not a change to the model. This is not the <code>llm_only</code> '
+    + 'control — pick <em>None</em> on the left for that.');
   if (r.guided) notes.push('Judged under your standing instructions, so this is '
     + 'not the <code>llm_only</code> control any more — it is the model doing '
     + 'what you told it. Clear the box to get the unguided verdict back.');
@@ -3472,6 +5738,10 @@ function paintVerdict(r) {
     + "Ollama's own count, not an estimate. Note it read about half the "
     + r.num_ctx + '-token window rather than all of it: a window merely close '
     + 'to the prompt size is no use, it has to exceed it.');
+  if (r.prompt_truncated && r.profile) notes.push('Because the prompt was '
+    + 'truncated, the worked examples were the first thing to go — they sit at '
+    + 'the front for exactly that reason. This verdict is closer to the bare '
+    + 'control than to the fitted prompt you picked.');
   if (r.truncated) notes.push('The reply looks cut off. Raise the reply tokens.');
   if (r.retried) notes.push('The first reply could not be read, so the model was '
     + 'asked again for a single word. The reason below is from the first reply.');

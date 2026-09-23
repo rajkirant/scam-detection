@@ -26,6 +26,14 @@
 #   ./run_all.sh -b llm_only,mcq,bert -l 0    # just those three, one run
 #   ./run_all.sh -b 3,7,8 -l 0                # the same three, by number
 #
+# The content-deletion test scores every system twice, on the dataset and on
+# a stripped twin of it with the content words removed, and adds a
+# trusted-accuracy table. Learning systems are trained on the original text
+# only (see scripts/trusted.py):
+#
+#   ./run_all.sh -d datasets/scambait_bank_422.csv \
+#                --stripped datasets/scambait_bank_422_stripped.csv -b all -l 0
+#
 # A long run can outlive the SSH session, so question 5 offers to hand the
 # actual work to a detached tmux session: closing the terminal, or losing
 # the link, then does not kill it. It is asked on every run, including a
@@ -59,10 +67,11 @@ ONTOLOGY="knowledge/scam_ontology.json"
 MCQ_ONTOLOGY="knowledge/mcq_ontology.json"
 MODELS=("qwen2.5:14b" "llama3.1:8b")
 
-BL_KEYS=(all trivial llm_only singh webrag qwen_kb hybrid ontology mcq bert)
+BL_KEYS=(all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert)
 BL_LABELS=(
   "all                       every system below, in one run"
-  "length + bag-of-words     trivial references, no LLM"
+  "Length only               word count against one threshold, no LLM"
+  "Bag of words              TF-IDF into logistic regression, no LLM"
   "LLM-only                  the model decides alone, no retrieval"
   "Singh                     policy-compliance baseline"
   "Web-RAG                   KB-only retrieval"
@@ -79,7 +88,7 @@ prompt() {            # prompt <text> <varname>   - read only echoes its own
 }
 
 # ---------------------------------------------------------------- arguments
-ARG_DATASET=""; ARG_BASELINE=""; ARG_LIMIT=""; ARG_MODEL=""
+ARG_DATASET=""; ARG_BASELINE=""; ARG_LIMIT=""; ARG_MODEL=""; ARG_STRIPPED=""
 DETACH=0; SESSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -87,6 +96,7 @@ while [[ $# -gt 0 ]]; do
     -b|--baseline) ARG_BASELINE="${2:-}"; shift 2 ;;
     -l|--limit)    ARG_LIMIT="${2:-}";    shift 2 ;;
     -m|--model)    ARG_MODEL="${2:-}";    shift 2 ;;
+    -S|--stripped) ARG_STRIPPED=1; shift ;;
     -t|--tmux)     DETACH=1;              shift   ;;
     -s|--session)  SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)     awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
@@ -364,7 +374,8 @@ has_bl bert     && RUN_BERT=1
 # combined_evaluate.py owns four of the seven systems, so it runs whenever
 # any of them was picked, and is told to skip the ones that were not.
 COMBINED_SKIP=()
-has_bl trivial  || COMBINED_SKIP+=(length bow)
+has_bl length   || COMBINED_SKIP+=(length)
+has_bl bow      || COMBINED_SKIP+=(bow)
 has_bl llm_only || COMBINED_SKIP+=(llm_only)
 has_bl singh    || COMBINED_SKIP+=(singh)
 has_bl webrag   || COMBINED_SKIP+=(webrag)
@@ -377,7 +388,7 @@ if [[ ${#COMBINED_SKIP[@]} -lt 7 ]]; then     # fewer than all seven skipped
 fi
 
 # only the systems that actually call an LLM make the model question worth
-# asking - a trivial+bert selection needs no model at all
+# asking - a length/bow/bert selection needs no model at all
 NEEDS_MODEL=0
 for _k in llm_only singh webrag qwen_kb hybrid ontology mcq; do
   has_bl "$_k" && NEEDS_MODEL=1
@@ -431,7 +442,7 @@ if [[ "$NEEDS_MODEL" -eq 1 ]]; then
     echo
     die "Ollama is not answering at $OLLAMA_URL
        start it with:  ollama serve
-       (or pick a baseline that needs no LLM: trivial, or bert)"
+       (or pick a baseline that needs no LLM: length, bow, or bert)"
   fi
   is_pulled "$MODEL" || warn "$MODEL is not pulled here.  Get it with:  ollama pull $MODEL"
 fi
@@ -458,6 +469,7 @@ relaunch_cmd() {           # the exact command line the detached copy runs
   printf 'bash %q --dataset %q --baseline %q --limit %q' \
     "$SELF" "$DATASET" "$BASELINE" "$lim"
   [[ -n "$MODEL" ]] && printf ' --model %q' "$MODEL"
+  [[ -n "$ARG_STRIPPED" ]] && printf ' --stripped'
   printf '\n'
 }
 
@@ -598,6 +610,34 @@ ok "logs      $LOGDIR"
 # either way)
 SINGLE_MODE=0
 [[ -n "$ONE_ID" || -n "$ONE_IDX" ]] && SINGLE_MODE=1
+
+# The content-deletion test pairs the dataset with its stripped twin by id,
+# and refuses a twin whose ids, order or labels disagree with it.
+# The content-deletion test needs no twin file and no second dataset. The
+# stripped copy is built from the dataset itself, by deleting every word that
+# is not in trusted.FUNCTION_WORDS, so any dataset in the list can be tested
+# and the pairing is exact by construction.
+#
+# combined_evaluate.py and bert_baseline.py strip in memory, which is what
+# lets them honour --limit. The ontology runners take a CSV path, so one
+# stripped copy is written into this run's log directory for them - the same
+# strip_content_words either way, so the two cannot disagree.
+STRIPPED_ARGS=""
+STRIPPED_ON=0
+if [[ -n "$ARG_STRIPPED" ]]; then
+  STRIPPED_ON=1
+  [[ "$SINGLE_MODE" -eq 1 ]] && die "--stripped scores every call twice;
+       it cannot be combined with a one-transcript id:/idx: limit"
+  STRIPPED_ARGS="--stripped"
+  if [[ "$RUN_ONTOLOGY" -eq 1 || "$RUN_MCQ" -eq 1 ]]; then
+    ARG_STRIPPED="$LOGDIR/stripped_$(basename "$DATASET")"
+    python scripts/trusted.py strip "$DATASET" "$ARG_STRIPPED" \
+      || die "could not build the stripped copy"
+  else
+    ARG_STRIPPED=""
+  fi
+  ok "stripped  content-deletion test on (built from $DATASET)"
+fi
 [[ -n "$LIMIT_ARG" ]] && warn "pilot mode: $LIMIT_ARG"
 if [[ ( -n "$ONE_ID" || -n "$ONE_IDX" ) && "$RUN_BERT" -eq 1 ]]; then
   warn "BERT needs several rows per fold to train on; a 1-row run will fail or be meaningless"
@@ -713,7 +753,7 @@ fi
 if [[ "$RUN_COMBINED" -eq 1 ]]; then
   # shellcheck disable=SC2086
   run_step "combined" python -u scripts/combined_evaluate.py \
-    --csv "$DATASET" $LIMIT_ARG $COMBINED_EXTRA $QWEN_ARGS
+    --csv "$DATASET" $LIMIT_ARG $COMBINED_EXTRA $QWEN_ARGS $STRIPPED_ARGS
 fi
 
 # ---------------------------------------------------------- 2. ontology RAG
@@ -727,6 +767,14 @@ if [[ "$RUN_ONTOLOGY" -eq 1 ]]; then
   run_step "ontology" python -u scripts/evaluate_ontology.py \
     --csv "$DATASET" --model "$MODEL" --ontology "$ONTOLOGY" \
     --out "$ONTO_OUT" $LIMIT_ARG $DEBUG_FLAG
+  if [[ -n "$ARG_STRIPPED" ]]; then
+    # nothing here is learned from the data, so the stripped twin is simply
+    # scored; trusted.py check has already confirmed its rows line up
+    # shellcheck disable=SC2086
+    run_step "ontology_stripped" python -u scripts/evaluate_ontology.py \
+      --csv "$ARG_STRIPPED" --model "$MODEL" --ontology "$ONTOLOGY" \
+      --out "${ONTO_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
+  fi
 fi
 
 # ---------------------------------------------------------- 3. MCQ ontology
@@ -736,6 +784,12 @@ if [[ "$RUN_MCQ" -eq 1 ]]; then
   run_step "mcq" python -u scripts/evaluate_mcq_ontology.py \
     --csv "$DATASET" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
     --out "$MCQ_OUT" $LIMIT_ARG $DEBUG_FLAG
+  if [[ -n "$ARG_STRIPPED" ]]; then
+    # shellcheck disable=SC2086
+    run_step "mcq_stripped" python -u scripts/evaluate_mcq_ontology.py \
+      --csv "$ARG_STRIPPED" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
+      --out "${MCQ_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
+  fi
 fi
 
 # --------------------------------------------------------- 4. free GPU, BERT
@@ -787,7 +841,7 @@ if [[ "$RUN_BERT" -eq 1 ]]; then
   fi
   # shellcheck disable=SC2086
   run_step "bert" python -u scripts/bert_baseline.py cv \
-    --csv "$DATASET" --out "$BERT_OUT" $BERT_ARGS
+    --csv "$DATASET" --out "$BERT_OUT" $BERT_ARGS $STRIPPED_ARGS
 fi
 
 # ------------------------------------------------------------------ results
@@ -795,6 +849,7 @@ ELAPSED=$(( $(date +%s) - START_ALL ))
 
 echo
 echo "  dataset: $DATASET   baseline: $BASELINE   model: ${MODEL:-none}"
+[[ "$STRIPPED_ON" -eq 1 ]] && echo "  content-deletion test: on (stripped copy built from the dataset)"
 python scripts/collect_results.py "$LOGDIR"
 
 echo "=========================================================================="
