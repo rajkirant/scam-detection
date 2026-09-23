@@ -152,7 +152,12 @@ latest_url() {
 # if this went up while it ran - which is true whether localhost.run handed
 # back a new address or, for a keyed tunnel, the same one as last time.
 announced() {
-  grep -c "tunneled with" "$TUNNEL_LOG" 2>/dev/null || echo 0
+  # grep -c prints "0" AND exits 1 when nothing matches, so "|| echo 0" would
+  # print a second 0 and hand arithmetic "0<newline>0". Take what it printed,
+  # and fall back to 0 only when it printed nothing (no log file yet).
+  local n
+  n="$(grep -c "tunneled with" "$TUNNEL_LOG" 2>/dev/null)"
+  echo "${n:-0}"
 }
 
 # Wait for the NEXT announcement after $1 lines, and give its URL.
