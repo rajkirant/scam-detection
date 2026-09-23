@@ -36,6 +36,7 @@ from urllib.parse import urlparse
 import requests
 import chromadb
 from chromadb.utils import embedding_functions
+import gpu                       # noqa: E402  - GPU for embeddings when there is one
 
 CHROMA_DB_DIR = "./chroma_db"
 KB_COLLECTION = "scam_patterns"
@@ -163,7 +164,7 @@ Respond with the single sentence only, no preamble."""
 def get_kb_collection():
     client = chromadb.PersistentClient(path=CHROMA_DB_DIR)
     ef = embedding_functions.SentenceTransformerEmbeddingFunction(
-        model_name=EMBEDDING_MODEL_NAME)
+        model_name=EMBEDDING_MODEL_NAME, device=gpu.device())
     return client.get_collection(name=KB_COLLECTION, embedding_function=ef)
 
 

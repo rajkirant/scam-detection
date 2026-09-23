@@ -1266,13 +1266,11 @@ def bert_verdict(form):
     aggregate = str(form.get("aggregate") or "max")
     if aggregate not in ("max", "mean"):
         raise ValueError("aggregate must be max or mean")
-    if form.get("gpu"):
-        # the one thing that would actually fight a benchmark for VRAM
-        if any(r["status"] == "running" for r in all_runs()):
-            raise ValueError("a run is going, and scoring on the GPU would "
-                             "fight it for VRAM. Untick \"score on the GPU\", "
-                             "or stop the run first.")
-        opts.append("--gpu")
+    # The GPU by default. While a benchmark run is going it is using the GPU
+    # itself, so a one-call question drops to the CPU for that call rather
+    # than being refused - the answer card says which device answered.
+    busy = any(r["status"] == "running" for r in all_runs())
+    opts.append("--gpu" if form.get("gpu") and not busy else "--cpu")
 
     # aggregate, threshold and strip_tags ride with the request rather than
     # the worker's argv: they change what is done with the window scores, not
@@ -2164,12 +2162,13 @@ def start_eval_run(page, form):
     if page == "bert":
         # a whole dataset through BERT is the one evaluate that wants the GPU,
         # and the one that fights a benchmark for it
-        if form.get("gpu"):
-            flags.append("--gpu")
         running = [r for r in all_runs() if r["status"] == "running"]
         if running and form.get("gpu"):
-            raise ValueError("a run is already going (%s). Stop it first - "
-                             "the GPU cannot hold two." % running[0]["id"])
+            raise ValueError("a run is already going (%s), and it has the "
+                             "GPU. Stop it first, or untick \"use the GPU\" "
+                             "to score on the CPU alongside it."
+                             % running[0]["id"])
+        flags.append("--gpu" if form.get("gpu") else "--cpu")
 
     limit = numeric(form, EVAL_FIELDS, "limit")
     if limit:
@@ -2976,7 +2975,7 @@ results table, and the prediction it made for every single call.</pre>
             </select></label>
           <label class="inline" for="threshold">Scam at
             <input type="text" id="threshold" class="num" placeholder="0.5"></label>
-          <label class="inline"><input type="checkbox" id="agpu">
+          <label class="inline"><input type="checkbox" id="agpu" checked>
             score on the GPU</label>
         </div>
         <details class="adv">
@@ -3033,7 +3032,7 @@ results table, and the prediction it made for every single call.</pre>
             <input type="text" id="bertevthr" class="num" placeholder="model's own"></label>
           <label class="inline"><input type="checkbox" id="bertevstrip">
             strip tone tags</label>
-          <label class="inline"><input type="checkbox" id="bertevgpu">
+          <label class="inline"><input type="checkbox" id="bertevgpu" checked>
             use the GPU</label></div>
         <button class="go" id="bertevgo">Score every call</button>
         <div class="hint" id="berteverr" style="color:var(--bad)"></div>

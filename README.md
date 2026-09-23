@@ -1274,6 +1274,35 @@ the row count — the launcher parses them as CSV instead.
 
 ---
 
+## GPU use
+
+Everything that can use the GPU does, by default:
+
+| Part | Device |
+| --- | --- |
+| every LLM system (Ollama) | GPU — Ollama's own choice whenever the model fits |
+| BERT benchmark and BERT page training | GPU (`--cpu` to opt out) |
+| BERT page classify and "score a dataset" | GPU (untick the box, or `--cpu`) |
+| sentence-transformer embeddings for Singh, Web-RAG, Qwen-KB, Hybrid | GPU (`SCAM_DEVICE=cpu` to opt out) |
+| bag of words, length | CPU — they finish in about a second |
+
+Two things decide whether the LLM systems are actually fast on it:
+
+- **The context window only grows.** Ollama reloads the whole model whenever
+  a request's window differs from the last one. Sizing each call on its own
+  changed the window on 88% of calls on `scamai_full_1000` and 60% on
+  `everything_7013` — thousands of reloads. Kept as the largest needed so
+  far, that is 1 and 3.
+- **The model has to fit.** A big window grows the KV cache, and a model that
+  no longer fits is split between GPU and CPU by Ollama without a word. After
+  the LLM steps `run_all.sh` asks Ollama and prints either
+  `gpu  qwen2.5:14b is 100% on the GPU` or a warning with the percentage. If
+  you see the warning, lower the context window.
+
+While a benchmark run holds the GPU, a single question on the BERT page is
+answered on the CPU instead (the answer card names the device), and scoring a
+whole dataset with BERT asks you to stop the run or untick the box.
+
 ## Environment variables
 
 | Variable | Default | What it does |
@@ -1285,6 +1314,8 @@ the row count — the launcher parses them as CSV instead.
 | `WEBRAG_LLM_GATE` | `1` | `0` ablates the LLM relevance check |
 | `SCAM_NUM_CTX` | `8192` | ceiling on the Ollama context window every LLM system asks for — see [the context window](#the-context-window) |
 | `QWEN_NUM_CTX`, `QWEN_BATCH_SIZE`, `QWEN_N_RETRIEVE`, `QWEN_MIN_SIMILARITY`, `QWEN_EXAMPLE_CHARS` | see `scripts/combined_evaluate.py` | Qwen-KB tuning |
+| `SCAM_STICKY_CTX` | `1` | the context window only grows during a run, so Ollama reloads the model a handful of times rather than on most calls. `0` sizes every call on its own — only worth it if `run_all.sh` warns the model is not 100% on the GPU |
+| `SCAM_DEVICE` | GPU when there is one | `cpu` forces the retrieval embeddings and BERT page scoring onto the CPU |
 | `HEARTBEAT_SECS` | `60` | how often `run_all.sh` checks for silence |
 | `SCAM_BASH` | `bash` | the bash the web UI shells out to |
 

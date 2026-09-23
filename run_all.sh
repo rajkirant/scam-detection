@@ -808,6 +808,41 @@ except Exception:
 " 2>/dev/null
 }
 
+# How much of each loaded model is actually on the GPU, asked right after the
+# LLM steps and before BERT unloads it. A model that does not fit - most often
+# because a long dataset grew the context window, and the KV cache with it -
+# is split by Ollama between GPU and CPU without a word, and every call after
+# that runs several times slower. This is the one place that would say so.
+ollama_gpu_report() {
+  curl -s -m 5 "$OLLAMA_URL/api/ps" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    ms = json.load(sys.stdin).get('models', [])
+except Exception:
+    ms = []
+for m in ms:
+    size, vram = m.get('size') or 0, m.get('size_vram') or 0
+    if not size:
+        continue
+    pct = 100.0 * vram / size
+    name = m.get('name') or m.get('model')
+    ctx = (m.get('context_length') or '')
+    ctx = ' at a %s-token window' % ctx if ctx else ''
+    if pct >= 99.5:
+        print('ok|%s is 100%% on the GPU%s' % (name, ctx))
+    else:
+        print('warn|%s is only %.0f%% on the GPU%s - the rest ran on the CPU, '
+              'which is far slower. Lower the context window (SCAM_NUM_CTX) '
+              'or use a smaller model.' % (name, pct, ctx))
+" 2>/dev/null | while IFS='|' read -r lvl msg; do
+    if [[ "$lvl" == ok ]]; then ok "gpu       $msg"; else warn "$msg"; fi
+  done
+}
+
+if [[ "$NEEDS_MODEL" -eq 1 && "$OLLAMA_UP" -eq 1 ]]; then
+  ollama_gpu_report
+fi
+
 BERT_MIN_FREE_MB="${BERT_MIN_FREE_MB:-4000}"
 
 if [[ "$RUN_BERT" -eq 1 ]]; then

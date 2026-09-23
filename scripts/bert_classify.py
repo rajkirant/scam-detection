@@ -414,7 +414,7 @@ def transcript_from_csv(path, idx=None, row_id=None):
 
 
 def classifier_from(args):
-    return Classifier(args.name, gpu=args.gpu, max_length=args.max_length,
+    return Classifier(args.name, gpu=not args.cpu, max_length=args.max_length,
                       window=args.window, stride=args.stride,
                       aggregate=args.aggregate, strip=args.strip_tags)
 
@@ -621,9 +621,12 @@ def build_parser():
 
     def scoring(sp):
         sp.add_argument("--name", required=True)
-        sp.add_argument("--gpu", action="store_true",
-                        help="score on the GPU; by default inference is on "
-                             "CPU so a benchmark run keeps the VRAM")
+        sp.add_argument("--cpu", action="store_true",
+                        help="score on the CPU; by default it is the GPU "
+                             "whenever there is one")
+        # the old opt-in, kept so scripts that pass it still run - it is now
+        # what happens anyway
+        sp.add_argument("--gpu", action="store_true", help=argparse.SUPPRESS)
         sp.add_argument("--max-length", type=int, default=None,
                         help="tokens per window; defaults to what the "
                              "checkpoint was trained at")
