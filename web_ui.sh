@@ -480,4 +480,7 @@ if [[ "$PUBLIC" -eq 1 ]]; then
   fi
 fi
 
-wait "$SERVER_PID"
+# One line, read whole before it runs: the Update button can git pull a new
+# copy of this file while bash is still sitting here, and bash reads a script
+# as it goes - so once the server is gone, exit without reading any further.
+wait "$SERVER_PID"; exit $?

@@ -274,6 +274,27 @@ browser, dropping the SSH link, or restarting the server does not stop them —
 reopen the URL and the run is still there. Pick a run under **Recent runs** to
 get its Output, Results, Per-call predictions and the per-baseline Step logs.
 
+### Update and Stop server
+
+Two buttons at the right of the header, with the running commit beside them.
+
+**Update** runs `git pull --ff-only` in the project and, if anything new came
+in, restarts the server into it — the page reloads itself when the new server
+answers. The restart happens inside the same process, so `web_ui.sh` never
+notices and **the public link stays up on the same address**. It is refused,
+with the reason, while a run is going (bash reads `run_all.sh` as it executes,
+so replacing it under a live run can break that run) or when the pull cannot
+fast-forward (local edits, say) — in both cases nothing is changed. One file
+it cannot reload is `web_ui.sh` itself; if an update changes it, the page says
+so, and it takes effect the next time you start the UI from the terminal.
+
+**Stop server** stops the UI: the server exits, `web_ui.sh` closes the public
+tunnel, and a `--tmux` session ends. Runs already going carry on and finish on
+their own. Start it again from the terminal.
+
+Neither is behind a password, the same as the rest of the page: anyone who
+has the public link can press them.
+
 ### Results tab
 
 A run of every baseline takes an afternoon. The **Results** tab at the top of
