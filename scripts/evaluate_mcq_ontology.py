@@ -40,13 +40,13 @@ def load(csv_path, limit=None):
     p = Path(csv_path)
     if not p.exists():
         sys.exit("ERROR: not found: %s" % csv_path)
-    rows = list(csv.DictReader(open(p, encoding="utf-8")))
-    if not rows or "text" not in rows[0] or "label" not in rows[0]:
-        sys.exit("ERROR: CSV needs 'text' and 'label' columns")
+    import dataset_io
+    rows = dataset_io.read_rows(p)
+    tcol, lcol, _ = dataset_io.columns(rows, csv_path)
     data = []
     for r in rows:
-        lab = "Fraud" if (r["label"] or "").strip().lower() in SCAM_WORDS else "Normal"
-        txt = (r["text"] or "").strip()
+        lab = "Fraud" if dataset_io.is_scam(r[lcol]) else "Normal"
+        txt = (r[tcol] or "").strip()
         if txt:
             data.append((txt, lab))
     if limit:

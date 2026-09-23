@@ -43,9 +43,13 @@ def main():
     if not args.out:
         args.out = "results/ontology_results_%s.csv" % ontology_rag.MODEL.replace(":", "-")
 
-    rows = list(csv.DictReader(open(args.csv, encoding="utf-8")))
-
-    data = [(r["text"], "Fraud" if r["label"].strip().lower() == "scam" else "Normal") for r in rows]
+    import dataset_io
+    rows = dataset_io.read_rows(args.csv)
+    tcol, lcol, _ = dataset_io.columns(rows, args.csv)
+    # is_scam, not == "scam": a dataset labelled 1/0 was otherwise scored as
+    # all-legitimate, every scam a false negative, with nothing said about it
+    data = [(r[tcol], "Fraud" if dataset_io.is_scam(r[lcol]) else "Normal")
+            for r in rows]
     random.seed(42)
     random.shuffle(data)          # same seed/order convention as combined_evaluate
     if args.limit:

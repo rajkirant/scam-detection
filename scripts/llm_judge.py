@@ -332,7 +332,7 @@ def judge(transcript, model=None, max_tokens=DEFAULT_MAX_TOKENS,
 def transcript_from_csv(path, idx=None, row_id=None):
     import csv
     csv.field_size_limit(sys.maxsize)
-    with open(path, newline="", encoding="utf-8", errors="replace") as f:
+    with open(path, newline="", encoding="utf-8-sig", errors="replace") as f:
         rows = list(csv.DictReader(f))
     if not rows:
         raise SystemExit("that dataset is empty")

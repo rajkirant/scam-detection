@@ -60,7 +60,7 @@ def load_rows(path, text_col=None, label_col=None, limit=None, quiet=False):
     p = Path(path)
     if not p.exists():
         raise SystemExit("dataset not found: %s" % path)
-    with open(p, newline="", encoding="utf-8", errors="replace") as f:
+    with open(p, newline="", encoding="utf-8-sig", errors="replace") as f:
         raw = list(csv.DictReader(f))
     if not raw:
         raise SystemExit("that dataset is empty")
