@@ -4,7 +4,7 @@
 #
 #   ./run_all.sh
 #
-# Asks up to five questions, then runs just what you picked:
+# Asks up to four questions, then runs just what you picked:
 #
 #   1. which dataset    (numbered menu of every CSV in datasets/)
 #   2. which baselines  (one, several as a comma list, or all of them)
@@ -12,17 +12,18 @@
 #                         id:<value> = the one row whose id column matches,
 #                         idx:<n> = the same call as index n in a --limit 40
 #                         style shuffled run, matching check_one.py --idx)
-#   4. which model      (only asked when the baseline actually calls an LLM)
-#   5. tmux or not      (always asked, whatever the other four answers were)
+#   4. tmux or not      (always asked, whatever the other three answers were)
+#
+# There is no model question: every LLM baseline uses qwen2.5:14b.
 #
 # Everything can also be given up front, which skips the questions:
 #
 #   ./run_all.sh --dataset datasets/zhi_balanced_333x333.csv --baseline singh \
-#                --limit 40 --model qwen2.5:14b
+#                --limit 40
 #   ./run_all.sh --dataset datasets/paired_scam_legit_198.csv --baseline mcq \
-#                --limit idx:19 --model qwen2.5:14b  # the SAME call as --idx 19
+#                --limit idx:19  # the SAME call as --idx 19
 #                                                     # in check_one.py / a --limit 40 run
-#   ./run_all.sh -d 2 -b 4 -l 0 -m 1          # menu numbers work too
+#   ./run_all.sh -d 2 -b 4 -l 0          # menu numbers work too
 #   ./run_all.sh -b llm_only,mcq,bert -l 0    # just those three, one run
 #   ./run_all.sh -b 3,7,8 -l 0                # the same three, by number
 #
@@ -40,7 +41,7 @@
 # fully flagged one, and defaults to no. --tmux answers it up front:
 #
 #   ./run_all.sh --tmux                       # menus, then detach
-#   ./run_all.sh -d 3 -b 1 -l 0 -m 1 --tmux   # no questions at all
+#   ./run_all.sh -d 3 -b 1 -l 0 --tmux   # no questions at all
 #   ./run_all.sh --tmux --session nightly     # name the session yourself
 #
 # Everything the run prints is teed to a log, so the output survives even
@@ -65,7 +66,9 @@ cd "$PROJECT_DIR" || die "cannot cd to $PROJECT_DIR"
 
 ONTOLOGY="knowledge/scam_ontology.json"
 MCQ_ONTOLOGY="knowledge/mcq_ontology.json"
-MODELS=("qwen2.5:14b" "llama3.1:8b")
+# The one LLM the project uses. Not a choice: a second model in the menu was a
+# second way for two runs of the "same" baseline to disagree.
+MODEL_NAME="qwen2.5:14b"
 
 BL_KEYS=(all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert)
 BL_LABELS=(
@@ -314,7 +317,7 @@ ask_detach() {
   esac
 }
 
-# --------------------------------------------------------------- model menu
+# --------------------------------------------------------------- ollama probe
 OLLAMA_URL="http://localhost:11434"
 PULLED=""                       # raw /api/tags JSON, empty if Ollama is down
 OLLAMA_UP=0
@@ -322,27 +325,6 @@ PULLED="$(curl -s -m 5 "$OLLAMA_URL/api/tags" 2>/dev/null)" || PULLED=""
 [[ -n "$PULLED" ]] && OLLAMA_UP=1
 is_pulled() { [[ "$PULLED" == *"\"name\":\"$1\""* ]]; }
 
-ask_model() {
-  echo
-  echo -e "${BLD}  Which model?${NC}"
-  local i note
-  for i in "${!MODELS[@]}"; do
-    note=""
-    if [[ "$OLLAMA_UP" -eq 1 ]]; then
-      is_pulled "${MODELS[$i]}" && note="  (installed)" || note="  (not pulled)"
-    fi
-    printf "    %d) %s%s\n" $((i + 1)) "${MODELS[$i]}" "$note"
-  done
-  local pick=""
-  while true; do
-    prompt "  choose 1-${#MODELS[@]}: " pick
-    if [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= ${#MODELS[@]} )); then
-      MODEL="${MODELS[$((pick - 1))]}"
-      return
-    fi
-    warn "enter a number between 1 and ${#MODELS[@]}"
-  done
-}
 
 # -------------------------------------------------------------- the answers
 # a flag value may be a menu number or the thing itself
@@ -387,8 +369,8 @@ if [[ ${#COMBINED_SKIP[@]} -lt 7 ]]; then     # fewer than all seven skipped
     && COMBINED_EXTRA="--skip $(IFS=,; echo "${COMBINED_SKIP[*]}")"
 fi
 
-# only the systems that actually call an LLM make the model question worth
-# asking - a length/bow/bert selection needs no model at all
+# only the systems that actually call an LLM need Ollama up and the model
+# pulled - a length/bow/bert selection needs no model at all
 NEEDS_MODEL=0
 for _k in llm_only singh webrag qwen_kb hybrid ontology mcq; do
   has_bl "$_k" && NEEDS_MODEL=1
@@ -415,16 +397,9 @@ else
 fi
 
 MODEL=""
-if [[ "$NEEDS_MODEL" -eq 1 ]]; then
-  if [[ -n "$ARG_MODEL" ]]; then
-    if [[ "$ARG_MODEL" =~ ^[0-9]+$ ]] && (( ARG_MODEL >= 1 && ARG_MODEL <= ${#MODELS[@]} )); then
-      MODEL="${MODELS[$((ARG_MODEL - 1))]}"
-    else
-      MODEL="$ARG_MODEL"
-    fi
-  else
-    ask_model
-  fi
+[[ "$NEEDS_MODEL" -eq 1 ]] && MODEL="$MODEL_NAME"
+if [[ -n "$ARG_MODEL" && "$ARG_MODEL" != "$MODEL_NAME" ]]; then
+  warn "--model is gone: every LLM baseline uses $MODEL_NAME (ignoring '$ARG_MODEL')"
 fi
 
 # Asked on every run, no matter how the other four answers arrived, since
@@ -468,7 +443,6 @@ relaunch_cmd() {           # the exact command line the detached copy runs
   fi
   printf 'bash %q --dataset %q --baseline %q --limit %q' \
     "$SELF" "$DATASET" "$BASELINE" "$lim"
-  [[ -n "$MODEL" ]] && printf ' --model %q' "$MODEL"
   [[ -n "$ARG_STRIPPED" ]] && printf ' --stripped'
   printf '\n'
 }
@@ -643,7 +617,6 @@ if [[ ( -n "$ONE_ID" || -n "$ONE_IDX" ) && "$RUN_BERT" -eq 1 ]]; then
   warn "BERT needs several rows per fold to train on; a 1-row run will fail or be meaningless"
 fi
 
-[[ -n "$MODEL" ]] && export SCAM_MODEL="$MODEL" OLLAMA_MODEL="$MODEL"
 
 declare -A STATUS DURATION
 STEPS_RUN=()
@@ -765,14 +738,14 @@ if [[ "$RUN_ONTOLOGY" -eq 1 ]]; then
   fi
   # shellcheck disable=SC2086
   run_step "ontology" python -u scripts/evaluate_ontology.py \
-    --csv "$DATASET" --model "$MODEL" --ontology "$ONTOLOGY" \
+    --csv "$DATASET" --ontology "$ONTOLOGY" \
     --out "$ONTO_OUT" $LIMIT_ARG $DEBUG_FLAG
   if [[ -n "$ARG_STRIPPED" ]]; then
     # nothing here is learned from the data, so the stripped twin is simply
     # scored; trusted.py check has already confirmed its rows line up
     # shellcheck disable=SC2086
     run_step "ontology_stripped" python -u scripts/evaluate_ontology.py \
-      --csv "$ARG_STRIPPED" --model "$MODEL" --ontology "$ONTOLOGY" \
+      --csv "$ARG_STRIPPED" --ontology "$ONTOLOGY" \
       --out "${ONTO_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
   fi
 fi
@@ -782,12 +755,12 @@ if [[ "$RUN_MCQ" -eq 1 ]]; then
   DEBUG_FLAG=""; [[ "$SINGLE_MODE" -eq 1 ]] && DEBUG_FLAG="--debug"
   # shellcheck disable=SC2086
   run_step "mcq" python -u scripts/evaluate_mcq_ontology.py \
-    --csv "$DATASET" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
+    --csv "$DATASET" --ontology "$MCQ_ONTOLOGY" \
     --out "$MCQ_OUT" $LIMIT_ARG $DEBUG_FLAG
   if [[ -n "$ARG_STRIPPED" ]]; then
     # shellcheck disable=SC2086
     run_step "mcq_stripped" python -u scripts/evaluate_mcq_ontology.py \
-      --csv "$ARG_STRIPPED" --model "$MODEL" --ontology "$MCQ_ONTOLOGY" \
+      --csv "$ARG_STRIPPED" --ontology "$MCQ_ONTOLOGY" \
       --out "${MCQ_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
   fi
 fi

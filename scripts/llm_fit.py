@@ -605,7 +605,6 @@ def build_parser():
         tr.add_argument("--holdout-calls", type=int, default=20,
                         help="calls to score on - EACH one costs two LLM "
                              "calls, fitted and control")
-        tr.add_argument("--model", default=llm_judge.DEFAULT_MODEL)
         tr.add_argument("--num-ctx", type=int,
                         default=llm_judge.DEFAULT_NUM_CTX,
                         help="the ceiling; each call asks for what it needs")
@@ -628,7 +627,6 @@ def build_parser():
     ev.add_argument("--limit", type=int, default=None,
                     help="a class-balanced head - one generation per call, "
                          "so this is the flag that decides what it costs")
-    ev.add_argument("--model", default=llm_judge.DEFAULT_MODEL)
     ev.add_argument("--num-ctx", type=int, default=llm_judge.DEFAULT_NUM_CTX)
     ev.add_argument("--max-tokens", type=int,
                     default=llm_judge.DEFAULT_MAX_TOKENS)
@@ -658,6 +656,7 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
+    args.model = llm_judge.DEFAULT_MODEL     # the one model; not a choice
     args.func(args)
 
 

@@ -8,7 +8,7 @@ the benchmark table.
 
 Usage:
     python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_scam_vs_legit_794.csv --limit 20 --debug
-    python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_scam_vs_legit_794.csv --model qwen2.5:14b
+    python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_scam_vs_legit_794.csv
 
 Two calls to the model per transcript (routing, then the branch questions),
 so expect roughly twice the wall time of a single-prompt baseline.
@@ -84,7 +84,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
     ap.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
-    ap.add_argument("--model", default=os.environ.get("SCAM_MODEL", "llama3.1:8b"))
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default=None)
     ap.add_argument("--max-tokens", type=int, default=700)
@@ -94,7 +93,6 @@ def main():
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
-    os.environ["SCAM_MODEL"] = args.model
     data = load(args.csv, args.limit)
     n_fraud = sum(1 for _, l in data if l == "Fraud")
 
@@ -103,11 +101,12 @@ def main():
           % (len(data), n_fraud, len(data) - n_fraud))
     print("  dataset : %s" % args.csv)
     print("  ontology: %s" % args.ontology)
-    print("  model   : %s" % args.model)
+    import ollama_ctx
+    print("  model   : %s" % ollama_ctx.MODEL)
     print("  quote verification: %s" % ("OFF" if args.no_verify_quotes else "on"))
     print("=" * 74)
 
-    det = MCQOntologyDetector(args.ontology, model=args.model,
+    det = MCQOntologyDetector(args.ontology,
                               max_tokens=args.max_tokens,
                               verify_quotes=not args.no_verify_quotes,
                               debug=args.debug)

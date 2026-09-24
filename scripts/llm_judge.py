@@ -33,7 +33,7 @@ control.
 Usage:
     python scripts/llm_judge.py --text "Hello, this is your bank..."
     python scripts/llm_judge.py --csv datasets/scambait_bank_422.csv --idx 3
-    python scripts/llm_judge.py --text "..." --model qwen2.5:14b --json
+    python scripts/llm_judge.py --text "..." --json
     python scripts/llm_judge.py --text "..." \
         --guidance "A bank asking to confirm a card number is normal here."
     python scripts/llm_judge.py models          # what ollama has pulled
@@ -57,7 +57,8 @@ OLLAMA_HOST = (os.environ.get("OLLAMA_URL") or os.environ.get("OLLAMA_HOST")
                or "http://localhost:11434")
 if not OLLAMA_HOST.startswith("http"):
     OLLAMA_HOST = "http://" + OLLAMA_HOST
-DEFAULT_MODEL = os.environ.get("SCAM_MODEL", "qwen2.5:14b")
+import ollama_ctx as _ctx                                   # noqa: E402
+DEFAULT_MODEL = _ctx.MODEL
 
 # Ollama truncates a prompt that overflows the context window from the FRONT,
 # which drops the instructions and leaves the model staring at a headless wall
@@ -423,7 +424,6 @@ def main():
     ap.add_argument("--profile", default=None,
                     help="a fitted prompt from llm_fit.py, by name - its "
                          "worked examples and rubric go in the prompt")
-    ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--max-tokens", type=int, default=DEFAULT_MAX_TOKENS)
     ap.add_argument("--num-ctx", type=int, default=DEFAULT_NUM_CTX)
     ap.add_argument("--temperature", type=float, default=0.0)
@@ -462,7 +462,7 @@ def main():
         profile = llm_fit.load_profile(args.profile)
 
     try:
-        r = judge(text, model=args.model, max_tokens=args.max_tokens,
+        r = judge(text, model=DEFAULT_MODEL, max_tokens=args.max_tokens,
                   num_ctx=args.num_ctx, temperature=args.temperature,
                   timeout=args.timeout, guidance=guidance, profile=profile)
     except RuntimeError as e:

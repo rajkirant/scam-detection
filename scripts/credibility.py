@@ -19,7 +19,8 @@ import requests
 
 # --- local LLM -----------------------------------------------------------
 
-OLLAMA_MODEL = os.environ.get("SCAM_MODEL", "llama3.1:8b")
+import ollama_ctx as _ctx                                   # noqa: E402
+OLLAMA_MODEL = _ctx.MODEL
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 # --- web search + quota protection ---------------------------------------

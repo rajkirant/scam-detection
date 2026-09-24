@@ -26,7 +26,7 @@ base.
 
 | Path | What it holds |
 | --- | --- |
-| `run_all.sh` | Interactive terminal launcher — asks five questions, then runs |
+| `run_all.sh` | Interactive terminal launcher — asks four questions, then runs |
 | `web_ui.sh` | Browser front end for the same thing |
 | `scripts/` | The evaluation systems and the supporting tools |
 | `models/` | Fine-tuned BERT checkpoints, bag-of-words models, length thresholds and fitted LLM prompts, from the four model pages — **not in git** |
@@ -145,19 +145,18 @@ apps start it for you):
 ollama serve          # leave this running in its own terminal
 ```
 
-Then pull the models. `qwen2.5:14b` is the primary model behind the reported
-results; `llama3.1:8b` is the smaller alternative and is what the scripts
-default to when `SCAM_MODEL` is unset.
+Then pull the model. Every LLM baseline, the LLM judge page and every
+script use `qwen2.5:14b` and nothing else — there is no model to choose. It is
+set in one place, `MODEL` in `scripts/ollama_ctx.py`.
 
 ```bash
 ollama pull qwen2.5:14b     # ~9 GB download, ~9.5 GB VRAM when resident
-ollama pull llama3.1:8b     # ~4.7 GB, the lighter option
-ollama list                 # confirm both are there
+ollama list                 # confirm it is there
 curl -s localhost:11434/api/tags   # confirm the server answers
 ```
 
-On a GPU with less than ~10 GB of VRAM, use `llama3.1:8b` and skip
-`qwen2.5:14b`.
+On a GPU with less than ~10 GB of VRAM, Ollama spills part of the model to
+system RAM: it still runs, only slower.
 
 ### 6. Build the vector index
 
@@ -199,7 +198,7 @@ Get a free key at [tavily.com](https://tavily.com). `.env` is gitignored.
 
 ```bash
 ./run_all.sh --dataset datasets/scambait_synthetic_196.csv \
-             --baseline llm_only --limit 5 --model qwen2.5:14b
+             --baseline llm_only --limit 5
 ```
 
 Five calls, one system. If that prints a results table, the install is good.
@@ -524,9 +523,9 @@ this page is the answer that would have been recorded there for that call.
 `scripts/llm_judge.py` does the work
 ([section C.10](#10-ask-the-llm-about-one-call)).
 
-The model menu lists whatever `ollama list` would: the model in `SCAM_MODEL`
-is put first, so the page opens on the one the rest of the project uses.
-Ollama holds the model, not the server, so there is nothing to load or unload
+There is no model menu: the page always asks `qwen2.5:14b`, the same model
+every benchmark run uses, and says so if Ollama has not pulled it. Ollama
+holds the model, not the server, so there is nothing to load or unload
 here.
 
 **Fitting a prompt.** The left-hand panel fits a prompt on a dataset, keeps
@@ -674,16 +673,16 @@ now and then.
 ## B. The same thing in the terminal
 
 ```bash
-./run_all.sh                  # asks five questions, then runs
+./run_all.sh                  # asks four questions, then runs
 ./run_all.sh --tmux           # ... and detaches into tmux
 ```
 
 Or answer up front and it asks nothing:
 
 ```bash
-./run_all.sh -d 3 -b all -l 0 -m 1
+./run_all.sh -d 3 -b all -l 0
 ./run_all.sh --dataset datasets/scambait_synthetic_196.csv \
-             --baseline llm_only,mcq,bert --limit 40 --model qwen2.5:14b
+             --baseline llm_only,mcq,bert --limit 40
 ```
 
 | Flag | Values |
@@ -691,7 +690,6 @@ Or answer up front and it asks nothing:
 | `-d, --dataset` | a path, or a menu number |
 | `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
-| `-m, --model` | `qwen2.5:14b` or `llama3.1:8b`, or the menu number |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
 
@@ -718,7 +716,6 @@ Run these with the venv active, from the project root.
 ### 1. Seven baselines in one script
 
 ```bash
-export SCAM_MODEL=qwen2.5:14b
 python scripts/combined_evaluate.py --csv datasets/scambait_synthetic_196.csv --limit 20
 #   --skip length,bow,singh,webrag,qwen_kb,hybrid   run just one of the seven
 ```
@@ -756,7 +753,6 @@ Qwen-KB with a slower pipeline. `--skip hybrid` drops it; the merged run costs
 ```bash
 python scripts/evaluate_ontology.py \
   --csv datasets/scambait_synthetic_196.csv \
-  --model qwen2.5:14b \
   --ontology knowledge/scam_ontology.json
 ```
 
@@ -782,7 +778,6 @@ CPU.
 ```bash
 python scripts/evaluate_mcq_ontology.py \
   --csv datasets/scambait_synthetic_196.csv \
-  --model qwen2.5:14b \
   --limit 20 --debug
 ```
 
@@ -880,7 +875,7 @@ transcript instead of at a dataset.
 ```bash
 python scripts/llm_judge.py --text "Hello, this is your bank's fraud team..."
 python scripts/llm_judge.py --csv datasets/scambait_bank_422.csv --idx 3
-python scripts/llm_judge.py --text "..." --model qwen2.5:14b --json
+python scripts/llm_judge.py --text "..." --json
 
 # standing instructions, the same box the page has
 python scripts/llm_judge.py --text "..." \
@@ -901,8 +896,8 @@ The prompt and the verdict parser are imported from `combined_evaluate.py`
 rather than copied, so a verdict here is the verdict the benchmark would have
 recorded for that call. It talks to Ollama over plain HTTP with nothing but
 the standard library, so it runs outside the venv as well as in it.
-`OLLAMA_URL` (or `OLLAMA_HOST`) points it at another machine and `SCAM_MODEL`
-sets the default model.
+`OLLAMA_URL` (or `OLLAMA_HOST`) points it at another machine; the model is
+always `qwen2.5:14b`.
 
 ### 11. Fit a bag-of-words model and classify one call
 
@@ -1328,7 +1323,6 @@ whole dataset with BERT asks you to stop the run or untick the box.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `SCAM_MODEL` | `llama3.1:8b` | Ollama model the LLM systems call. `run_all.sh -m` sets it for you. |
 | `OLLAMA_URL` | `http://localhost:11434` | where the web UI probes for Ollama, and where the LLM judge page sends its transcripts (`OLLAMA_HOST` is read as a fallback, so ollama's own variable works too) |
 | `TAVILY_API_KEY` | — | read from `.env`; only `harvest_patterns.py` needs it |
 | `WEBRAG_MIN_SIMILARITY` | `0.35` | cosine floor before the LLM relevance gate |
