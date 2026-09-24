@@ -77,7 +77,6 @@ BASELINES = [
     ("mcq",      "BERT ontology",          "mcq_ontology.json, 2 calls per transcript", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
-MODELS = ["qwen2.5:14b", "llama3.1:8b"]
 
 # The Web-RAG knowledge base. harvest_patterns.py writes the JSON, which is
 # the source of truth, and build_index.py derives the vector index from it -
@@ -433,7 +432,6 @@ def start_run(form):
     """Validate the form, then hand the work to run_all.sh."""
     ds = form.get("dataset", "")
     limit = str(form.get("limit", "0")).strip()
-    model = form.get("model", "")
     # the form sends a list; a bare string is still accepted so the older
     # single-baseline shape of this call keeps working
     picked = form.get("baselines") or form.get("baseline") or []
@@ -465,11 +463,8 @@ def start_run(form):
                              "call twice; it cannot run on a single transcript")
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
-    if any(known[b][3] for b in baselines):
-        if model not in MODELS:
-            raise ValueError("pick a model")
-    else:
-        model = ""
+    # One model, not a choice: run_all.sh uses it for every LLM baseline.
+    model = ollama_ctx.MODEL if any(known[b][3] for b in baselines) else ""
 
     running = [r for r in all_runs() if r["status"] == "running"]
     if running:
@@ -484,8 +479,6 @@ def start_run(form):
 
     flags = ["--dataset", ds, "--baseline", ",".join(baselines),
              "--limit", limit]
-    if model:
-        flags += ["--model", model]
     if stripped:
         # run_all.sh resolves the twin the same way; the path above is only
         # so this server can refuse a bad pair before starting anything
@@ -1609,6 +1602,7 @@ def start_length_train_run(form):
 # over plain HTTP, so this page works from the system python like the rest of
 # the server - no venv, no subprocess, nothing to keep alive between clicks.
 import llm_judge
+import ollama_ctx
 # Also standard library only, and for the same reason: it is the fitting side
 # of the same page, and this server starts without the venv.
 import llm_fit
@@ -1638,7 +1632,6 @@ LLM_FIT_FIELDS = {
     "limit":         ("--limit", int, 0, 100000, 0),
 }
 
-LLM_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:-]{0,120}$")
 LLM_TIMEOUT = 600
 # One generation at a time. Ollama will queue a second, but a 14B model is
 # most of the VRAM and two people clicking at once should be told so rather
@@ -1671,9 +1664,7 @@ def llm_verdict(form):
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
-    model = str(form.get("model") or llm_judge.DEFAULT_MODEL).strip()
-    if not LLM_MODEL_RE.match(model):
-        raise ValueError("%r is not a name ollama would accept" % model[:60])
+    model = llm_judge.DEFAULT_MODEL
     kw = {}
     for key in LLM_FIELDS:
         val = numeric(form, LLM_FIELDS, key)
@@ -1834,7 +1825,7 @@ class Handler(BaseHTTPRequestHandler):
                     "datasets": datasets(),
                     "baselines": [{"key": k, "label": l, "note": n, "needs_model": m}
                                   for k, l, n, m in BASELINES],
-                    "models": MODELS,
+                    "model": ollama_ctx.MODEL,
                     "ollama": ollama_state(),
                     "kb_modes": [{"key": k, "label": l, "note": n,
                                   "harvests": h is not None, "exclusive": x}
@@ -2138,12 +2129,7 @@ def start_eval_run(page, form):
     flags = ["evaluate", "--csv", ds]
 
     if page == "llm":
-        # the LLM page's "model" is what ollama has pulled; the fitted prompt
-        # is a separate, optional thing
-        base = str(form.get("base_model") or llm_judge.DEFAULT_MODEL).strip()
-        if not LLM_MODEL_RE.match(base):
-            raise ValueError("%r is not a name ollama would accept" % base[:60])
-        flags += ["--model", base]
+        # always the one model; the fitted prompt is a separate, optional thing
         if name:
             if not BERT_NAME_RE.match(name):
                 raise ValueError("bad profile name")
@@ -2268,9 +2254,7 @@ def start_llm_fit_run(form):
     ds = form.get("dataset", "")
     if ds not in {d["path"] for d in datasets()}:
         raise ValueError("unknown dataset")
-    model = str(form.get("model") or llm_judge.DEFAULT_MODEL).strip()
-    if not LLM_MODEL_RE.match(model):
-        raise ValueError("%r is not a name ollama would accept" % model[:60])
+    model = llm_judge.DEFAULT_MODEL
     overwrite = bool(form.get("overwrite"))
     if (MODELS_DIR / name).exists() and not overwrite:
         raise ValueError("models/%s already exists - pick another name, or "
@@ -2282,7 +2266,7 @@ def start_llm_fit_run(form):
                          "wants the model ollama is holding, and so does "
                          "that." % running[0]["id"])
 
-    flags = ["fit", "--csv", ds, "--name", name, "--model", model]
+    flags = ["fit", "--csv", ds, "--name", name]
     for key, (flag, _c, _lo, _hi, _d) in LLM_FIT_FIELDS.items():
         val = numeric(form, LLM_FIT_FIELDS, key)
         if val is None or (key == "limit" and not val):
@@ -2776,8 +2760,7 @@ PAGE = r"""<!doctype html>
       <div class="hint" id="limithint"></div>
 
       <div id="modelbox">
-        <label for="model">Model</label>
-        <select id="model"></select>
+        <div class="hint" id="model" style="margin-top:10px"></div>
         <label for="numctx">Context window</label>
         <input type="text" id="numctx" placeholder="8192" spellcheck="false">
         <div class="hint" id="ctxhint">How many tokens the model may read.
@@ -3501,9 +3484,7 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
   <div class="side">
     <div class="sect">
       <div class="secthead">Model</div>
-      <div class="hint" style="margin-top:0">what ollama has pulled on this
-        machine</div>
-      <select id="llmmodel" style="width:100%; margin-top:8px"></select>
+      <div id="llmmodel" style="margin-top:4px; font-weight:600"></div>
       <div class="hint" id="llmhost"></div>
       <div class="hint" id="llmerr" style="color:var(--bad)"></div>
     </div>
@@ -3847,9 +3828,11 @@ async function boot() {
     </label>`).join('');
 
   const o = CFG.ollama;
-  $('model').innerHTML = CFG.models.map(m =>
-    `<option value="${m}">${m}${o.up ? (o.pulled.includes(m) ? '' : ' (not pulled)') : ''}</option>`
-  ).join('');
+  // one model, not a choice - shown so the log and the page agree
+  $('model').innerHTML = 'Model: <strong>' + esc(CFG.model) + '</strong>'
+    + (o.up && !o.pulled.includes(CFG.model)
+       ? ' &middot; not pulled here — <code>ollama pull ' + esc(CFG.model) + '</code>'
+       : '');
 
   if (!o.up) {
     $('ollama').textContent = 'Ollama is not answering — only the length, bag-of-words and BERT baselines can run';
@@ -4022,7 +4005,6 @@ async function go() {
     dataset: $('dataset').value,
     baselines: chosen(),
     limit: limit,
-    model: $('model').value,
     num_ctx: $('numctx').value,
     stripped: $('stripped').checked,
   });
@@ -5856,22 +5838,13 @@ async function llmBoot() {
   for (const [id, key] of Object.entries(LFIELDS))
     if (cfg.defaults[key] !== undefined) $(id).value = cfg.defaults[key];
 
+  // one model, not a choice: the same one every benchmark run uses
+  $('llmmodel').textContent = cfg.default_model;
   if (cfg.ollama_error) {
     $('llmerr').textContent = cfg.ollama_error;
-    $('llmmodel').innerHTML = '<option value="">nothing to choose from</option>';
-  } else if (!cfg.models.length) {
-    $('llmerr').textContent = 'ollama is running but has no models pulled — '
-      + 'try: ollama pull qwen2.5:14b';
-    $('llmmodel').innerHTML = '<option value="">nothing pulled</option>';
-  } else {
-    // the configured model first if it is there, so the page opens on the one
-    // the rest of the project uses
-    const names = cfg.models.map(m => m.name);
-    if (names.includes(cfg.default_model))
-      names.splice(names.indexOf(cfg.default_model), 1),
-      names.unshift(cfg.default_model);
-    $('llmmodel').innerHTML = names.map(n =>
-      `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  } else if (!cfg.models.some(m => m.name === cfg.default_model)) {
+    $('llmerr').textContent = cfg.default_model + ' is not pulled here — '
+      + 'try: ollama pull ' + cfg.default_model;
   }
 
   $('llmds').innerHTML = cfg.datasets.map(d =>
@@ -5898,7 +5871,7 @@ async function llmBoot() {
   $('llmevlimit').addEventListener('input', llmEvalCost);
   $('llmeds').addEventListener('change', llmEvalCost);
   $('llmevgo').onclick = () => evalRun('llm', evalIds('llm', 'j-eval'), {
-    model: llmProf, base_model: $('llmmodel').value,
+    model: llmProf,
     dataset: $('llmeds').value, limit: $('llmevlimit').value,
     num_ctx: $('llmctx').value, max_tokens: $('llmmaxtok').value,
     temperature: $('llmtemp').value,
@@ -6011,11 +5984,8 @@ async function llmProfiles() {
 
 async function llmFit() {
   $('llmfiterr').textContent = '';
-  const model = $('llmmodel').value;
-  if (!model) { $('llmfiterr').textContent = 'no model to fit against - pull '
-                                           + 'one with ollama first'; return; }
   const body = {name: $('llmfitname').value, dataset: $('llmfitds').value,
-                model: model, rubric: $('llmrubric').checked,
+                rubric: $('llmrubric').checked,
                 overwrite: $('llmfitover').checked,
                 num_ctx: $('llmctx').value,
                 guidance: $('llmfitguide').checked ? $('llmguidance').value : ''};
@@ -6095,15 +6065,13 @@ async function llmAsk() {
   const text = $('llmtranscript').value.trim();
   if (!text) { $('llmasker').textContent = 'paste a transcript, or load one '
                                          + 'from a dataset above'; return; }
-  const model = $('llmmodel').value;
-  if (!model) { $('llmasker').textContent = 'no model to ask - pull one with '
-                                          + 'ollama first'; return; }
+  const model = $('llmmodel').textContent;
   $('llmgo').disabled = true;
   $('llmgo').textContent = 'Asking…';
   $('llmanswer').innerHTML = '<div class="card muted">' + esc(model)
     + ' is reading the call… a 14B model takes a few seconds on a GPU and '
     + 'rather longer on a CPU</div>';
-  const body = {model: model, transcript: text, profile: llmProf,
+  const body = {transcript: text, profile: llmProf,
                 guidance: $('llmguidance').value};
   for (const [id, key] of Object.entries(LFIELDS)) body[key] = $(id).value;
   const res = await api('/api/llm/judge', body);

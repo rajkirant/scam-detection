@@ -30,13 +30,9 @@ def main():
     ap.add_argument("--csv", required=True)
     ap.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
     ap.add_argument("--limit", type=int, default=0, help="run only N calls (balanced sample)")
-    ap.add_argument("--model", default=None,
-                help="Ollama model name (default: llama3.1:8b, or $SCAM_MODEL)")
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
     import ontology_rag
-    if args.model:
-        ontology_rag.MODEL = args.model
     print("model:", ontology_rag.MODEL)
 
     # --- default output filename includes the model so runs don't overwrite ---

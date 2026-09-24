@@ -5,7 +5,7 @@ check_one.py - run the MCQ ontology detector on a single row from a dataset.
 Usage:
     python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19
     python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19 --runs 5
-    python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19 --model qwen2.5:14b
+    python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19
     python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19 --no-label
 
 --idx uses the SAME shuffled order as evaluate_mcq_ontology.py (seed 42, same
@@ -76,7 +76,6 @@ def main():
                     help="must match the --limit used when --idx was read off a prior run")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
-    ap.add_argument("--model", default=None)
     ap.add_argument("--no-label", action="store_true",
                     help="disable the speaker-labelling pre-pass, for comparison")
     ap.add_argument("--runs", type=int, default=1,
@@ -101,7 +100,7 @@ def main():
     print("text      :", text[:200] + ("..." if len(text) > 200 else ""))
     print("=" * 74)
 
-    det = MCQOntologyDetector(args.ontology, model=args.model, debug=True,
+    det = MCQOntologyDetector(args.ontology, debug=True,
                               label_speakers=not args.no_label)
 
     verdicts = []

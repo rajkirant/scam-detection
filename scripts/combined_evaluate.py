@@ -38,7 +38,7 @@ CHANGES IN THIS VERSION
    call recorded as safe. Combined with max_tokens=60, a verbose model
    (qwen2.5:14b) could still be reasoning when it ran out of tokens, never
    reach its verdict, and be scored as a false negative. That is the most
-   likely cause of Singh's recall collapsing from ~0.99 on llama3.1:8b to
+   likely cause of Singh's recall collapsing from ~0.99 on a smaller model to
    0.757 on qwen2.5:14b.
    Now: a shared parser tries several formats, retries once with a
    one-word-answer prompt if it fails, and every unreadable response is

@@ -27,7 +27,8 @@ from pathlib import Path
 
 DEFAULT_ONTOLOGY = Path(__file__).resolve().parent.parent / "knowledge" / "scam_ontology.json"
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = os.environ.get("SCAM_MODEL", "llama3.1:8b")
+import ollama_ctx as _ctx                                   # noqa: E402
+MODEL = _ctx.MODEL
 
 MATCH_WEIGHTS = {         # how much each attribute contributes to a node match
     "claimed_identity": 0.40,

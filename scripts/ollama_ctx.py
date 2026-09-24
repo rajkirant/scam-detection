@@ -33,6 +33,10 @@ for a big one.
 import os
 import sys
 
+# The one LLM this project uses. Every Ollama client reads it from here, so
+# there is no second default to drift out of step and no model to choose.
+MODEL = "qwen2.5:14b"
+
 # Ollama's own default, and the floor here: never ask for less than we would
 # have got by saying nothing.
 FLOOR = 2048

@@ -254,7 +254,8 @@ class MCQOntologyDetector:
         if not path.exists():
             raise SystemExit("ontology not found: %s" % path)
         self.ont = json.loads(path.read_text(encoding="utf-8"))
-        self.model = model or os.environ.get("SCAM_MODEL", "llama3.1:8b")
+        import ollama_ctx
+        self.model = ollama_ctx.MODEL
         self.max_tokens = max_tokens
         self.verify_quotes = verify_quotes
         self.debug = debug
