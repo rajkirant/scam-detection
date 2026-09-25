@@ -71,3 +71,38 @@ def columns(rows, path="the dataset", need_label=True):
         raise SystemExit("ERROR: %s needs %s. It has: %s"
                          % (path, " and ".join(missing), ", ".join(found)))
     return tcol, lcol, pick(header, ID_COLS)
+
+
+# The benchmark's cross-validation split. Every learner that trains on the
+# dataset - bag of words, Qwen-KB, the hybrid and BERT - must hold out the SAME
+# calls in each fold, or a per-fold comparison between them compares different
+# test sets. combined_evaluate.py shuffles the calls with random.seed(SEED)
+# before StratifiedKFold sees them; this reproduces that exactly for any list
+# of labels in file order, and hands back indices in file order.
+FOLDS = 5
+SEED = 42
+
+
+def benchmark_folds(labels, folds=FOLDS, seed=SEED):
+    """[(train_idx, test_idx), ...] in file-order indices, fold 1 first.
+
+    `labels` is one truthy/falsy value per call, in the order the calls appear
+    in the file (empty-text rows already dropped, as combined_evaluate does).
+    random.shuffle's permutation depends only on the list's length, so
+    shuffling range(n) gives the same reordering combined_evaluate applies to
+    its list of calls. The fold count shrinks to the smaller class when that
+    is under `folds`, the same rule combined_evaluate uses.
+    """
+    import random
+    from sklearn.model_selection import StratifiedKFold
+
+    n = len(labels)
+    perm = list(range(n))
+    random.seed(seed)
+    random.shuffle(perm)
+    y = [1 if labels[p] else 0 for p in perm]
+    smallest = min(sum(y), n - sum(y))
+    n_splits = max(2, min(folds, smallest))
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    return [(sorted(perm[i] for i in tr), sorted(perm[i] for i in te))
+            for tr, te in skf.split([[0]] * n, y)]
