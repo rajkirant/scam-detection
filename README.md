@@ -1064,6 +1064,29 @@ The offline checks need no dataset and no venv:
 python3 scripts/test_eval_common.py
 ```
 
+### 15. Export the benchmark's five folds
+
+The benchmark trains on four folds and tests on the fifth, five times, all in
+memory. `export_folds.py` writes those exact ten sets to `datasets/`, so one
+fold can be trained and tested on its own — on the BERT, bag-of-words or
+length pages, or by hand:
+
+```bash
+python scripts/export_folds.py --csv datasets/huggingface_1600.csv
+#   datasets/huggingface_1600_train1.csv  1280 calls   _test1.csv  320 calls
+#   ...
+#   datasets/huggingface_1600_train5.csv               _test5.csv
+python scripts/test_benchmark_folds.py   # the folds agree everywhere
+```
+
+Every learner uses the same folds: bag of words, Qwen-KB and the hybrid shuffle
+the calls with seed 42 and split with `StratifiedKFold`, and BERT reproduces
+that through `dataset_io.benchmark_folds`, so fold *k* holds out the same calls
+for all of them. The files are those folds exactly: training bag of words on
+`train1` and scoring `test1` gives the benchmark's fold-1 scores call for call.
+They are the whole-dataset folds (`--limit 0`); a `--limit N` run samples a
+subset first and splits that instead.
+
 ## The context window
 
 Ollama's context window defaults to **2048 tokens** unless the model's

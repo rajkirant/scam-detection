@@ -99,6 +99,13 @@ def load_dataset(path, text_col=None, label_col=None, limit=None):
     df = pd.read_csv(path, encoding="utf-8-sig")
     tcol = text_col or pick_column(df, TEXT_CANDIDATES, "text")
     lcol = label_col or pick_column(df, LABEL_CANDIDATES, "label")
+    # A call with no text is dropped here, as combined_evaluate.py drops it,
+    # so both score the same calls and dataset_io.benchmark_folds puts them
+    # in the same folds. Left in, it would be scored as the string "nan".
+    empty = df[tcol].isna() | (df[tcol].astype(str).str.strip() == "")
+    if empty.any():
+        print(f"  dropping {int(empty.sum())} call(s) with no text")
+        df = df[~empty].reset_index(drop=True)
     texts = df[tcol].astype(str).tolist()
     labels = [to_binary(v) for v in df[lcol].tolist()]
     if limit:
@@ -266,14 +273,23 @@ def run_cv(args, tokenizer=None, model_init=None):
     oof_prob_s = [None] * len(texts)
     print()
 
-    skf = StratifiedKFold(n_splits=args.folds, shuffle=True, random_state=args.seed)
+    # The benchmark's own folds, shared with bag of words, Qwen-KB and the
+    # hybrid, so fold k holds out the same calls for every learner. A --limit
+    # smoke test takes a different subset of calls, so it keeps a plain split.
+    if args.limit:
+        skf = StratifiedKFold(n_splits=args.folds, shuffle=True,
+                              random_state=args.seed)
+        splits = list(skf.split(texts, labels))
+    else:
+        import dataset_io
+        splits = dataset_io.benchmark_folds(labels, args.folds, args.seed)
     oof_pred = [None] * len(texts)
     oof_prob = [None] * len(texts)
     fold_metrics = []
 
     t_start = time.time()
-    for fold, (tr_idx, te_idx) in enumerate(skf.split(texts, labels), start=1):
-        print(f"  fold {fold}/{args.folds}  train {len(tr_idx)}  test {len(te_idx)}")
+    for fold, (tr_idx, te_idx) in enumerate(splits, start=1):
+        print(f"  fold {fold}/{len(splits)}  train {len(tr_idx)}  test {len(te_idx)}")
         set_seed(args.seed + fold)
         tr_texts = [texts[i] for i in tr_idx]
         tr_labels = [labels[i] for i in tr_idx]
