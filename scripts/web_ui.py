@@ -425,6 +425,21 @@ def pid_alive(pid):
         os.kill(pid, 0)
     except (OSError, ProcessLookupError):
         return False
+    # A run that has exited but not been reaped is a zombie, and kill(pid, 0)
+    # still succeeds on one - after an in-place restart nothing holds the
+    # Popen that would reap it, so it would read as running forever. Reap it
+    # if it is ours, and count a zombie as gone either way.
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0] == pid:
+            return False
+    except (ChildProcessError, OSError):
+        pass
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            if f.read().rsplit(")", 1)[1].split()[0] == "Z":
+                return False
+    except (OSError, IndexError):
+        pass
     return True
 
 
@@ -611,15 +626,54 @@ def stop_run(run_id):
     if not meta:
         raise ValueError("no such run")
     pid = meta.get("pid")
-    if not pid_alive(pid):
-        return {"stopped": False, "note": "not running"}
+    if meta["status"] != "running":
+        return {"stopped": False, "note": "not running", "status": meta["status"]}
     # start_new_session put the run in its own process group, so this reaches
     # run_all.sh and every python step it spawned, not just the wrapper.
     try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        pgid = os.getpgid(pid)
     except Exception:
-        os.kill(pid, signal.SIGTERM)
-    return {"stopped": True}
+        pgid = None
+    _signal_run(pid, pgid, signal.SIGTERM)
+    # Wait for it to actually be gone before answering, so the page can say
+    # "stopped" on the reply rather than a poll or two later. A step that
+    # ignores SIGTERM - a CUDA teardown, a C extension mid-call - gets a
+    # SIGKILL after a few seconds instead of leaving the run half alive.
+    deadline = time.time() + 4
+    while time.time() < deadline and _run_alive(run_id, pid):
+        time.sleep(0.1)
+    if _run_alive(run_id, pid):
+        _signal_run(pid, pgid, getattr(signal, "SIGKILL", signal.SIGTERM))
+        deadline = time.time() + 3
+        while time.time() < deadline and _run_alive(run_id, pid):
+            time.sleep(0.1)
+    # The wrapper was killed before it could write its exit marker. Write one
+    # for it, so the run still reads as stopped after this server restarts and
+    # the pid is all it has to go on.
+    log = run_path(run_id, "log")
+    try:
+        with open(log, "a", encoding="utf-8") as f:
+            f.write("\n  stopped from the web page\n%s 143\n" % EXIT_MARK)
+    except OSError:
+        pass
+    return {"stopped": True, "status": run_status(meta)}
+
+
+def _signal_run(pid, pgid, sig):
+    try:
+        if pgid is not None:
+            os.killpg(pgid, sig)
+        else:
+            os.kill(pid, sig)
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _run_alive(run_id, pid):
+    proc = LIVE.get(run_id)
+    if proc is not None:
+        return proc.poll() is None
+    return pid_alive(pid)
 
 
 def delete_run(run_id):
@@ -2723,22 +2777,8 @@ PAGE = r"""<!doctype html>
 
       <label class="inline" style="margin-top:12px">
         <input type="checkbox" id="stripped">
-        <span><span class="name">Content-deletion test</span>
-        <span class="note">also score every held-out call with its content
-          words deleted</span></span>
+        <span><span class="name">Content-deletion test</span></span>
       </label>
-      <div class="hint" id="strippedhint">The folds do not change. A system
-        that learns from the data is trained on the original text of the four
-        training folds, then the held-out fold is scored twice by those same
-        weights &mdash; as written, and with the content words deleted &mdash;
-        and that rotates through all five. Nothing is ever trained on stripped
-        text. The results gain a stripped-accuracy column and a trusted
-        accuracy beside it. A word survives only if it is a determiner,
-        pronoun, preposition, conjunction, auxiliary or negation &mdash; the
-        closed class in <code>scripts/trusted.py</code>; everything else goes.
-        The stripped copy is built from the dataset itself, so this works on
-        any dataset in the list &mdash; there is no second file to make or to
-        keep in step.</div>
 
       <label>Baselines</label>
       <div class="hint" style="margin-top:-2px">only the ticked ones run</div>
@@ -4016,7 +4056,22 @@ async function go() {
 
 async function stop() {
   if (!current) return;
-  await api('/api/stop', {id: current});
+  const id = current, btn = $('stopbtn'), pill = $('runpill');
+  // say so at once: the server waits for the processes to be gone before it
+  // answers, which on a GPU step can take a few seconds
+  btn.disabled = true;
+  btn.textContent = 'Stopping…';
+  pill.textContent = 'stopping';
+  const res = await api('/api/stop', {id});
+  btn.disabled = false;
+  btn.textContent = 'Stop';
+  if (res.error) { fail('could not stop the run: ' + res.error); return; }
+  if (id !== current) return;
+  // show the outcome now rather than on the next tick
+  if (!timer) timer = setInterval(poll, 900);
+  while (polling) await new Promise(r => setTimeout(r, 50));
+  await poll();
+  await refreshHistory();
 }
 
 // ------------------------------------------------- Web-RAG knowledge base
@@ -4274,6 +4329,7 @@ function select(id) {
   // still going already offers the step logs of whatever has finished
   if (!sideJob(id)) loadArtifacts();
   if (timer) clearInterval(timer);
+  polling = false; pollFails = 0;
   poll();
   timer = setInterval(poll, 900);
 }
@@ -4307,15 +4363,28 @@ function showTab(name) {
 }
 
 // ------------------------------------------------------------------ polling
+let polling = false, pollFails = 0;
 async function poll() {
-  if (!current) return;
-  const r = await api(`/api/output?id=${encodeURIComponent(current)}&offset=${offset}`);
+  if (!current || polling) return;
+  // one at a time: over a slow tunnel a tick can outlast 900ms, and two polls
+  // reading from the same offset print the same lines twice
+  polling = true;
+  try { await pollOnce(); } finally { polling = false; }
+}
+
+async function pollOnce() {
+  const id = current;
+  const r = await api(`/api/output?id=${encodeURIComponent(id)}&offset=${offset}`);
+  if (id !== current) return;
   if (r.error) {
-    // looping on a broken request just hides it behind another one
+    // a dropped request over the tunnel is not the end of the run: keep
+    // trying for a while, and only give up on a request that keeps failing
+    if (++pollFails < 8) return;
     clearInterval(timer); timer = null;
     fail(r.error);
     return;
   }
+  pollFails = 0;
   offset = r.offset;
   if (r.text) append(r.text);
 
