@@ -86,6 +86,7 @@ Usage:
 import argparse
 import csv
 import json
+import os
 import random
 import re
 import sys
@@ -619,6 +620,84 @@ def run_webrag(data, debug=False, pass_label=""):
         print("    WARNING: relevance judge unreadable on %d transcripts "
               "(kept their candidates rather than guessing)"
               % gate["judge_unreadable"])
+    return out, raws, reasons, scores
+
+
+def run_webrag_adaptive(data, debug=False, pass_label="", confident=None):
+    """Web-RAG that only searches the web when the model is unsure.
+
+    Each call is judged with the local KB first, and P(scam) is read from the
+    probability the model puts on its one-word answer. Calls it is sure about
+    keep that verdict; the rest get a live web search (Tavily, cached on disk)
+    and a second judgement with the KB and web evidence together.
+    """
+    import webrag_system as W
+    W.load_env()
+    confident = W.CONFIDENT if confident is None else confident
+    coll = W.get_kb_collection()
+    has_key = bool(os.environ.get("TAVILY_API_KEY"))
+    print("    confident at P(scam) >= %.2f or <= %.2f; anything between goes "
+          "to a web search" % (confident, 1 - confident))
+    if not has_key:
+        print("    WARNING no TAVILY_API_KEY in .env or the environment: unsure "
+              "calls cannot be searched and keep their KB verdict")
+    before = dict(W.WEB_STATS)
+
+    tally = Counter()
+    out, raws, reasons, scores = [], [], [], []
+    for i, (text, true) in enumerate(data, 1):
+        res = W.detect_adaptive(text, coll, confident=confident)
+        pred = res["predicted"]
+        out.append((pred, true))
+        scores.append(res["confidence"])
+        raws.append(json.dumps(res, default=str)[:500])
+        kb_pred = "Fraud" if res["p_kb"] >= 0.5 else "Normal"
+        if res["escalated"]:
+            tally["escalated"] += 1
+            tally["esc_right_before"] += kb_pred == true
+            tally["esc_right_after"] += pred == true
+            if res["n_web"]:
+                tally["web_used"] += 1
+            if pred != kb_pred:
+                tally["flipped"] += 1
+                tally["flip_fixed"] += pred == true
+            why = ("[P(scam) %.0f%% from KB, unsure -> web: %d result%s kept -> "
+                   "%.0f%%]" % (100 * res["p_kb"], res["n_web"],
+                                "" if res["n_web"] == 1 else "s",
+                                100 * res["p_scam"]))
+        else:
+            tally["confident"] += 1
+            tally["conf_right"] += pred == true
+            why = "[P(scam) %.0f%% from KB, confident - no web search]" % (
+                100 * res["p_kb"])
+        tally["how_" + res["how"]] += 1
+        reasons.append(why)
+        if i % 20 == 0:
+            print("    Web-RAG adaptive%s: %d/%d  (%d sent to the web so far)"
+                  % (pass_label, i, len(data), tally["escalated"]), flush=True)
+
+    n = max(len(data), 1)
+    pct = lambda a, b: 100.0 * a / b if b else 0.0
+    print("    P(scam) measured from logprobs on %d/%d calls%s"
+          % (tally["how_logprobs"], len(data),
+             "" if not tally["how_verbal"] else
+             " (%d used the graded score instead)" % tally["how_verbal"]))
+    print("    confident, kept the KB verdict: %d/%d (%.0f%%), %.1f%% of them right"
+          % (tally["confident"], n, pct(tally["confident"], n),
+             pct(tally["conf_right"], tally["confident"])))
+    print("    unsure, sent to the web:        %d/%d (%.0f%%), web evidence kept "
+          "for %d" % (tally["escalated"], n, pct(tally["escalated"], n),
+                      tally["web_used"]))
+    if tally["escalated"]:
+        print("      on those calls: %.1f%% right before the web, %.1f%% after; "
+              "%d verdict%s changed, %d of them to the right answer"
+              % (pct(tally["esc_right_before"], tally["escalated"]),
+                 pct(tally["esc_right_after"], tally["escalated"]),
+                 tally["flipped"], "" if tally["flipped"] == 1 else "s",
+                 tally["flip_fixed"]))
+    used = {k: W.WEB_STATS[k] - before.get(k, 0) for k in W.WEB_STATS}
+    print("    web searches: %d live, %d from cache, %d failed"
+          % (used["live"], used["cached"], used["failed"]))
     return out, raws, reasons, scores
 
 
@@ -1309,7 +1388,8 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--trivial-only", action="store_true")
     ap.add_argument("--skip", default="",
-                    help="comma list: length,bow,llm_only,singh,webrag,qwen_kb,hybrid")
+                    help="comma list: length,bow,llm_only,singh,webrag,"
+                         "webrag_adaptive,qwen_kb,hybrid")
     ap.add_argument("--max-tokens", type=int, default=300,
                     help="token budget for LLM verdicts (was 60, which truncated "
                          "verbose models mid-answer)")
@@ -1317,6 +1397,10 @@ def main():
                     help="print raw model responses and save them to results/")
     ap.add_argument("--bow-features", action="store_true",
                     help="show which words BoW is keying on")
+    ap.add_argument("--adaptive-confident", type=float, default=None,
+                    help="webrag_adaptive: how sure the model must be to skip "
+                         "the web search, as P(scam) or 1-P(scam) (default "
+                         "0.90, or SCAM_ADAPTIVE_CONFIDENT)")
     ap.add_argument("--folds", type=int, default=5,
                     help="cross-validation folds for bag-of-words and Qwen-KB")
     ap.add_argument("--qwen-folds", type=int, default=None,
@@ -1473,6 +1557,25 @@ def main():
             show_score_ranges("webrag" + S, results["webrag" + S],
                               scores["webrag" + S])
             print("    (%.0fs)" % (time.time() - t0))
+
+    if "webrag_adaptive" not in skip:
+        print("\nWeb-RAG adaptive (KB first, web search only when unsure):")
+        t0 = time.time()
+        (results["webrag_adaptive"], raw_log["webrag_adaptive"],
+         reasons["webrag_adaptive"], scores["webrag_adaptive"]) = \
+            run_webrag_adaptive(data, args.debug,
+                                confident=args.adaptive_confident)
+        show("Web-RAG adaptive", metrics(results["webrag_adaptive"]))
+        show_score_ranges("webrag_adaptive", results["webrag_adaptive"],
+                          scores["webrag_adaptive"])
+        print("    (%.0fs)" % (time.time() - t0))
+        if data_s is not None:
+            k = "webrag_adaptive" + S
+            (results[k], raw_log[k], reasons[k], scores[k]) = \
+                run_webrag_adaptive(data_s, args.debug, " (stripped)",
+                                    confident=args.adaptive_confident)
+            show(k, metrics(results[k]))
+            show_score_ranges(k, results[k], scores[k])
 
     if "qwen_kb" not in skip:
         print("\nQwen-KB baseline (patterns learned from a training split):")
