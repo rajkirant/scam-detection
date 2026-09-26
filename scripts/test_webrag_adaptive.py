@@ -177,6 +177,27 @@ check("scores are P(scam) in percent", scores, [97.0, 3.0, 92.0, 40.0])
 check("the reason says whether it searched",
       ["-> web" in r for r in reasons], [False, False, True, True])
 
+print("\npreview: count the calls that would go to the web, search nothing")
+CALLS["tavily"] = 0
+shutil.rmtree(W.WEB_CACHE_DIR, ignore_errors=True)
+r6 = W.detect_adaptive("BORDERLINE call", None, confident=0.9, search_web=False)
+check("an unsure call is marked as needing the web", r6["escalated"], True)
+check("but nothing is searched", (r6["searched"], CALLS["tavily"]), (False, 0))
+check("and its P(scam) is the KB one", r6["confidence"], 55.0)
+import io, contextlib                                          # noqa: E402
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    out, _, reasons, scores = C.run_webrag_adaptive(data, confident=0.9,
+                                                    preview=True)
+log = buf.getvalue()
+check("a preview run makes no Tavily request", CALLS["tavily"], 0)
+check("it prints how many calls each cut-off would send",
+      "would go to the web, by cut-off" in log and "<- this run" in log)
+check("2 of 4 would go to the web at 90%",
+      "would go to the web:    2/4" in log)
+check("the reason says 'would search'",
+      ["would search" in r for r in reasons], [False, False, True, True])
+
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n" + ("all good - the web is searched only when the model is unsure"
               if not fails else "%d FAILED" % fails))

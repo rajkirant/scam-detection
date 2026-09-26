@@ -784,11 +784,16 @@ def detect(transcript, collection, use_web=True, threshold=50,
 # with the KB and web evidence together. Web search is slow and costs Tavily
 # credits, so it is spent where the model says it needs help.
 CONFIDENT = _env_float("SCAM_ADAPTIVE_CONFIDENT", 0.90)
+# Preview: measure every call's P(scam) from the KB and say which would go to
+# the web, without searching. Costs no Tavily credits, so the cut-off can be
+# chosen from the picture before any are spent.
+PREVIEW = _env_flag("SCAM_ADAPTIVE_PREVIEW", False)
 
 
 def detect_adaptive(transcript, collection, confident=None,
-                    min_similarity=None, use_llm_gate=None):
+                    min_similarity=None, use_llm_gate=None, search_web=None):
     confident = CONFIDENT if confident is None else confident
+    search_web = (not PREVIEW) if search_web is None else search_web
     signals = extract_signals(transcript)
 
     kb_candidates = retrieve_kb(collection, signals)
@@ -800,7 +805,7 @@ def detect_adaptive(transcript, collection, confident=None,
 
     p, web_candidates, web_items, web_dropped = p_kb, [], [], []
     escalated = max(p_kb, 1.0 - p_kb) < confident
-    if escalated:
+    if escalated and search_web:
         web_candidates = retrieve_web(signals)
         web_items, web_dropped = filter_relevant_web(
             transcript, web_candidates, use_llm_gate=use_llm_gate)
@@ -819,11 +824,12 @@ def detect_adaptive(transcript, collection, confident=None,
         "evidence_used": evidence is not None,
         "p_kb": p_kb,
         "escalated": escalated,
+        "searched": escalated and search_web,
         "n_web_candidates": len(web_candidates),
         "n_web": len(web_items),
         "n_web_dropped": len(web_dropped),
         "p_scam": p,
         "how": how,
-        "confidence": round(100.0 * p, 1),
+        "confidence": round(100.0 * p, 2),
         "predicted": "Fraud" if p >= 0.5 else "Normal",
     }
