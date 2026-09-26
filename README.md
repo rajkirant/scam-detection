@@ -219,6 +219,18 @@ gave for each call, in a `<system>_why` column next to its verdict — the
 Per-call tab shows them, and the checkbox above the table hides them again when
 the width gets in the way.
 
+Web-RAG and the hybrid also score every call from 0 (certainly legitimate) to
+100 (certainly a scam) and call it a scam at 50 or over. That score is saved in
+a `<system>_pct` column beside the verdict, and the run's **Scam chance** tab
+plots it: one row per outcome (scam flagged, scam missed, legit flagged, legit
+cleared), one dot per call, the mistakes in orange, the threshold as a dashed
+line. Under the plot it says which 10-point band most false positives and
+false negatives fall in, how many are within 10 points of the threshold (near
+misses rather than confident mistakes), and gives the counts band by band. The
+run log prints the same table. Hover a stack of dots to see which calls they
+are. The tab reads `results/combined_results_<n>.csv`, which the next run over
+a dataset of the same size overwrites, so look at it before re-running.
+
 ---
 
 ## A. Browser UI

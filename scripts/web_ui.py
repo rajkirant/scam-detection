@@ -975,6 +975,44 @@ def csv_page(run_id, name, offset, limit):
             "offset": offset, "total": total}
 
 
+def scores_of(run_id):
+    """Every call's 0-100 scam chance, for each system in the run that gives one.
+
+    combined_evaluate.py writes a <system>_pct column after the verdict of any
+    system that scores its calls (Web-RAG and the hybrid). Each point is
+    [row index, score, true label, predicted label]; the page works out which
+    of TP / FN / FP / TN it is and where the mistakes sit.
+    """
+    import csv
+    csv.field_size_limit(sys.maxsize)
+    out = []
+    for c in artifacts_of(run_id)["csvs"]:
+        with open(PROJECT_DIR / "results" / c["name"], newline="",
+                  encoding="utf-8", errors="replace") as f:
+            rows = csv.reader(f)
+            header = next(rows, [])
+            want = [(h[:-4], header.index(h[:-4]), i) for i, h in enumerate(header)
+                    if h.endswith("_pct") and h[:-4] in header]
+            if not want or "true" not in header:
+                continue
+            t = header.index("true")
+            ix = header.index("idx") if "idx" in header else None
+            pts = {name: [] for name, _, _ in want}
+            for n, row in enumerate(rows):
+                for name, vi, pi in want:
+                    try:
+                        sc = float(row[pi])
+                    except (ValueError, IndexError):
+                        continue            # a call the system did not score
+                    pts[name].append([row[ix] if ix is not None else n, sc,
+                                      row[t], row[vi]])
+        for name, _, _ in want:
+            if pts[name]:
+                out.append({"system": name, "csv": c["name"], "threshold": 50,
+                            "points": pts[name]})
+    return {"systems": out}
+
+
 # ---------------------------------------------------------------------- BERT
 # The second page. Fine-tune a BERT on one of the datasets, keep the
 # checkpoint, then put a transcript to it and get back the one thing training
@@ -1923,6 +1961,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path in ("/api/step", "/api/steplog"):
                 return self._send(200, step_log(q.get("id", [""])[0],
                                                 q.get("name", [""])[0]))
+            if u.path == "/api/scores":
+                return self._send(200, scores_of(q.get("id", [""])[0]))
             if u.path == "/api/csv":
                 return self._send(200, csv_page(
                     q.get("id", [""])[0], q.get("name", [""])[0],
@@ -2517,6 +2557,12 @@ PAGE = r"""<!doctype html>
   .viz .name { fill:var(--ink); font-weight:600; }
   .viz .val  { fill:var(--dim); font-size:11px; }
   .viz .band { fill:transparent; }
+  .viz .dot-ok  { fill:var(--dim); opacity:.55; }
+  .viz .dot-bad { fill:var(--series-2); }
+  .viz .dot-ok, .viz .dot-bad { stroke:var(--panel); stroke-width:1; }
+  .viz .stack { fill:transparent; cursor:default; }
+  .viz .stack:hover { fill:var(--line); opacity:.5; }
+  #scorebands td.most { font-weight:700; color:var(--ink); }
   .viz .band:hover { fill:var(--line); opacity:.35; }
   .tip { position:fixed; z-index:9; pointer-events:none; background:var(--panel);
          border:1px solid var(--line); border-radius:7px; padding:9px 11px;
@@ -2872,6 +2918,7 @@ PAGE = r"""<!doctype html>
       <button data-tab="results">Table</button>
       <button data-tab="calls">Per-call <span class="count" id="c-calls"></span></button>
       <button data-tab="steps">Step logs <span class="count" id="c-steps"></span></button>
+      <button data-tab="scores" hidden>Scam chance</button>
     </div>
 
     <!-- output -->
@@ -2898,6 +2945,17 @@ results table, and the prediction it made for every single call.</pre>
           <div class="scroll viz" id="chart"></div>
         </div>
         <div class="hint" id="spread"></div>
+      </div>
+    </div>
+
+    <!-- scam chance: where the right and wrong calls sit on the 0-100 score -->
+    <div id="t-scores" hidden>
+      <div class="card">
+        <div class="seg" id="scoresys"></div>
+        <div class="hint" id="scorehead" style="margin:0 0 10px"></div>
+        <div class="scroll viz" id="scoreplot"></div>
+        <div id="scoresum" style="margin-top:14px"></div>
+        <div class="scroll" style="margin-top:12px"><table id="scorebands"></table></div>
       </div>
     </div>
 
@@ -4315,6 +4373,7 @@ function select(id) {
   benchView('run');
   current = id; offset = 0; page = 0;
   ART = {steps: [], csvs: []};
+  SCORES = null;
   $('log').textContent = '';
   $('tabs').hidden = false;
   $('results').innerHTML = '';
@@ -4341,7 +4400,8 @@ const sideJob = id => !!(RUNS[id] && RUNS[id].kind);
 
 function showOnlyOutput(only) {
   for (const b of $('tabs').querySelectorAll('button'))
-    b.hidden = only && b.dataset.tab !== 'output';
+    b.hidden = (only && b.dataset.tab !== 'output')
+            || (b.dataset.tab === 'scores' && !hasScores());
 }
 
 // ------------------------------------------------------------------ tabs
@@ -4349,7 +4409,7 @@ function showTab(name) {
   tab = name;
   for (const b of $('tabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.tab === name);
-  for (const t of ['output','results','calls','steps'])
+  for (const t of ['output','results','calls','steps','scores'])
     $('t-' + t).hidden = t !== name;
   // a chart drawn while its tab was hidden measured a zero-width box and fell
   // back to the minimum, so redraw it now that it has a real width
@@ -4360,6 +4420,7 @@ function showTab(name) {
   if (name === 'output' && current && !$('log').textContent) { offset = 0; poll(); }
   if (name === 'calls' && !$('calls').rows.length) loadCalls();
   if (name === 'steps' && !$('steplog').textContent) loadStep();
+  if (name === 'scores') paintScores();
 }
 
 // ------------------------------------------------------------------ polling
@@ -4649,11 +4710,19 @@ function tip(e, sy, ms) {
 }
 function hideTip() { if (TIP) TIP.hidden = true; }
 
-addEventListener('resize', () => { if (view === 'chart' && RESULTS) paintChart(); });
+addEventListener('resize', () => {
+  if (view === 'chart' && RESULTS) paintChart();
+  if (tab === 'scores') paintScores();
+});
 
 // ---------------------------------------------------------------- artifacts
 async function loadArtifacts() {
   ART = await api(`/api/artifacts?id=${encodeURIComponent(current)}`);
+  // which systems in this run scored their calls 0-100, if any
+  const sc = await api(`/api/scores?id=${encodeURIComponent(current)}`);
+  SCORES = sc.error ? null : sc;
+  $('tabs').querySelector('[data-tab="scores"]').hidden = !hasScores();
+  if (tab === 'scores') paintScores();
   $('c-calls').textContent = ART.csvs.length ? '(' + ART.csvs.length + ')' : '';
   $('c-steps').textContent = ART.steps.length ? '(' + ART.steps.length + ')' : '';
   for (const b of $('tabs').querySelectorAll('button')) {
@@ -4688,6 +4757,9 @@ async function loadCalls() {
   const cols = r.columns;
   const truthAt = cols.indexOf('true');
   const why = cols.map(c => c.endsWith('_why'));
+  // <system>_pct is the 0-100 scam chance behind that system's verdict: a
+  // number, so it is never marked right or wrong against the label
+  const pct = cols.map(c => c.endsWith('_pct'));
   // hiding them is worth having: seven systems means seven extra prose
   // columns, and the table is already wide
   $('whybox').hidden = !why.some(Boolean);
@@ -4696,7 +4768,7 @@ async function loadCalls() {
 
   let h = '<tr>' + cols.map((c, i) => keep(i)
       ? `<th class="${why[i] ? 'why' : ''}">${esc(why[i]
-          ? c.slice(0, -4) + ' · why' : c)}</th>`
+          ? c.slice(0, -4) + ' · why' : pct[i] ? c.slice(0, -4) + ' · scam %' : c)}</th>`
       : '').join('') + '</tr>';
   for (const row of r.rows) {
     h += '<tr>' + row.map((v, i) => {
@@ -4707,6 +4779,8 @@ async function loadCalls() {
       // the cell is clipped by CSS, so the full sentence goes in the tooltip
       if (why[i])
         return `<td class="why" title="${esc(v)}">${esc(v)}</td>`;
+      if (pct[i])
+        return `<td>${v === '' ? '' : esc(v) + '%'}</td>`;
       if (truthAt >= 0 && i > truthAt && v)
         return `<td class="${v === row[truthAt] ? 'hit' : 'miss'}">${esc(v)}</td>`;
       return `<td>${esc(v)}</td>`;
@@ -4721,6 +4795,174 @@ async function loadCalls() {
     ? 'green = agrees with the true label, red = got it wrong' : '';
   $('prev').disabled = page === 0;
   $('next').disabled = to >= r.total;
+}
+
+// ------------------------------------------------------------- scam chance
+// Web-RAG and the hybrid score every call 0-100 and call it a scam at 50 or
+// over. Accuracy counts the calls on the wrong side of that line; this shows
+// how far over it they are. One row per outcome, one dot per call, stacked
+// where calls share a score. The two kinds of mistake are the orange rows.
+let SCORES = null, scoreSys = null;
+const OUTCOMES = [
+  {k: 'TP', label: 'Scam, flagged'},
+  {k: 'FN', label: 'Scam, missed', wrong: true},
+  {k: 'FP', label: 'Legit, flagged', wrong: true},
+  {k: 'TN', label: 'Legit, cleared'},
+];
+const BANDS = Array.from({length: 10}, (_, b) => [b * 10, b === 9 ? 100 : b * 10 + 9]);
+const bandOf = v => Math.min(9, Math.floor(v / 10));
+const outcomeOf = (t, p) => p === 'Fraud' ? (t === 'Fraud' ? 'TP' : 'FP')
+                                          : (t === 'Fraud' ? 'FN' : 'TN');
+const sysName = s => s.replace(/__stripped$/, ' (stripped)');
+
+function hasScores() { return !!(SCORES && SCORES.systems && SCORES.systems.length); }
+
+function paintScores() {
+  if (!hasScores()) {
+    $('scoreplot').innerHTML = '<div class="muted">no system in this run gives a '
+      + 'scam-chance score - Web-RAG and the hybrid do</div>';
+    $('scoresys').innerHTML = $('scorehead').textContent = '';
+    $('scoresum').innerHTML = $('scorebands').innerHTML = '';
+    return;
+  }
+  const systems = SCORES.systems;
+  if (!systems.some(s => s.system === scoreSys)) scoreSys = systems[0].system;
+  $('scoresys').hidden = systems.length < 2;
+  $('scoresys').innerHTML = systems.map(s =>
+    `<button data-sys="${esc(s.system)}" class="${s.system === scoreSys ? 'on' : ''}">`
+    + `${esc(sysName(s.system))}</button>`).join('');
+  for (const b of $('scoresys').querySelectorAll('button'))
+    b.onclick = () => { scoreSys = b.dataset.sys; paintScores(); };
+
+  const sy = systems.find(s => s.system === scoreSys);
+  const th = sy.threshold;
+  const pts = sy.points.map(([idx, v, t, p]) => ({idx, v, o: outcomeOf(t, p)}));
+  const by = {TP: [], FN: [], FP: [], TN: []};
+  for (const q of pts) by[q.o].push(q);
+  const wrong = by.FP.length + by.FN.length;
+  $('scorehead').textContent = `${sysName(sy.system)} · ${pts.length} calls · `
+    + `scam at ${th} or over · ${wrong} on the wrong side of the line`
+    + ` (${(100 * wrong / Math.max(pts.length, 1)).toFixed(1)}%)`;
+
+  // geometry
+  const box = $('scoreplot');
+  const W = Math.max(box.clientWidth || 640, 480);
+  const PADL = 150, PADR = 18, PADT = 26, AXIS = 30, R = 4, ROWMAX = 120;
+  const plotW = W - PADL - PADR;
+  const x = v => PADL + plotW * v / 100;
+  // one stack per whole score: calls that share a score pile up at it
+  const stacks = {};
+  let y0 = PADT;
+  const rows = OUTCOMES.map(o => {
+    const st = new Map();
+    for (const q of by[o.k]) {
+      const key = Math.round(q.v);
+      if (!st.has(key)) st.set(key, []);
+      st.get(key).push(q);
+    }
+    const tall = Math.max(1, ...[...st.values()].map(a => a.length));
+    // 2r+1 apart until the tallest stack would outgrow the row, then closer
+    const step = Math.min(2 * R + 1, (ROWMAX - 2 * R - 10) / tall);
+    const h = Math.max(38, Math.min(ROWMAX, tall * step + 2 * R + 10));
+    const row = {o, st, step, top: y0, h};
+    y0 += h;
+    return row;
+  });
+  const H = y0 + AXIS;
+
+  let g = '';
+  // recessive grid every 10 points, the threshold as the one strong line
+  for (let v = 0; v <= 100; v += 10) {
+    g += `<line x1="${x(v)}" y1="${PADT}" x2="${x(v)}" y2="${y0}"
+           stroke="var(--grid)" stroke-width="1"/>`;
+    g += `<text class="tick" x="${x(v)}" y="${y0 + 16}" text-anchor="middle">${v}</text>`;
+  }
+  g += `<text class="tick" x="${PADL + plotW / 2}" y="${y0 + AXIS - 1}"
+         text-anchor="middle">scam chance (%)</text>`;
+  rows.forEach((r, i) => {
+    if (i) g += `<line x1="${PADL}" y1="${r.top}" x2="${PADL + plotW}" y2="${r.top}"
+                  stroke="var(--axis)" stroke-width="1"/>`;
+    const mid = r.top + r.h / 2;
+    g += `<text class="name" x="${PADL - 12}" y="${mid - 7}" text-anchor="end"
+           dominant-baseline="middle">${r.o.label}</text>`;
+    g += `<text class="val" x="${PADL - 12}" y="${mid + 9}" text-anchor="end"
+           dominant-baseline="middle">${r.o.k} · ${by[r.o.k].length}</text>`;
+    const base = r.top + r.h - R - 5;
+    const cls = r.o.wrong ? 'dot-bad' : 'dot-ok';
+    for (const [v, list] of [...r.st.entries()].sort((a, b) => a[0] - b[0])) {
+      list.forEach((q, j) => {
+        g += `<circle class="${cls}" cx="${x(v)}" cy="${base - j * r.step}" r="${R}"/>`;
+      });
+      const key = r.o.k + ':' + v;
+      stacks[key] = {o: r.o, v, list};
+      const w = Math.max(2 * R + 2, plotW / 100);
+      g += `<rect class="stack" data-k="${key}" x="${x(v) - w / 2}" y="${r.top + 2}"
+             width="${w}" height="${r.h - 4}"/>`;
+    }
+  });
+  g += `<line x1="${x(th)}" y1="${PADT - 6}" x2="${x(th)}" y2="${y0}"
+         stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+  g += `<text class="val" x="${x(th)}" y="${PADT - 10}" text-anchor="middle">`
+    + `threshold ${th}</text>`;
+  box.innerHTML = `<svg width="${W}" height="${H}" role="img"
+    aria-label="Scam-chance score of every call, by outcome">${g}</svg>`;
+
+  for (const el of box.querySelectorAll('.stack')) {
+    el.onmousemove = e => {
+      const s = stacks[el.dataset.k];
+      const ids = s.list.map(q => '#' + q.idx);
+      tipAt(e, `<b>${s.o.label} · ${s.v}%</b>${s.list.length} call`
+        + `${s.list.length === 1 ? '' : 's'}: ${esc(ids.slice(0, 12).join(', '))}`
+        + (ids.length > 12 ? ` and ${ids.length - 12} more` : ''));
+    };
+    el.onmouseleave = hideTip;
+  }
+
+  // where the mistakes fall, in words
+  const said = [];
+  for (const k of ['FP', 'FN']) {
+    const vs = by[k].map(q => q.v).sort((a, b) => a - b);
+    const what = k === 'FP' ? 'False positives (legit calls flagged)'
+                            : 'False negatives (scams missed)';
+    if (!vs.length) { said.push(`<div><b>${what}:</b> none.</div>`); continue; }
+    const counts = BANDS.map(() => 0);
+    for (const v of vs) counts[bandOf(v)]++;
+    const top = counts.indexOf(Math.max(...counts));
+    const near = vs.filter(v => Math.abs(v - th) < 10).length;
+    const med = vs[Math.floor((vs.length - 1) / 2)];
+    const q1 = vs[Math.floor((vs.length - 1) / 4)], q3 = vs[Math.floor(3 * (vs.length - 1) / 4)];
+    said.push(`<div style="margin-bottom:6px"><b>${what}:</b> ${vs.length}. `
+      + `Most fall in <b>${BANDS[top][0]}–${BANDS[top][1]}%</b> (${counts[top]} of ${vs.length}); `
+      + `the middle half scores ${q1}–${q3}% (median ${med}%). `
+      + `${near} of ${vs.length} (${Math.round(100 * near / vs.length)}%) are within 10 points `
+      + `of the threshold - near misses rather than confident mistakes.</div>`);
+  }
+  $('scoresum').innerHTML = said.join('');
+
+  // the same counts as a table, band by band
+  const cnt = {TP: BANDS.map(() => 0), FN: BANDS.map(() => 0),
+               FP: BANDS.map(() => 0), TN: BANDS.map(() => 0)};
+  for (const q of pts) cnt[q.o][bandOf(q.v)]++;
+  const most = k => Math.max(...cnt[k]);
+  let t = '<tr><th>scam chance</th>' + OUTCOMES.map(o =>
+    `<th>${o.label} (${o.k})</th>`).join('') + '</tr>';
+  BANDS.forEach(([lo, hi], b) => {
+    t += `<tr><td>${lo}–${hi}%</td>` + OUTCOMES.map(o => {
+      const n = cnt[o.k][b];
+      const hot = o.wrong && n && n === most(o.k);
+      return `<td class="${hot ? 'most' : ''}">${n || '<span class="muted">·</span>'}</td>`;
+    }).join('') + '</tr>';
+  });
+  $('scorebands').innerHTML = t;
+}
+
+function tipAt(e, html) {
+  if (!TIP) { TIP = document.createElement('div'); TIP.className = 'tip';
+              document.body.appendChild(TIP); }
+  TIP.innerHTML = html;
+  TIP.style.left = Math.min(e.clientX + 16, innerWidth - 300) + 'px';
+  TIP.style.top = Math.min(e.clientY + 16, innerHeight - 120) + 'px';
+  TIP.hidden = false;
 }
 
 function esc(s) {
