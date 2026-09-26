@@ -861,6 +861,18 @@ SCAM_ADAPTIVE_CONFIDENT=0.90   how sure is sure enough; the Benchmark form has
                                the same setting as a % field
 ```
 
+**Preview before spending credits.** With *Preview only* ticked on the form
+(the default), or `--adaptive-preview` / `SCAM_ADAPTIVE_PREVIEW=1`, every
+call's P(scam) is measured from the KB but nothing is searched. The log lists
+how many calls each cut-off (60–99%) would send to Tavily and roughly how many
+credits that costs (advanced search, 2 credits each). The Scam chance tab
+shades the web-search band, with a slider to move the cut-off. For any
+cut-off it says how many calls fall in the band, how many of those are
+currently wrong (the most a web search could fix), and how many mistakes sit
+outside it where the web never gets a chance. A preview's results are filed as
+`webrag_adaptive_preview`, so they never enter the Results ledger as a real
+adaptive score. Untick *Preview only* to run the searches.
+
 Searches are cached in `cache/tavily_webrag/`, keyed on the query, so a re-run
 costs no Tavily credits and sees the same evidence; delete the folder for
 fresh results. Without `TAVILY_API_KEY` (in `.env` or the environment) the

@@ -24,7 +24,8 @@ WANT = [
     ("llm_only",     "combined.log", r"^\s*llm_only\b"),
     ("singh",        "combined.log", r"^\s*singh\b"),
     ("webrag",       "combined.log", r"^\s*webrag\b"),
-    ("webrag_adaptive", "combined.log", r"^\s*(webrag_adaptive|Web-RAG adaptive)\b"),
+    # a preview run is webrag_adaptive_preview, which "\b" keeps out of this
+    ("webrag_adaptive", "combined.log", r"^\s*webrag_adaptive\b"),
     ("qwen_kb",       "combined.log", r"^\s*qwen_kb\b"),
     ("hybrid",       "combined.log", r"^\s*hybrid\b"),
     ("ontology_rag", "ontology.log", None),          # last metric line

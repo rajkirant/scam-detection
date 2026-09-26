@@ -623,7 +623,13 @@ def run_webrag(data, debug=False, pass_label=""):
     return out, raws, reasons, scores
 
 
-def run_webrag_adaptive(data, debug=False, pass_label="", confident=None):
+# Tavily's advanced search, which retrieve_web uses, costs 2 credits a query
+TAVILY_CREDITS_PER_SEARCH = 2
+PREVIEW_CUTOFFS = (0.60, 0.70, 0.80, 0.90, 0.95, 0.99)
+
+
+def run_webrag_adaptive(data, debug=False, pass_label="", confident=None,
+                        preview=None):
     """Web-RAG that only searches the web when the model is unsure.
 
     Each call is judged with the local KB first, and P(scam) is read from the
@@ -634,25 +640,36 @@ def run_webrag_adaptive(data, debug=False, pass_label="", confident=None):
     import webrag_system as W
     W.load_env()
     confident = W.CONFIDENT if confident is None else confident
+    preview = W.PREVIEW if preview is None else preview
     coll = W.get_kb_collection()
     has_key = bool(os.environ.get("TAVILY_API_KEY"))
     print("    confident at P(scam) >= %.2f or <= %.2f; anything between goes "
           "to a web search" % (confident, 1 - confident))
-    if not has_key:
+    if preview:
+        print("    PREVIEW: P(scam) from the KB only - no web search is made, "
+              "no Tavily credits are spent")
+    elif not has_key:
         print("    WARNING no TAVILY_API_KEY in .env or the environment: unsure "
               "calls cannot be searched and keep their KB verdict")
     before = dict(W.WEB_STATS)
 
     tally = Counter()
     out, raws, reasons, scores = [], [], [], []
+    p_kb = []                   # exact, unrounded - the cut-off table uses these
     for i, (text, true) in enumerate(data, 1):
-        res = W.detect_adaptive(text, coll, confident=confident)
+        res = W.detect_adaptive(text, coll, confident=confident,
+                                search_web=not preview)
+        p_kb.append(res["p_kb"])
         pred = res["predicted"]
         out.append((pred, true))
         scores.append(res["confidence"])
         raws.append(json.dumps(res, default=str)[:500])
         kb_pred = "Fraud" if res["p_kb"] >= 0.5 else "Normal"
-        if res["escalated"]:
+        if res["escalated"] and preview:
+            tally["escalated"] += 1
+            why = ("[P(scam) %.0f%% from KB, unsure -> would search the web "
+                   "(preview)]" % (100 * res["p_kb"]))
+        elif res["escalated"]:
             tally["escalated"] += 1
             tally["esc_right_before"] += kb_pred == true
             tally["esc_right_after"] += pred == true
@@ -673,11 +690,22 @@ def run_webrag_adaptive(data, debug=False, pass_label="", confident=None):
         tally["how_" + res["how"]] += 1
         reasons.append(why)
         if i % 20 == 0:
-            print("    Web-RAG adaptive%s: %d/%d  (%d sent to the web so far)"
-                  % (pass_label, i, len(data), tally["escalated"]), flush=True)
+            print("    Web-RAG adaptive%s: %d/%d  (%d %s the web so far)"
+                  % (pass_label, i, len(data), tally["escalated"],
+                     "would go to" if preview else "sent to"), flush=True)
 
     n = max(len(data), 1)
     pct = lambda a, b: 100.0 * a / b if b else 0.0
+    if preview:
+        # how many calls each cut-off would send out, so it can be chosen
+        # before anything is spent
+        print("    calls that would go to the web, by cut-off:")
+        for c in PREVIEW_CUTOFFS:
+            k = sum(1 for p in p_kb if max(p, 1.0 - p) < c)
+            print("      %3.0f%%  %5d of %d (%4.1f%%)  ~%d Tavily credits%s"
+                  % (100 * c, k, len(data), pct(k, len(data)),
+                     k * TAVILY_CREDITS_PER_SEARCH,
+                     "   <- this run" if abs(c - confident) < 1e-9 else ""))
     print("    P(scam) measured from logprobs on %d/%d calls%s"
           % (tally["how_logprobs"], len(data),
              "" if not tally["how_verbal"] else
@@ -685,10 +713,15 @@ def run_webrag_adaptive(data, debug=False, pass_label="", confident=None):
     print("    confident, kept the KB verdict: %d/%d (%.0f%%), %.1f%% of them right"
           % (tally["confident"], n, pct(tally["confident"], n),
              pct(tally["conf_right"], tally["confident"])))
-    print("    unsure, sent to the web:        %d/%d (%.0f%%), web evidence kept "
-          "for %d" % (tally["escalated"], n, pct(tally["escalated"], n),
-                      tally["web_used"]))
-    if tally["escalated"]:
+    if preview:
+        print("    unsure, would go to the web:    %d/%d (%.0f%%), ~%d Tavily "
+              "credits" % (tally["escalated"], n, pct(tally["escalated"], n),
+                           tally["escalated"] * TAVILY_CREDITS_PER_SEARCH))
+    else:
+        print("    unsure, sent to the web:        %d/%d (%.0f%%), web evidence "
+              "kept for %d" % (tally["escalated"], n,
+                               pct(tally["escalated"], n), tally["web_used"]))
+    if tally["escalated"] and not preview:
         print("      on those calls: %.1f%% right before the web, %.1f%% after; "
               "%d verdict%s changed, %d of them to the right answer"
               % (pct(tally["esc_right_before"], tally["escalated"]),
@@ -696,8 +729,9 @@ def run_webrag_adaptive(data, debug=False, pass_label="", confident=None):
                  tally["flipped"], "" if tally["flipped"] == 1 else "s",
                  tally["flip_fixed"]))
     used = {k: W.WEB_STATS[k] - before.get(k, 0) for k in W.WEB_STATS}
-    print("    web searches: %d live, %d from cache, %d failed"
-          % (used["live"], used["cached"], used["failed"]))
+    if not preview:
+        print("    web searches: %d live, %d from cache, %d failed"
+              % (used["live"], used["cached"], used["failed"]))
     return out, raws, reasons, scores
 
 
@@ -1401,6 +1435,9 @@ def main():
                     help="webrag_adaptive: how sure the model must be to skip "
                          "the web search, as P(scam) or 1-P(scam) (default "
                          "0.90, or SCAM_ADAPTIVE_CONFIDENT)")
+    ap.add_argument("--adaptive-preview", action="store_true",
+                    help="webrag_adaptive: measure P(scam) and count the calls "
+                         "that would go to the web, without searching")
     ap.add_argument("--folds", type=int, default=5,
                     help="cross-validation folds for bag-of-words and Qwen-KB")
     ap.add_argument("--qwen-folds", type=int, default=None,
@@ -1559,21 +1596,28 @@ def main():
             print("    (%.0fs)" % (time.time() - t0))
 
     if "webrag_adaptive" not in skip:
-        print("\nWeb-RAG adaptive (KB first, web search only when unsure):")
+        import webrag_system as _W
+        preview = bool(args.adaptive_preview or _W.PREVIEW)
+        # A preview never searched, so its numbers are the KB pass alone and
+        # must not be filed as webrag_adaptive's: it gets its own name, which
+        # the results table and the ledger do not pick up.
+        ak = "webrag_adaptive_preview" if preview else "webrag_adaptive"
+        print("\nWeb-RAG adaptive (KB first, web search only when unsure)%s:"
+              % (" - PREVIEW, no web search" if preview else ""))
         t0 = time.time()
-        (results["webrag_adaptive"], raw_log["webrag_adaptive"],
-         reasons["webrag_adaptive"], scores["webrag_adaptive"]) = \
+        (results[ak], raw_log[ak], reasons[ak], scores[ak]) = \
             run_webrag_adaptive(data, args.debug,
-                                confident=args.adaptive_confident)
-        show("Web-RAG adaptive", metrics(results["webrag_adaptive"]))
-        show_score_ranges("webrag_adaptive", results["webrag_adaptive"],
-                          scores["webrag_adaptive"])
+                                confident=args.adaptive_confident,
+                                preview=preview)
+        show(ak, metrics(results[ak]))
+        show_score_ranges(ak, results[ak], scores[ak])
         print("    (%.0fs)" % (time.time() - t0))
         if data_s is not None:
-            k = "webrag_adaptive" + S
+            k = ak + S
             (results[k], raw_log[k], reasons[k], scores[k]) = \
                 run_webrag_adaptive(data_s, args.debug, " (stripped)",
-                                    confident=args.adaptive_confident)
+                                    confident=args.adaptive_confident,
+                                    preview=preview)
             show(k, metrics(results[k]))
             show_score_ranges(k, results[k], scores[k])
 
