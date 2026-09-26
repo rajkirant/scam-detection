@@ -71,6 +71,7 @@ BASELINES = [
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
+    ("webrag_adaptive", "Web-RAG adaptive", "KB first; web search only when the model is unsure", True),
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
@@ -478,6 +479,11 @@ def start_run(form):
                              "call twice; it cannot run on a single transcript")
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
+    adaptive_confident = None
+    if "webrag_adaptive" in baselines:
+        adaptive_confident = numeric(
+            form, {"adaptive_confident": ("adaptive_confident", float, 50, 100,
+                                          None)}, "adaptive_confident")
     # One model, not a choice: run_all.sh uses it for every LLM baseline.
     model = ollama_ctx.MODEL if any(known[b][3] for b in baselines) else ""
 
@@ -514,6 +520,8 @@ def start_run(form):
     # of long calls is the difference between a verdict and a guess.
     if num_ctx:
         env["SCAM_NUM_CTX"] = str(num_ctx)
+    if adaptive_confident is not None:
+        env["SCAM_ADAPTIVE_CONFIDENT"] = "%.4f" % (adaptive_confident / 100.0)
 
     with open(log, "wb") as out:
         out.write(("$ ./run_all.sh " + " ".join(shlex.quote(f) for f in flags)
@@ -1918,6 +1926,7 @@ class Handler(BaseHTTPRequestHandler):
                     "baselines": [{"key": k, "label": l, "note": n, "needs_model": m}
                                   for k, l, n, m in BASELINES],
                     "model": ollama_ctx.MODEL,
+                    "tavily": tavily_key_present(),
                     "ollama": ollama_state(),
                     "kb_modes": [{"key": k, "label": l, "note": n,
                                   "harvests": h is not None, "exclusive": x}
@@ -2854,6 +2863,14 @@ PAGE = r"""<!doctype html>
           instructions first — and keeps only about half the window, so a call
           that does not fit comes back as a confident verdict on its last few
           minutes.</div>
+      </div>
+
+      <div id="adaptbox" hidden>
+        <label for="adaptconf">Web-RAG adaptive: search the web below</label>
+        <input type="text" id="adaptconf" value="90" spellcheck="false">
+        <div class="hint" id="adapthint">How sure the model must be, in %, to
+          keep its verdict without a web search. At 90 a call scored between
+          10% and 90% scam goes to the web; higher sends more calls.</div>
       </div>
 
       <button class="go" id="go">Run</button>
@@ -4028,6 +4045,12 @@ async function sizeContext() {
 
 function onBaselines() {
   const sel = chosen();
+  const adaptive = sel.includes('webrag_adaptive');
+  $('adaptbox').hidden = !adaptive;
+  $('adapthint').style.color = adaptive && !CFG.tavily ? 'var(--bad)' : '';
+  if (adaptive && !CFG.tavily)
+    $('adapthint').textContent = 'No TAVILY_API_KEY in .env - unsure calls '
+      + 'cannot be searched and will keep their KB verdict.';
   $('modelbox').hidden = !sel.some(k =>
     CFG.baselines.find(b => b.key === k).needs_model);
   $('go').disabled = sel.length === 0;
@@ -4104,6 +4127,7 @@ async function go() {
     baselines: chosen(),
     limit: limit,
     num_ctx: $('numctx').value,
+    adaptive_confident: $('adaptconf').value,
     stripped: $('stripped').checked,
   });
   onBaselines();

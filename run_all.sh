@@ -70,7 +70,8 @@ MCQ_ONTOLOGY="knowledge/mcq_ontology.json"
 # second way for two runs of the "same" baseline to disagree.
 MODEL_NAME="qwen2.5:14b"
 
-BL_KEYS=(all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert)
+# webrag_adaptive is last so the numbers of the older ones do not move
+BL_KEYS=(all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert webrag_adaptive)
 BL_LABELS=(
   "all                       every system below, in one run"
   "Length only               word count against one threshold, no LLM"
@@ -83,6 +84,7 @@ BL_LABELS=(
   "Ontology RAG              scam_ontology.json"
   "MCQ ontology              mcq_ontology.json, 2 calls per transcript"
   "BERT                      fine-tuned classifier, no LLM"
+  "Web-RAG adaptive          KB first, web search only when the model is unsure"
 )
 
 prompt() {            # prompt <text> <varname>   - read only echoes its own
@@ -361,9 +363,10 @@ has_bl bow      || COMBINED_SKIP+=(bow)
 has_bl llm_only || COMBINED_SKIP+=(llm_only)
 has_bl singh    || COMBINED_SKIP+=(singh)
 has_bl webrag   || COMBINED_SKIP+=(webrag)
+has_bl webrag_adaptive || COMBINED_SKIP+=(webrag_adaptive)
 has_bl qwen_kb   || COMBINED_SKIP+=(qwen_kb)
 has_bl hybrid   || COMBINED_SKIP+=(hybrid)
-if [[ ${#COMBINED_SKIP[@]} -lt 7 ]]; then     # fewer than all seven skipped
+if [[ ${#COMBINED_SKIP[@]} -lt 8 ]]; then     # fewer than all eight skipped
   RUN_COMBINED=1
   [[ ${#COMBINED_SKIP[@]} -gt 0 ]] \
     && COMBINED_EXTRA="--skip $(IFS=,; echo "${COMBINED_SKIP[*]}")"
@@ -372,7 +375,7 @@ fi
 # only the systems that actually call an LLM need Ollama up and the model
 # pulled - a length/bow/bert selection needs no model at all
 NEEDS_MODEL=0
-for _k in llm_only singh webrag qwen_kb hybrid ontology mcq; do
+for _k in llm_only singh webrag webrag_adaptive qwen_kb hybrid ontology mcq; do
   has_bl "$_k" && NEEDS_MODEL=1
 done
 

@@ -45,6 +45,7 @@ The ten baselines, in escalating order:
 | `llm_only` | the model decides alone, no retrieval — the control | yes |
 | `singh` | policy-compliance check against the `bank_policies` collection | yes |
 | `webrag` | retrieval over the web-harvested `scam_patterns` KB, with a relevance gate | yes |
+| `webrag_adaptive` | Web-RAG that measures P(scam) and runs a live web search only when the model is unsure | yes (and `TAVILY_API_KEY` for the search) |
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
@@ -700,7 +701,7 @@ Or answer up front and it asks nothing:
 | Flag | Values |
 | --- | --- |
 | `-d, --dataset` | a path, or a menu number |
-| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
+| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert webrag_adaptive` — comma-separate for several; menu numbers work too (`-b 3,7,8`; `webrag_adaptive` is 12) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
@@ -830,6 +831,45 @@ WEBRAG_LLM_GATE=1            the check that actually decides; =0 to
 
 ```bash
 python scripts/test_relevance_gate.py           # gate logic, offline, no Ollama
+```
+
+### 7a. Web-RAG adaptive: search the web only when unsure
+
+`webrag` asks the model for a 0-100 score, and at temperature 0 it writes the
+same few round numbers again and again. `webrag_adaptive` measures instead.
+The model is asked for one word, *Scam* or *Legit*, and P(scam) is read from
+the probability it puts on each (the logprobs Ollama returns). That number is
+continuous, so it says how sure the model really is, and it drives a second
+step:
+
+1. Judge the call with the local KB evidence (the same prompt as `webrag`) and
+   read P(scam).
+2. If the model is sure, with P(scam) ≥ 0.90 or ≤ 0.10, keep that verdict.
+3. Otherwise run a live Tavily search on the call's tactic, put the results
+   through the same relevance gate and credibility scoring, and judge again
+   with the KB and web evidence together. That second P(scam) is the answer.
+
+The per-call CSV gets `webrag_adaptive_pct` (the final P(scam) in %), so the
+Scam chance tab plots it, and the reason column says, for each call, whether it
+went to the web and how P(scam) moved. The log reports how many calls were
+confident, how many went to the web, how many of those had their verdict
+changed and how many changes were right, and how many searches were live or
+cached.
+
+```
+SCAM_ADAPTIVE_CONFIDENT=0.90   how sure is sure enough; the Benchmark form has
+                               the same setting as a % field
+```
+
+Searches are cached in `cache/tavily_webrag/`, keyed on the query, so a re-run
+costs no Tavily credits and sees the same evidence; delete the folder for
+fresh results. Without `TAVILY_API_KEY` (in `.env` or the environment) the
+unsure calls keep their KB verdict, and both the log and the form say so. An
+Ollama too old to return logprobs falls back to the graded 0-100 score, and the
+log says that too.
+
+```bash
+python scripts/test_webrag_adaptive.py          # offline: fake Ollama and Tavily
 ```
 
 ### 8. One transcript at a time
