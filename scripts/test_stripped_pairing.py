@@ -301,7 +301,8 @@ def test_learners(tmp):
         rec = Recorder()
         saved = install_stubs(rec)
         try:
-            out, _, _, _ = run(data, 5, judge_data=data_s)
+            # the hybrid also hands back each call's 0-100 score
+            out = run(data, 5, judge_data=data_s)[0]
         finally:
             remove_stubs(*saved)
         check("%s learned from original text only" % name,

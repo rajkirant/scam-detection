@@ -592,10 +592,11 @@ def run_webrag(data, debug=False, pass_label=""):
           % (W.MIN_KB_SIMILARITY, "on" if W.USE_LLM_GATE else "off"))
 
     gate = Counter()
-    out, raws, reasons = [], [], []
+    out, raws, reasons, scores = [], [], [], []
     for i, (text, true) in enumerate(data, 1):
         res = W.detect(text, coll, use_web=False, threshold=50)
         out.append((res["predicted"], true))
+        scores.append(res.get("confidence"))
         raws.append(json.dumps(res, default=str)[:500])
         reasons.append(webrag_reason(res))
         gate["with_evidence" if res["evidence_used"] else "no_evidence"] += 1
@@ -618,7 +619,48 @@ def run_webrag(data, debug=False, pass_label=""):
         print("    WARNING: relevance judge unreadable on %d transcripts "
               "(kept their candidates rather than guessing)"
               % gate["judge_unreadable"])
-    return out, raws, reasons
+    return out, raws, reasons, scores
+
+
+# ------------------------------------------------ where the mistakes sit
+# Web-RAG and the hybrid score every call 0-100 ("scam chance") and call it a
+# scam at 50 or over. Accuracy says how many calls land on the wrong side of
+# that line; this says how far over it they are - a false positive at 52 is a
+# near miss, one at 95 is the model being sure of the wrong thing.
+SCORE_BINS = [(lo, lo + 9 if lo < 90 else 100) for lo in range(0, 100, 10)]
+
+
+def score_ranges(pairs, scores):
+    """{outcome: [count per SCORE_BINS bin]} for TP, FN, FP, TN."""
+    out = {k: [0] * len(SCORE_BINS) for k in ("TP", "FN", "FP", "TN")}
+    for (pred, true), sc in zip(pairs, scores):
+        if sc is None:
+            continue
+        kind = (("TP" if true == "Fraud" else "FP") if pred == "Fraud"
+                else ("FN" if true == "Fraud" else "TN"))
+        out[kind][min(int(sc) // 10, len(SCORE_BINS) - 1)] += 1
+    return out
+
+
+def show_score_ranges(name, pairs, scores):
+    """The false positives and false negatives, by score band."""
+    if not scores or all(sc is None for sc in scores):
+        return
+    r = score_ranges(pairs, scores)
+    print("    %s scam-chance bands (threshold 50):" % name)
+    print("      band     " + "  ".join("%6s" % k for k in ("TP", "FN", "FP", "TN")))
+    for b, (lo, hi) in enumerate(SCORE_BINS):
+        row = [r[k][b] for k in ("TP", "FN", "FP", "TN")]
+        if any(row):
+            print("      %3d-%-3d  %s" % (lo, hi, "  ".join("%6d" % v for v in row)))
+    for kind, what in (("FP", "false positives"), ("FN", "false negatives")):
+        n = sum(r[kind])
+        if not n:
+            continue
+        top = max(range(len(SCORE_BINS)), key=lambda b: r[kind][b])
+        lo, hi = SCORE_BINS[top]
+        print("      most %s (%d of %d) score %d-%d"
+              % (what, r[kind][top], n, lo, hi))
 
 
 def webrag_reason(res):
@@ -1137,7 +1179,7 @@ def build_merged_kb(learned_patterns, tag="hyb", include_web=True):
 
 
 def _hybrid_judge(indices, data, coll, out, raws, reasons, gate, threshold,
-                  label=""):
+                  label="", scores=None):
     import webrag_system as W
 
     indices = list(indices)
@@ -1146,6 +1188,8 @@ def _hybrid_judge(indices, data, coll, out, raws, reasons, gate, threshold,
         res = W.detect(text, coll, use_web=False, threshold=threshold)
         out[i] = (res["predicted"], true)
         raws[i] = json.dumps(res, default=str)[:500]
+        if scores is not None:
+            scores[i] = res.get("confidence")
         # which half of the shared KB was actually in front of the judge is
         # part of why it said what it said, so it goes in the reason
         mix = []
@@ -1185,6 +1229,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
     out = [(None, true) for _, true in data]
     raws = [None] * len(data)
     reasons = [""] * len(data)
+    scores = [None] * len(data)
 
     if train_csv:
         patterns = _patterns_from_train_csv(train_csv, data, max_examples,
@@ -1193,7 +1238,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
         print("    merged KB: %d web-harvested + %d learned patterns"
               % (n_web, n_learned), flush=True)
         _hybrid_judge(range(len(data)), judged, coll, out, raws, reasons, gate,
-                      threshold)
+                      threshold, scores=scores)
         all_patterns = patterns
     else:
         n_splits, splits = _stratified_folds(data, folds)
@@ -1210,7 +1255,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
             print("    %smerged KB: %d web-harvested + %d learned patterns"
                   % (label, n_web, n_learned), flush=True)
             _hybrid_judge(test_idx, judged, coll, out, raws, reasons, gate,
-                          threshold, label)
+                          threshold, label, scores)
 
     unscored = sum(1 for pred, _ in out if pred is None)
     if unscored:
@@ -1231,7 +1276,7 @@ def run_hybrid(data, folds=5, max_examples=40, max_patterns=8, debug=False,
         print("    WARNING: relevance judge unreadable on %d transcripts "
               "(kept their candidates rather than guessing)"
               % gate["judge_unreadable"])
-    return out, raws, reasons, all_patterns
+    return out, raws, reasons, all_patterns, scores
 
 
 # ------------------------------------------------------------------ main
@@ -1336,6 +1381,8 @@ def main():
     # system -> one sentence per call saying why. Only the LLM systems have
     # one; length and bag-of-words have no account to give of themselves.
     reasons = {}
+    # system -> each call's 0-100 scam chance, for the systems that give one
+    scores = {}
 
     if {"length", "bow"} - skip:
         print("\nTrivial reference classifiers (no LLM):")
@@ -1370,7 +1417,7 @@ def main():
         print("\n--trivial-only: stopping before the LLM systems.")
         if data_s is not None:
             show_trusted(results)
-        _save(results, data, reasons, raw_log, args.debug, data_s)
+        _save(results, data, reasons, raw_log, args.debug, data_s, scores)
         return
 
     if "llm_only" not in skip:
@@ -1412,15 +1459,19 @@ def main():
         t0 = time.time()
         print("    %s calls to go, one per transcript" % len(data), flush=True)
         (results["webrag"], raw_log["webrag"],
-         reasons["webrag"]) = run_webrag(data, args.debug)
+         reasons["webrag"], scores["webrag"]) = run_webrag(data, args.debug)
         show("Web-RAG (KB-only)", metrics(results["webrag"]))
+        show_score_ranges("webrag", results["webrag"], scores["webrag"])
         print("    (%.0fs)" % (time.time() - t0))
         if data_s is not None:
             t0 = time.time()
             print("    stripped copy, %d calls ..." % len(data_s), flush=True)
             (results["webrag" + S], raw_log["webrag" + S],
-             reasons["webrag" + S]) = run_webrag(data_s, args.debug, " (stripped)")
+             reasons["webrag" + S], scores["webrag" + S]) = run_webrag(
+                data_s, args.debug, " (stripped)")
             show("webrag" + S, metrics(results["webrag" + S]))
+            show_score_ranges("webrag" + S, results["webrag" + S],
+                              scores["webrag" + S])
             print("    (%.0fs)" % (time.time() - t0))
 
     if "qwen_kb" not in skip:
@@ -1471,7 +1522,7 @@ def main():
         t0 = time.time()
         try:
             (results["hybrid"], raw_log["hybrid"], reasons["hybrid"],
-             hybrid_patterns) = run_hybrid(
+             hybrid_patterns, scores["hybrid"]) = run_hybrid(
                 data, args.qwen_folds or args.folds, args.qwen_max_examples,
                 args.qwen_patterns, args.debug, args.qwen_train_csv,
                 args.qwen_num_ctx)
@@ -1480,8 +1531,10 @@ def main():
             results.pop("hybrid", None)
             raw_log.pop("hybrid", None)
             reasons.pop("hybrid", None)
+            scores.pop("hybrid", None)
         else:
             show("Hybrid (web + learned KB)", metrics(results["hybrid"]))
+            show_score_ranges("hybrid", results["hybrid"], scores["hybrid"])
             pattern_out = RESULTS_DIR / ("hybrid_learned_patterns_%d.json"
                                          % len(data))
             with open(pattern_out, "w", encoding="utf-8") as f:
@@ -1494,7 +1547,7 @@ def main():
                   "calls stripped", flush=True)
             try:
                 (results["hybrid" + S], raw_log["hybrid" + S],
-                 reasons["hybrid" + S], _) = run_hybrid(
+                 reasons["hybrid" + S], _, scores["hybrid" + S]) = run_hybrid(
                     data, args.qwen_folds or args.folds, args.qwen_max_examples,
                     args.qwen_patterns, args.debug, args.qwen_train_csv,
                     args.qwen_num_ctx, judge_data=data_s)
@@ -1502,6 +1555,8 @@ def main():
                 print("    SKIPPED stripped copy: %s" % exc)
             else:
                 show("hybrid" + S, metrics(results["hybrid" + S]))
+                show_score_ranges("hybrid" + S, results["hybrid" + S],
+                                  scores["hybrid" + S])
             print("    (%.0fs)" % (time.time() - t0))
 
     print("\n" + "=" * 74)
@@ -1522,13 +1577,20 @@ def main():
     # whose instructions were cut off.
     import ollama_ctx
     ollama_ctx.report(sys.stdout)
-    _save(results, data, reasons, raw_log, args.debug, data_s)
+    _save(results, data, reasons, raw_log, args.debug, data_s, scores)
 
 
-def _save(results, data, reasons=None, raw_log=None, debug=False, data_s=None):
+def _save(results, data, reasons=None, raw_log=None, debug=False, data_s=None,
+          scores=None):
     if not results:
         return
     reasons = reasons or {}
+    # A system that scores each call 0-100 gets a <system>_pct column straight
+    # after its verdict: the scam chance behind it. The web UI keys off the
+    # _pct suffix to draw where the mistakes sit, so it is part of the
+    # interface too.
+    scores = {k: v for k, v in (scores or {}).items()
+              if k in results and v and any(x is not None for x in v)}
     keys = list(results.keys())
     # Each system's verdict, and directly after it the reason it gave, so the
     # two read together. A system with nothing to say (length, bag-of-words)
@@ -1540,6 +1602,8 @@ def _save(results, data, reasons=None, raw_log=None, debug=False, data_s=None):
         header.append("text_stripped")
     for k in keys:
         header.append(k)
+        if k in scores:
+            header.append(k + "_pct")
         if k in reasons:
             header.append(k + "_why")
     out_csv = RESULTS_DIR / ("combined_results_%d.csv" % len(data))
@@ -1553,6 +1617,9 @@ def _save(results, data, reasons=None, raw_log=None, debug=False, data_s=None):
                 row.append(data_s[i][0].replace("\n", " ")[:400])
             for k in keys:
                 row.append(results[k][i][0])
+                if k in scores:
+                    sc = scores[k][i] if i < len(scores[k]) else None
+                    row.append("" if sc is None else sc)
                 if k in reasons:
                     why = reasons[k][i] if i < len(reasons[k]) else ""
                     row.append(" ".join((why or "").split()))
