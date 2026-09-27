@@ -69,7 +69,7 @@ BASELINES = [
     ("length",   "Length only",           "word count against one threshold, no LLM", False),
     ("bow",      "Bag of words",          "TF-IDF into logistic regression, no LLM", False),
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
-    ("llm_prob", "LLM P(scam)",           "plain LLM, no retrieval, P(scam) from logprobs", True),
+    ("llm_novelty", "LLM novelty",        "plain LLM, no retrieval, each call scored 0-100 by novelty", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
@@ -992,24 +992,30 @@ def scores_of(run_id):
                   encoding="utf-8", errors="replace") as f:
             rows = csv.reader(f)
             header = next(rows, [])
-            want = [(h[:-4], header.index(h[:-4]), i) for i, h in enumerate(header)
-                    if h.endswith("_pct") and h[:-4] in header]
+            # <system>_pct is a scam chance, <system>_novelty a novelty score
+            want = []
+            for i, h in enumerate(header):
+                for suf, kind in (("_pct", "chance"), ("_novelty", "novelty")):
+                    base = h[:-len(suf)]
+                    if h.endswith(suf) and base in header:
+                        want.append((base, header.index(base), i, kind))
             if not want or "true" not in header:
                 continue
             t = header.index("true")
             ix = header.index("idx") if "idx" in header else None
-            pts = {name: [] for name, _, _ in want}
+            pts = {name: [] for name, _, _, _ in want}
             for n, row in enumerate(rows):
-                for name, vi, pi in want:
+                for name, vi, pi, _ in want:
                     try:
                         sc = float(row[pi])
                     except (ValueError, IndexError):
                         continue            # a call the system did not score
                     pts[name].append([row[ix] if ix is not None else n, sc,
                                       row[t], row[vi]])
-        for name, _, _ in want:
+        for name, _, _, kind in want:
             if pts[name]:
-                out.append({"system": name, "csv": c["name"], "threshold": 50,
+                out.append({"system": name, "csv": c["name"], "kind": kind,
+                            "threshold": 50 if kind == "chance" else None,
                             "points": pts[name]})
     return {"systems": out}
 
@@ -2919,7 +2925,7 @@ PAGE = r"""<!doctype html>
       <button data-tab="results">Table</button>
       <button data-tab="calls">Per-call <span class="count" id="c-calls"></span></button>
       <button data-tab="steps">Step logs <span class="count" id="c-steps"></span></button>
-      <button data-tab="scores" hidden>Scam chance</button>
+      <button data-tab="scores" hidden>Scores</button>
     </div>
 
     <!-- output -->
@@ -4760,7 +4766,7 @@ async function loadCalls() {
   const why = cols.map(c => c.endsWith('_why'));
   // <system>_pct is the 0-100 scam chance behind that system's verdict: a
   // number, so it is never marked right or wrong against the label
-  const pct = cols.map(c => c.endsWith('_pct'));
+  const pct = cols.map(c => c.endsWith('_pct') || c.endsWith('_novelty'));
   // hiding them is worth having: seven systems means seven extra prose
   // columns, and the table is already wide
   $('whybox').hidden = !why.some(Boolean);
@@ -4769,7 +4775,8 @@ async function loadCalls() {
 
   let h = '<tr>' + cols.map((c, i) => keep(i)
       ? `<th class="${why[i] ? 'why' : ''}">${esc(why[i]
-          ? c.slice(0, -4) + ' · why' : pct[i] ? c.slice(0, -4) + ' · scam %' : c)}</th>`
+          ? c.slice(0, -4) + ' · why' : pct[i] ? (c.endsWith('_novelty')
+          ? c.slice(0, -8) + ' · novelty' : c.slice(0, -4) + ' · scam %') : c)}</th>`
       : '').join('') + '</tr>';
   for (const row of r.rows) {
     h += '<tr>' + row.map((v, i) => {
@@ -4781,7 +4788,7 @@ async function loadCalls() {
       if (why[i])
         return `<td class="why" title="${esc(v)}">${esc(v)}</td>`;
       if (pct[i])
-        return `<td>${v === '' ? '' : esc(v) + '%'}</td>`;
+        return `<td>${v === '' ? '' : esc(v) + (cols[i].endsWith('_pct') ? '%' : '')}</td>`;
       if (truthAt >= 0 && i > truthAt && v)
         return `<td class="${v === row[truthAt] ? 'hit' : 'miss'}">${esc(v)}</td>`;
       return `<td>${esc(v)}</td>`;
@@ -4799,8 +4806,9 @@ async function loadCalls() {
 }
 
 // ------------------------------------------------------------- scam chance
-// Web-RAG, the hybrid and LLM P(scam) score every call 0-100 and call it a
-// scam at 50 or over. Accuracy counts the calls on the wrong side of that line; this shows
+// Web-RAG and the hybrid score every call's scam chance 0-100 and call it a
+// scam at 50 or over; LLM novelty scores how novel each call is, 0-100, with
+// no threshold. Accuracy counts the calls on the wrong side of that line; this shows
 // how far over it they are. One row per outcome, one dot per call, stacked
 // where calls share a score. The two kinds of mistake are the orange rows.
 let SCORES = null, scoreSys = null;
@@ -4821,7 +4829,7 @@ function hasScores() { return !!(SCORES && SCORES.systems && SCORES.systems.leng
 function paintScores() {
   if (!hasScores()) {
     $('scoreplot').innerHTML = '<div class="muted">no system in this run gives a '
-      + 'scam-chance score - LLM P(scam), Web-RAG and the hybrid do</div>';
+      + 'per-call score - LLM novelty, Web-RAG and the hybrid do</div>';
     $('scoresys').innerHTML = $('scorehead').textContent = '';
     $('scoresum').innerHTML = $('scorebands').innerHTML = '';
     return;
@@ -4837,12 +4845,16 @@ function paintScores() {
 
   const sy = systems.find(s => s.system === scoreSys);
   const th = sy.threshold;
+  // a novelty score has no threshold: it is not what the verdict came from
+  const nov = sy.kind === 'novelty';
+  const unit = nov ? '' : '%';
   const pts = sy.points.map(([idx, v, t, p]) => ({idx, v, o: outcomeOf(t, p)}));
   const by = {TP: [], FN: [], FP: [], TN: []};
   for (const q of pts) by[q.o].push(q);
   const wrong = by.FP.length + by.FN.length;
   $('scorehead').textContent = `${sysName(sy.system)} · ${pts.length} calls · `
-    + `scam at ${th} or over · ${wrong} on the wrong side of the line`
+    + (nov ? `scored by novelty, 0 = textbook script, 100 = novel · ${wrong} wrong`
+           : `scam at ${th} or over · ${wrong} on the wrong side of the line`)
     + ` (${(100 * wrong / Math.max(pts.length, 1)).toFixed(1)}%)`;
 
   // geometry
@@ -4879,7 +4891,8 @@ function paintScores() {
     g += `<text class="tick" x="${x(v)}" y="${y0 + 16}" text-anchor="middle">${v}</text>`;
   }
   g += `<text class="tick" x="${PADL + plotW / 2}" y="${y0 + AXIS - 1}"
-         text-anchor="middle">scam chance (%)</text>`;
+         text-anchor="middle">${nov ? 'novelty (0 = textbook script, 100 = novel)'
+                                    : 'scam chance (%)'}</text>`;
   rows.forEach((r, i) => {
     if (i) g += `<line x1="${PADL}" y1="${r.top}" x2="${PADL + plotW}" y2="${r.top}"
                   stroke="var(--axis)" stroke-width="1"/>`;
@@ -4901,18 +4914,20 @@ function paintScores() {
              width="${w}" height="${r.h - 4}"/>`;
     }
   });
-  g += `<line x1="${x(th)}" y1="${PADT - 6}" x2="${x(th)}" y2="${y0}"
-         stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
-  g += `<text class="val" x="${x(th)}" y="${PADT - 10}" text-anchor="middle">`
-    + `threshold ${th}</text>`;
+  if (!nov) {
+    g += `<line x1="${x(th)}" y1="${PADT - 6}" x2="${x(th)}" y2="${y0}"
+           stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
+    g += `<text class="val" x="${x(th)}" y="${PADT - 10}" text-anchor="middle">`
+      + `threshold ${th}</text>`;
+  }
   box.innerHTML = `<svg width="${W}" height="${H}" role="img"
-    aria-label="Scam-chance score of every call, by outcome">${g}</svg>`;
+    aria-label="${nov ? 'Novelty' : 'Scam-chance'} score of every call, by outcome">${g}</svg>`;
 
   for (const el of box.querySelectorAll('.stack')) {
     el.onmousemove = e => {
       const s = stacks[el.dataset.k];
       const ids = s.list.map(q => '#' + q.idx);
-      tipAt(e, `<b>${s.o.label} · ${s.v}%</b>${s.list.length} call`
+      tipAt(e, `<b>${s.o.label} · ${nov ? 'novelty ' + s.v : s.v + '%'}</b>${s.list.length} call`
         + `${s.list.length === 1 ? '' : 's'}: ${esc(ids.slice(0, 12).join(', '))}`
         + (ids.length > 12 ? ` and ${ids.length - 12} more` : ''));
     };
@@ -4935,10 +4950,22 @@ function paintScores() {
     const q1 = r1(vs[Math.floor((vs.length - 1) / 4)]);
     const q3 = r1(vs[Math.floor(3 * (vs.length - 1) / 4)]);
     said.push(`<div style="margin-bottom:6px"><b>${what}:</b> ${vs.length}. `
-      + `Most fall in <b>${BANDS[top][0]}–${BANDS[top][1]}%</b> (${counts[top]} of ${vs.length}); `
-      + `the middle half scores ${q1}–${q3}% (median ${med}%). `
-      + `${near} of ${vs.length} (${Math.round(100 * near / vs.length)}%) are within 10 points `
-      + `of the threshold - near misses rather than confident mistakes.</div>`);
+      + `Most fall in <b>${nov ? 'novelty ' : ''}${BANDS[top][0]}–${BANDS[top][1]}${unit}</b> `
+      + `(${counts[top]} of ${vs.length}); `
+      + `the middle half scores ${q1}–${q3}${unit} (median ${med}${unit}).`
+      + (nov ? '' : ` ${near} of ${vs.length} (${Math.round(100 * near / vs.length)}%) `
+         + `are within 10 points of the threshold - near misses rather than `
+         + `confident mistakes.`) + `</div>`);
+  }
+  if (nov) {
+    // the question novelty is here to answer: are the mistakes the unfamiliar calls?
+    const med = a => { a = a.slice().sort((p, q) => p - q);
+                       return a.length ? Math.round(a[(a.length - 1) >> 1] * 10) / 10 : '-'; };
+    const right = pts.filter(q => q.o === 'TP' || q.o === 'TN').map(q => q.v);
+    const wrongV = pts.filter(q => q.o === 'FP' || q.o === 'FN').map(q => q.v);
+    said.push(`<div style="margin-bottom:6px"><b>Right vs wrong:</b> median novelty `
+      + `${med(right)} on the ${right.length} calls it got right, ${med(wrongV)} on the `
+      + `${wrongV.length} it got wrong.</div>`);
   }
   $('scoresum').innerHTML = said.join('');
 
@@ -4947,10 +4974,10 @@ function paintScores() {
                FP: BANDS.map(() => 0), TN: BANDS.map(() => 0)};
   for (const q of pts) cnt[q.o][bandOf(q.v)]++;
   const most = k => Math.max(...cnt[k]);
-  let t = '<tr><th>scam chance</th>' + OUTCOMES.map(o =>
+  let t = `<tr><th>${nov ? 'novelty' : 'scam chance'}</th>` + OUTCOMES.map(o =>
     `<th>${o.label} (${o.k})</th>`).join('') + '</tr>';
   BANDS.forEach(([lo, hi], b) => {
-    t += `<tr><td>${lo}–${hi}%</td>` + OUTCOMES.map(o => {
+    t += `<tr><td>${lo}–${hi}${unit}</td>` + OUTCOMES.map(o => {
       const n = cnt[o.k][b];
       const hot = o.wrong && n && n === most(o.k);
       return `<td class="${hot ? 'most' : ''}">${n || '<span class="muted">·</span>'}</td>`;

@@ -43,7 +43,7 @@ The ten baselines, in escalating order:
 | `length` | word count against one threshold | no |
 | `bow` | TF-IDF into logistic regression, 5-fold CV | no |
 | `llm_only` | the model decides alone, no retrieval — the control | yes |
-| `llm_prob` | the same plain LLM judge, with P(scam) measured from logprobs for the Scam chance plot | yes |
+| `llm_novelty` | the same plain LLM judge, with each call scored 0-100 by how novel it is | yes |
 | `singh` | policy-compliance check against the `bank_policies` collection | yes |
 | `webrag` | retrieval over the web-harvested `scam_patterns` KB, with a relevance gate | yes |
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
@@ -222,7 +222,7 @@ the width gets in the way.
 
 Web-RAG and the hybrid also score every call from 0 (certainly legitimate) to
 100 (certainly a scam) and call it a scam at 50 or over. That score is saved in
-a `<system>_pct` column beside the verdict, and the run's **Scam chance** tab
+a `<system>_pct` column beside the verdict, and the run's **Scores** tab
 plots it: one row per outcome (scam flagged, scam missed, legit flagged, legit
 cleared), one dot per call, the mistakes in orange, the threshold as a dashed
 line. Under the plot it says which 10-point band most false positives and
@@ -701,7 +701,7 @@ Or answer up front and it asks nothing:
 | Flag | Values |
 | --- | --- |
 | `-d, --dataset` | a path, or a menu number |
-| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert llm_prob` — comma-separate for several; menu numbers work too (`-b 3,7,8`; `llm_prob` is 12) |
+| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert llm_novelty` — comma-separate for several; menu numbers work too (`-b 3,7,8`; `llm_novelty` is 12) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
@@ -833,29 +833,36 @@ WEBRAG_LLM_GATE=1            the check that actually decides; =0 to
 python scripts/test_relevance_gate.py           # gate logic, offline, no Ollama
 ```
 
-### 7a. LLM P(scam): the plain judge, with the probability measured
+### 7a. LLM novelty: the plain judge, each call scored by novelty
 
-`llm_prob` uses no retrieval of any kind: no knowledge base, no vector
+`llm_novelty` uses no retrieval of any kind: no knowledge base, no vector
 database, no web search. The transcript goes to the model on its own, as in
-`llm_only`, and the model answers one word, *Scam* or *Legit*. P(scam) is the
-share of probability it puts on *Scam*, read from the logprobs Ollama returns.
-The verdict is Fraud at 50% or over.
+`llm_only`, and the model is asked two one-token questions on the same prompt:
 
-Asking a model for a 0-100 score gets a number it types. At temperature 0 it
-types the same few round numbers again and again, so a plot of them is two or
-three stacks. The probability split between the two answer words is the
-model's real uncertainty and varies continuously, so the run's **Scam chance**
-tab shows where the right and wrong calls actually sit. The per-call CSV gets
-`llm_prob_pct`, and the log prints the band table.
+1. **The verdict.** One word, *Scam* or *Legit*. Fraud when the model puts at
+   least half its probability on *Scam*.
+2. **Novelty.** How familiar the call's pattern is, whether or not it is a
+   scam, as one letter: A textbook script (0), B familiar (25), C somewhat
+   unusual (50), D unusual (75), E novel (100). The score is those values
+   weighted by the probability the model puts on each letter, read from
+   Ollama's logprobs. It is measured and continuous, not a round number the
+   model types.
 
-One LLM call per transcript that generates a single token, so it is quicker
-than `llm_only`. An Ollama too old to return logprobs still answers the word.
-P(scam) is then just 1 or 0, and the log says so on the line
-`P(scam) measured from logprobs on N/N calls`.
+The per-call CSV gets `llm_novelty_novelty`, and the run's **Scores** tab plots
+it: one row per outcome, the mistakes in orange, no threshold line (novelty is
+not what the verdict comes from). Under the plot is the novelty band where most
+false positives and false negatives fall, and the median novelty of the calls
+it got right against the ones it got wrong. That comparison is the question
+this baseline is for: are the mistakes the unfamiliar calls? The log prints the
+same.
+
+An Ollama too old to return logprobs still answers both questions. The verdict
+is then the word and novelty the chosen letter's value (5 levels only), and the
+log says so on `novelty measured from logprobs on N/N calls`.
 
 ```bash
-python scripts/llm_prob.py --text "Hello, this is your bank's fraud team..."
-python scripts/test_llm_prob.py                 # offline: a fake Ollama
+python scripts/llm_novelty.py --text "Hello, this is your bank's fraud team..."
+python scripts/test_llm_novelty.py              # offline: a fake Ollama
 ```
 
 ### 8. One transcript at a time

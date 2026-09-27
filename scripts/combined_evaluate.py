@@ -622,42 +622,56 @@ def run_webrag(data, debug=False, pass_label=""):
     return out, raws, reasons, scores
 
 
-def run_llm_prob(data, pass_label=""):
-    """The plain LLM judge with P(scam) measured, not asked for.
+def run_llm_novelty(data, pass_label=""):
+    """The plain LLM judge, scoring each call by novelty rather than P(scam).
 
     No retrieval at all: the transcript goes to the model on its own, as in
-    llm_only, and it answers one word, Scam or Legit. P(scam) is the share of
-    probability it puts on "Scam" (from Ollama's logprobs); the verdict is
-    Fraud at 0.5 or over. See llm_prob.py.
+    llm_only. Two one-token questions on the same prompt: the verdict (Scam or
+    Legit) and how familiar the call's pattern is (A textbook ... E novel),
+    whose probability-weighted value is the 0-100 novelty score. See
+    llm_novelty.py.
     """
-    import llm_prob as LP
+    import llm_novelty as LN
     tally = Counter()
     out, raws, reasons, scores = [], [], [], []
     for i, (text, true) in enumerate(data, 1):
-        p, how, word = LP.scam_probability(text)
+        pred, word = LN.verdict(text)
+        nov, how, letter = LN.novelty(text)
         tally[how] += 1
-        if p is None:
+        if pred is None:
             # neither word: scored Normal, as every other LLM system scores
-            # an unreadable reply, and left off the plot
-            out.append(("Normal", true))
-            scores.append(None)
-            reasons.append("[unreadable answer: %r]" % word[:40])
-        else:
-            out.append(("Fraud" if p >= 0.5 else "Normal", true))
-            scores.append(round(100.0 * p, 2))
-            reasons.append("[P(scam) %.1f%%, answered %s%s]"
-                           % (100 * p, word or "?",
-                              "" if how == "logprobs" else ", no logprobs"))
-        raws.append(word)
+            # an unreadable reply
+            tally["verdict_unreadable"] += 1
+            pred = "Normal"
+        out.append((pred, true))
+        scores.append(None if nov is None else round(nov, 2))
+        reasons.append("[answered %s; novelty %s%s]"
+                       % (word or "?",
+                          "unreadable" if nov is None else "%.1f" % nov,
+                          "" if how != "letter" else " (letter %s, no logprobs)"
+                          % letter))
+        raws.append("%s | %s" % (word, letter))
         if i % 20 == 0:
-            print("    LLM P(scam)%s: %d/%d" % (pass_label, i, len(data)),
+            print("    LLM novelty%s: %d/%d" % (pass_label, i, len(data)),
                   flush=True)
-    print("    P(scam) measured from logprobs on %d/%d calls%s%s"
+    print("    novelty measured from logprobs on %d/%d calls%s%s%s"
           % (tally["logprobs"], len(data),
-             "" if not tally["word"] else
-             "; %d from the answer word alone (no logprobs)" % tally["word"],
+             "" if not tally["letter"] else
+             "; %d from the chosen letter alone (no logprobs)" % tally["letter"],
              "" if not tally["unreadable"] else
-             "; %d unreadable, scored Normal" % tally["unreadable"]))
+             "; %d unreadable, left off the plot" % tally["unreadable"],
+             "" if not tally["verdict_unreadable"] else
+             "; %d verdicts unreadable, scored Normal"
+             % tally["verdict_unreadable"]))
+    # the question novelty is here to answer: are the mistakes the unfamiliar
+    # calls?
+    right = sorted(sc for (p, t), sc in zip(out, scores)
+                   if sc is not None and p == t)
+    wrong = sorted(sc for (p, t), sc in zip(out, scores)
+                   if sc is not None and p != t)
+    med = lambda v: v[(len(v) - 1) // 2] if v else float("nan")
+    print("    median novelty: %.1f on the %d calls it got right, %.1f on the "
+          "%d it got wrong" % (med(right), len(right), med(wrong), len(wrong)))
     return out, raws, reasons, scores
 
 
@@ -681,12 +695,20 @@ def score_ranges(pairs, scores):
     return out
 
 
+def is_novelty(system):
+    """A system whose 0-100 score is novelty, not a scam chance: no threshold,
+    and its CSV column is <system>_novelty rather than <system>_pct."""
+    return system.startswith("llm_novelty")
+
+
 def show_score_ranges(name, pairs, scores):
     """The false positives and false negatives, by score band."""
     if not scores or all(sc is None for sc in scores):
         return
     r = score_ranges(pairs, scores)
-    print("    %s scam-chance bands (threshold 50):" % name)
+    print("    %s %s:" % (name, "novelty bands (0 textbook - 100 novel)"
+                          if is_novelty(name) else
+                          "scam-chance bands (threshold 50)"))
     print("      band     " + "  ".join("%6s" % k for k in ("TP", "FN", "FP", "TN")))
     for b, (lo, hi) in enumerate(SCORE_BINS):
         row = [r[k][b] for k in ("TP", "FN", "FP", "TN")]
@@ -1348,7 +1370,7 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--trivial-only", action="store_true")
     ap.add_argument("--skip", default="",
-                    help="comma list: length,bow,llm_only,llm_prob,singh,"
+                    help="comma list: length,bow,llm_only,llm_novelty,singh,"
                          "webrag,qwen_kb,hybrid")
     ap.add_argument("--max-tokens", type=int, default=300,
                     help="token budget for LLM verdicts (was 60, which truncated "
@@ -1514,17 +1536,18 @@ def main():
                               scores["webrag" + S])
             print("    (%.0fs)" % (time.time() - t0))
 
-    if "llm_prob" not in skip:
-        print("\nLLM P(scam) (plain LLM, no retrieval, P(scam) from logprobs):")
+    if "llm_novelty" not in skip:
+        print("\nLLM novelty (plain LLM, no retrieval, scored 0-100 by novelty):")
         t0 = time.time()
-        (results["llm_prob"], raw_log["llm_prob"], reasons["llm_prob"],
-         scores["llm_prob"]) = run_llm_prob(data)
-        show("llm_prob", metrics(results["llm_prob"]))
-        show_score_ranges("llm_prob", results["llm_prob"], scores["llm_prob"])
+        (results["llm_novelty"], raw_log["llm_novelty"],
+         reasons["llm_novelty"], scores["llm_novelty"]) = run_llm_novelty(data)
+        show("llm_novelty", metrics(results["llm_novelty"]))
+        show_score_ranges("llm_novelty", results["llm_novelty"],
+                          scores["llm_novelty"])
         print("    (%.0fs)" % (time.time() - t0))
         if data_s is not None:
-            k = "llm_prob" + S
-            (results[k], raw_log[k], reasons[k], scores[k]) = run_llm_prob(
+            k = "llm_novelty" + S
+            (results[k], raw_log[k], reasons[k], scores[k]) = run_llm_novelty(
                 data_s, " (stripped)")
             show(k, metrics(results[k]))
             show_score_ranges(k, results[k], scores[k])
@@ -1658,7 +1681,7 @@ def _save(results, data, reasons=None, raw_log=None, debug=False, data_s=None,
     for k in keys:
         header.append(k)
         if k in scores:
-            header.append(k + "_pct")
+            header.append(k + ("_novelty" if is_novelty(k) else "_pct"))
         if k in reasons:
             header.append(k + "_why")
     out_csv = RESULTS_DIR / ("combined_results_%d.csv" % len(data))
