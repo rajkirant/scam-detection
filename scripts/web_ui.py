@@ -69,9 +69,8 @@ BASELINES = [
     ("length",   "Length only",           "word count against one threshold, no LLM", False),
     ("bow",      "Bag of words",          "TF-IDF into logistic regression, no LLM", False),
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
-    ("llm_novelty", "LLM novelty",        "plain LLM, no retrieval, each call scored 0-100 by novelty", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
-    ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
+    ("webrag",   "Web-RAG",               "plain LLM, no retrieval, scored 0-100 by novelty", True),
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
@@ -980,7 +979,8 @@ def scores_of(run_id):
     """Every call's 0-100 scam chance, for each system in the run that gives one.
 
     combined_evaluate.py writes a <system>_pct column after the verdict of any
-    system that scores its calls (Web-RAG and the hybrid). Each point is
+    system that scores its calls (Web-RAG's novelty, the hybrid's scam
+    chance). Each point is
     [row index, score, true label, predicted label]; the page works out which
     of TP / FN / FP / TN it is and where the mistakes sit.
     """
@@ -2873,7 +2873,7 @@ PAGE = r"""<!doctype html>
          itself when the index is missing or out of step with the JSON. -->
     <div class="sect">
       <details class="kb" id="kbpanel">
-        <summary>Web-RAG knowledge base
+        <summary>Knowledge base <span class="muted">(used by Hybrid)</span>
           <div class="hint" id="kbstate">checking…</div>
         </summary>
         <div class="kbbody">
@@ -4141,7 +4141,7 @@ async function stop() {
 
 // ------------------------------------------------- Web-RAG knowledge base
 // harvest_patterns.py writes knowledge/scam_patterns.json, build_index.py
-// re-embeds it into chroma_db. The webrag baseline reads the second one, so
+// re-embeds it into chroma_db. The hybrid baseline reads the second one, so
 // the two counts disagreeing is worth saying out loud.
 let KB = null, kbNudged = false;
 
@@ -4805,12 +4805,11 @@ async function loadCalls() {
   $('next').disabled = to >= r.total;
 }
 
-// ------------------------------------------------------------- scam chance
-// Web-RAG and the hybrid score every call's scam chance 0-100 and call it a
-// scam at 50 or over; LLM novelty scores how novel each call is, 0-100, with
-// no threshold. Accuracy counts the calls on the wrong side of that line; this shows
-// how far over it they are. One row per outcome, one dot per call, stacked
-// where calls share a score. The two kinds of mistake are the orange rows.
+// ------------------------------------------------------------------ scores
+// The hybrid scores every call's scam chance 0-100 and calls it a scam at 50
+// or over; Web-RAG scores how novel each call is, 0-100, with no threshold.
+// One row per outcome, one dot per call, stacked where calls share a score.
+// The two kinds of mistake are the orange rows.
 let SCORES = null, scoreSys = null;
 const OUTCOMES = [
   {k: 'TP', label: 'Scam, flagged'},
@@ -4829,7 +4828,7 @@ function hasScores() { return !!(SCORES && SCORES.systems && SCORES.systems.leng
 function paintScores() {
   if (!hasScores()) {
     $('scoreplot').innerHTML = '<div class="muted">no system in this run gives a '
-      + 'per-call score - LLM novelty, Web-RAG and the hybrid do</div>';
+      + 'per-call score - Web-RAG and the hybrid do</div>';
     $('scoresys').innerHTML = $('scorehead').textContent = '';
     $('scoresum').innerHTML = $('scorebands').innerHTML = '';
     return;

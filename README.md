@@ -43,9 +43,8 @@ The ten baselines, in escalating order:
 | `length` | word count against one threshold | no |
 | `bow` | TF-IDF into logistic regression, 5-fold CV | no |
 | `llm_only` | the model decides alone, no retrieval — the control | yes |
-| `llm_novelty` | the same plain LLM judge, with each call scored 0-100 by how novel it is | yes |
 | `singh` | policy-compliance check against the `bank_policies` collection | yes |
-| `webrag` | retrieval over the web-harvested `scam_patterns` KB, with a relevance gate | yes |
+| `webrag` | the plain LLM judge, no retrieval (no KB, no vector database, no web search), each call scored 0-100 by novelty | yes |
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
@@ -220,9 +219,11 @@ gave for each call, in a `<system>_why` column next to its verdict — the
 Per-call tab shows them, and the checkbox above the table hides them again when
 the width gets in the way.
 
-Web-RAG and the hybrid also score every call from 0 (certainly legitimate) to
-100 (certainly a scam) and call it a scam at 50 or over. That score is saved in
-a `<system>_pct` column beside the verdict, and the run's **Scores** tab
+The hybrid also scores every call from 0 (certainly legitimate) to 100
+(certainly a scam) and calls it a scam at 50 or over. That score is saved in
+a `<system>_pct` column beside the verdict (Web-RAG's novelty score goes in
+`webrag_novelty`, see [7a](#7a-web-rag-the-plain-judge-each-call-scored-by-novelty)),
+and the run's **Scores** tab
 plots it: one row per outcome (scam flagged, scam missed, legit flagged, legit
 cleared), one dot per call, the mistakes in orange, the threshold as a dashed
 line. Under the plot it says which 10-point band most false positives and
@@ -701,7 +702,7 @@ Or answer up front and it asks nothing:
 | Flag | Values |
 | --- | --- |
 | `-d, --dataset` | a path, or a menu number |
-| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert llm_novelty` — comma-separate for several; menu numbers work too (`-b 3,7,8`; `llm_novelty` is 12) |
+| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
@@ -759,7 +760,8 @@ shared), so hybrid vs qwen_kb isolates the web KB and hybrid vs webrag isolates
 the learned patterns. Watch the "evidence mix" line it prints: all web means
 the learned patterns are not earning their place, all learned means it is
 Qwen-KB with a slower pipeline. `--skip hybrid` drops it; the merged run costs
-3 LLM calls per transcript, the same as `webrag`.
+3 LLM calls per transcript. (The retrieval pipeline it runs is the one Web-RAG
+used to run; Web-RAG itself is now the plain judge in 7a.)
 
 ### 2. Ontology RAG
 
@@ -833,9 +835,11 @@ WEBRAG_LLM_GATE=1            the check that actually decides; =0 to
 python scripts/test_relevance_gate.py           # gate logic, offline, no Ollama
 ```
 
-### 7a. LLM novelty: the plain judge, each call scored by novelty
+### 7a. Web-RAG: the plain judge, each call scored by novelty
 
-`llm_novelty` uses no retrieval of any kind: no knowledge base, no vector
+`webrag` no longer retrieves anything. The knowledge base, the relevance gate
+and the web search above are not used by it any more (the hybrid still uses
+them). It uses no retrieval of any kind: no knowledge base, no vector
 database, no web search. The transcript goes to the model on its own, as in
 `llm_only`, and the model is asked two one-token questions on the same prompt:
 
@@ -848,7 +852,7 @@ database, no web search. The transcript goes to the model on its own, as in
    Ollama's logprobs. It is measured and continuous, not a round number the
    model types.
 
-The per-call CSV gets `llm_novelty_novelty`, and the run's **Scores** tab plots
+The per-call CSV gets `webrag_novelty`, and the run's **Scores** tab plots
 it: one row per outcome, the mistakes in orange, no threshold line (novelty is
 not what the verdict comes from). Under the plot is the novelty band where most
 false positives and false negatives fall, and the median novelty of the calls
