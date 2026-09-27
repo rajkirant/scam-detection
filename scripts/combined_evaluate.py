@@ -579,38 +579,60 @@ def run_singh(data, max_tokens=300, debug=False, pass_label=""):
     return out, raws, reasons
 
 
-def run_llm_novelty(data, pass_label=""):
+def run_llm_novelty(data, pass_label="", parallel=None):
     """Web-RAG: the plain LLM judge, scoring each call by novelty.
 
     No retrieval at all: the transcript goes to the model on its own, as in
-    llm_only. Two one-token questions on the same prompt: the verdict (Scam or
-    Legit) and how familiar the call's pattern is (A textbook ... E novel),
+    llm_only. ONE request per call returns both answers - the verdict (Scam
+    or Legit) and how familiar the call's pattern is (A textbook ... E novel),
     whose probability-weighted value is the 0-100 novelty score. See
     llm_novelty.py.
+
+    parallel (or SCAM_LLM_PARALLEL) sends that many calls to Ollama at once.
+    It only helps if Ollama itself serves requests in parallel
+    (OLLAMA_NUM_PARALLEL) and the GPU has room for the extra context; the
+    order of the results does not change.
     """
+    import os
     import llm_novelty as LN
+    from concurrent.futures import ThreadPoolExecutor
+    parallel = max(1, int(parallel or os.environ.get("SCAM_LLM_PARALLEL") or 1))
+    # one window for the whole run, so the model is loaded once rather than
+    # reloaded every time a longer call turns up
+    ctx = LN.presize([t for t, _ in data])
+    print("    one request per call, context window %s for the run%s"
+          % (ctx, "" if parallel == 1 else ", %d calls at a time" % parallel),
+          flush=True)
+
     tally = Counter()
     out, raws, reasons, scores = [], [], [], []
-    for i, (text, true) in enumerate(data, 1):
-        pred, word = LN.verdict(text)
-        nov, how, letter = LN.novelty(text)
-        tally[how] += 1
-        if pred is None:
-            # neither word: scored Normal, as every other LLM system scores
-            # an unreadable reply
-            tally["verdict_unreadable"] += 1
-            pred = "Normal"
-        out.append((pred, true))
-        scores.append(None if nov is None else round(nov, 2))
-        reasons.append("[answered %s; novelty %s%s]"
-                       % (word or "?",
-                          "unreadable" if nov is None else "%.1f" % nov,
-                          "" if how != "letter" else " (letter %s, no logprobs)"
-                          % letter))
-        raws.append("%s | %s" % (word, letter))
-        if i % 20 == 0:
-            print("    Web-RAG%s: %d/%d" % (pass_label, i, len(data)),
-                  flush=True)
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=parallel) as pool:
+        answers = pool.map(LN.judge, [t for t, _ in data])
+        for i, ((text, true), (pred, word, nov, how, letter)) in enumerate(
+                zip(data, answers), 1):
+            tally[how] += 1
+            if pred is None:
+                # neither word: scored Normal, as every other LLM system
+                # scores an unreadable reply
+                tally["verdict_unreadable"] += 1
+                pred = "Normal"
+            out.append((pred, true))
+            scores.append(None if nov is None else round(nov, 2))
+            reasons.append("[answered %s; novelty %s%s]"
+                           % (word or "?",
+                              "unreadable" if nov is None else "%.1f" % nov,
+                              "" if how != "letter"
+                              else " (letter %s, no logprobs)" % letter))
+            raws.append("%s | %s" % (word, letter))
+            if i % 20 == 0:
+                el = time.time() - t0
+                print("    Web-RAG%s: %d/%d  (%.2fs a call, about %s left)"
+                      % (pass_label, i, len(data), el / i,
+                         _eta(el / i * (len(data) - i))), flush=True)
+    el = time.time() - t0
+    print("    %d calls in %s, %.2fs a call"
+          % (len(data), _eta(el), el / max(len(data), 1)))
     print("    novelty measured from logprobs on %d/%d calls%s%s%s"
           % (tally["logprobs"], len(data),
              "" if not tally["letter"] else
@@ -630,6 +652,15 @@ def run_llm_novelty(data, pass_label=""):
     print("    median novelty: %.1f on the %d calls it got right, %.1f on the "
           "%d it got wrong" % (med(right), len(right), med(wrong), len(wrong)))
     return out, raws, reasons, scores
+
+
+def _eta(seconds):
+    seconds = int(seconds)
+    if seconds < 90:
+        return "%ds" % seconds
+    if seconds < 5400:
+        return "%dm" % round(seconds / 60)
+    return "%.1fh" % (seconds / 3600)
 
 
 # ------------------------------------------------ where the mistakes sit
