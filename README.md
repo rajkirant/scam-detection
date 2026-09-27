@@ -43,9 +43,9 @@ The ten baselines, in escalating order:
 | `length` | word count against one threshold | no |
 | `bow` | TF-IDF into logistic regression, 5-fold CV | no |
 | `llm_only` | the model decides alone, no retrieval — the control | yes |
+| `llm_prob` | the same plain LLM judge, with P(scam) measured from logprobs for the Scam chance plot | yes |
 | `singh` | policy-compliance check against the `bank_policies` collection | yes |
 | `webrag` | retrieval over the web-harvested `scam_patterns` KB, with a relevance gate | yes |
-| `webrag_adaptive` | Web-RAG that measures P(scam) and runs a live web search only when the model is unsure | yes (and `TAVILY_API_KEY` for the search) |
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
@@ -701,7 +701,7 @@ Or answer up front and it asks nothing:
 | Flag | Values |
 | --- | --- |
 | `-d, --dataset` | a path, or a menu number |
-| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert webrag_adaptive` — comma-separate for several; menu numbers work too (`-b 3,7,8`; `webrag_adaptive` is 12) |
+| `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert llm_prob` — comma-separate for several; menu numbers work too (`-b 3,7,8`; `llm_prob` is 12) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
@@ -833,55 +833,29 @@ WEBRAG_LLM_GATE=1            the check that actually decides; =0 to
 python scripts/test_relevance_gate.py           # gate logic, offline, no Ollama
 ```
 
-### 7a. Web-RAG adaptive: search the web only when unsure
+### 7a. LLM P(scam): the plain judge, with the probability measured
 
-`webrag` asks the model for a 0-100 score, and at temperature 0 it writes the
-same few round numbers again and again. `webrag_adaptive` measures instead.
-The model is asked for one word, *Scam* or *Legit*, and P(scam) is read from
-the probability it puts on each (the logprobs Ollama returns). That number is
-continuous, so it says how sure the model really is, and it drives a second
-step:
+`llm_prob` uses no retrieval of any kind: no knowledge base, no vector
+database, no web search. The transcript goes to the model on its own, as in
+`llm_only`, and the model answers one word, *Scam* or *Legit*. P(scam) is the
+share of probability it puts on *Scam*, read from the logprobs Ollama returns.
+The verdict is Fraud at 50% or over.
 
-1. Judge the call with the local KB evidence (the same prompt as `webrag`) and
-   read P(scam).
-2. If the model is sure, with P(scam) ≥ 0.90 or ≤ 0.10, keep that verdict.
-3. Otherwise run a live Tavily search on the call's tactic, put the results
-   through the same relevance gate and credibility scoring, and judge again
-   with the KB and web evidence together. That second P(scam) is the answer.
+Asking a model for a 0-100 score gets a number it types. At temperature 0 it
+types the same few round numbers again and again, so a plot of them is two or
+three stacks. The probability split between the two answer words is the
+model's real uncertainty and varies continuously, so the run's **Scam chance**
+tab shows where the right and wrong calls actually sit. The per-call CSV gets
+`llm_prob_pct`, and the log prints the band table.
 
-The per-call CSV gets `webrag_adaptive_pct` (the final P(scam) in %), so the
-Scam chance tab plots it, and the reason column says, for each call, whether it
-went to the web and how P(scam) moved. The log reports how many calls were
-confident, how many went to the web, how many of those had their verdict
-changed and how many changes were right, and how many searches were live or
-cached.
-
-```
-SCAM_ADAPTIVE_CONFIDENT=0.90   how sure is sure enough; the Benchmark form has
-                               the same setting as a % field
-```
-
-**Preview before spending credits.** With *Preview only* ticked on the form
-(the default), or `--adaptive-preview` / `SCAM_ADAPTIVE_PREVIEW=1`, every
-call's P(scam) is measured from the KB but nothing is searched. The log lists
-how many calls each cut-off (60–99%) would send to Tavily and roughly how many
-credits that costs (advanced search, 2 credits each). The Scam chance tab
-shades the web-search band, with a slider to move the cut-off. For any
-cut-off it says how many calls fall in the band, how many of those are
-currently wrong (the most a web search could fix), and how many mistakes sit
-outside it where the web never gets a chance. A preview's results are filed as
-`webrag_adaptive_preview`, so they never enter the Results ledger as a real
-adaptive score. Untick *Preview only* to run the searches.
-
-Searches are cached in `cache/tavily_webrag/`, keyed on the query, so a re-run
-costs no Tavily credits and sees the same evidence; delete the folder for
-fresh results. Without `TAVILY_API_KEY` (in `.env` or the environment) the
-unsure calls keep their KB verdict, and both the log and the form say so. An
-Ollama too old to return logprobs falls back to the graded 0-100 score, and the
-log says that too.
+One LLM call per transcript that generates a single token, so it is quicker
+than `llm_only`. An Ollama too old to return logprobs still answers the word.
+P(scam) is then just 1 or 0, and the log says so on the line
+`P(scam) measured from logprobs on N/N calls`.
 
 ```bash
-python scripts/test_webrag_adaptive.py          # offline: fake Ollama and Tavily
+python scripts/llm_prob.py --text "Hello, this is your bank's fraud team..."
+python scripts/test_llm_prob.py                 # offline: a fake Ollama
 ```
 
 ### 8. One transcript at a time

@@ -27,12 +27,10 @@ When nothing survives, the model is told so explicitly and judges the
 transcript alone - the same footing as the LLM-only control, never worse.
 """
 
-import json
 import os
 import re
 import math
 from datetime import datetime, timezone
-from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
@@ -247,43 +245,11 @@ def retrieve_kb(collection, query, n=N_KB_CANDIDATES):
 # STEP 3 - WEB RETRIEVAL (optional)
 # =========================================================================
 
-# Live searches are cached on disk, keyed on the query: a re-run costs no
-# Tavily credits and, more to the point, sees the same evidence, so two runs
-# differ only in what the system did with it. Delete the folder for fresh web.
-WEB_CACHE_DIR = Path("./cache/tavily_webrag")
-WEB_STATS = {"live": 0, "cached": 0, "failed": 0}
-
-
-def load_env():
-    """TAVILY_API_KEY and friends from .env, without python-dotenv. Anything
-    already in the environment wins."""
-    env_file = Path("./.env")
-    if not env_file.exists():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-
-
 def retrieve_web(query, n=N_WEB_RESULTS):
     """Query Tavily. Returns [] if no API key is configured."""
     api_key = os.environ.get("TAVILY_API_KEY")
     if not api_key:
         return []
-
-    import hashlib
-    key = hashlib.sha1(("%s|%d" % (query, n)).encode("utf-8")).hexdigest()
-    cached = WEB_CACHE_DIR / (key + ".json")
-    if cached.exists():
-        try:
-            out = json.loads(cached.read_text(encoding="utf-8"))["results"]
-            WEB_STATS["cached"] += 1
-            return out
-        except Exception:
-            pass                      # unreadable entry: fetch it again
 
     payload = {
         "api_key": api_key,
@@ -298,7 +264,6 @@ def retrieve_web(query, n=N_WEB_RESULTS):
         results = r.json().get("results", [])
     except Exception as e:
         print(f"    [web retrieval failed: {e}]")
-        WEB_STATS["failed"] += 1
         return []
 
     out = []
@@ -310,13 +275,6 @@ def retrieve_web(query, n=N_WEB_RESULTS):
             "published_date": item.get("published_date"),
             "relevance": item.get("score", 0.0),
         })
-    WEB_STATS["live"] += 1
-    try:
-        WEB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cached.write_text(json.dumps({"query": query, "results": out}, indent=1),
-                          encoding="utf-8")
-    except OSError:
-        pass
     return out
 
 
@@ -567,13 +525,15 @@ def build_evidence_block(kb_items, web_items, min_credibility=0.40):
     return "\n\n".join(parts) if parts else None
 
 
-def _judge_head(transcript, evidence):
-    """The part of the judge prompt before the question: the role, the
-    evidence (or the note that none matched) and the transcript. Shared by the
-    graded score and the one-word probability below, so both judge the same
-    thing and Ollama can reuse the processed prefix for the second call."""
+def assess_confidence(transcript, evidence):
+    """
+    Graded 0-100 confidence. Two prompts, because "nothing relevant was
+    retrieved" and "here is matching evidence" are different questions. The old
+    single prompt said "using ONLY the evidence provided" even when the evidence
+    was three unrelated scam patterns, which pushed every call toward Fraud.
+    """
     if evidence:
-        return f"""You are a scam detection analyst. Decide whether the caller in this
+        prompt = f"""You are a scam detection analyst. Decide whether the caller in this
 transcript is attempting a scam.
 
 The reference material below describes known scam tactics that a retrieval step
@@ -589,8 +549,13 @@ REFERENCE MATERIAL:
 TRANSCRIPT:
 {transcript}
 
-"""
-    return f"""You are a scam detection analyst. Decide whether the caller in this
+Give a confidence score from 0 to 100, where 0 means certainly legitimate and 100
+means certainly a scam.
+Respond in exactly this format:
+Confidence: <number>
+Reason: <one sentence>"""
+    else:
+        prompt = f"""You are a scam detection analyst. Decide whether the caller in this
 transcript is attempting a scam.
 
 No stored scam pattern or web report matched this call closely enough to be
@@ -601,17 +566,7 @@ proof the call is legitimate.
 TRANSCRIPT:
 {transcript}
 
-"""
-
-
-def assess_confidence(transcript, evidence):
-    """
-    Graded 0-100 confidence. Two prompts, because "nothing relevant was
-    retrieved" and "here is matching evidence" are different questions. The old
-    single prompt said "using ONLY the evidence provided" even when the evidence
-    was three unrelated scam patterns, which pushed every call toward Fraud.
-    """
-    prompt = _judge_head(transcript, evidence) + """Give a confidence score from 0 to 100, where 0 means certainly legitimate and 100
+Give a confidence score from 0 to 100, where 0 means certainly legitimate and 100
 means certainly a scam.
 Respond in exactly this format:
 Confidence: <number>
@@ -625,93 +580,6 @@ Reason: <one sentence>"""
         score = min(int(m2.group(1)), 100) if m2 else 50
     rm = re.search(r"reason:\s*(.+)", text, re.IGNORECASE | re.DOTALL)
     return score, (rm.group(1).strip() if rm else text)
-
-
-# -------------------------------------------------- measured, not asked for
-# A score the model writes out ("Confidence: 75") is a number it picked as
-# text, and at temperature 0 it picks the same few round numbers again and
-# again. The probability it puts on the answer word is the model's actual
-# uncertainty: ask for one word, Scam or Legit, and read how the probability
-# splits between them from the logprobs Ollama returns. Needs an Ollama that
-# supports logprobs; without it the graded score above stands in, and the
-# run says so.
-PROB_QUESTION = """Is the caller attempting a scam? Answer with exactly one word: Scam or Legit.
-Answer:"""
-_LOGPROBS_OK = None          # None = not tried yet
-
-
-def call_ollama_logprobs(prompt, top=20, where="webrag_prob"):
-    """One generated token and the top alternatives Ollama considered for it:
-    (text, [(token, logprob), ...]). The list is empty when this Ollama does
-    not return logprobs."""
-    import ollama_ctx
-    num_ctx = ollama_ctx.fit_num_ctx(prompt, 4, where=where)
-    payload = {
-        "model": OLLAMA_MODEL, "prompt": prompt, "stream": False,
-        "logprobs": True, "top_logprobs": top,
-        "options": {"temperature": 0.0, "num_predict": 1,
-                    "num_ctx": int(num_ctx)},
-    }
-    try:
-        r = requests.post(OLLAMA_URL, json=payload, timeout=180)
-        r.raise_for_status()
-        body = r.json()
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError("Cannot reach Ollama at localhost:11434. Try: ollama serve")
-    first = (body.get("logprobs") or [None])[0] or {}
-    alts = [(a.get("token", ""), a.get("logprob"))
-            for a in (first.get("top_logprobs") or [])
-            if a.get("logprob") is not None]
-    if not alts and first.get("logprob") is not None:
-        alts = [(first.get("token", ""), first["logprob"])]
-    return body.get("response", ""), alts
-
-
-def _answer_word(token):
-    """'scam', 'legit' or None for one candidate first token of the answer.
-    Qwen may split a word ("Sc" + "am") or lead with a space, so a token counts
-    when it is the start of one answer word and cannot be the start of the
-    other."""
-    t = token.strip().strip("*\"'`").lower()
-    if len(t) < 2:
-        return None
-    if "scam".startswith(t) or t.startswith("scam"):
-        return "scam"
-    if "legit".startswith(t) or t.startswith("legit"):
-        return "legit"
-    return None
-
-
-def scam_probability(transcript, evidence):
-    """(P(scam) in 0..1, how). how is "logprobs" when it was measured, or
-    "verbal" when this Ollama gives no logprobs and the graded 0-100 score was
-    used instead."""
-    global _LOGPROBS_OK
-    import math
-    if _LOGPROBS_OK is not False:
-        text, alts = call_ollama_logprobs(
-            _judge_head(transcript, evidence) + PROB_QUESTION)
-        mass = {"scam": 0.0, "legit": 0.0}
-        for tok, lp in alts:
-            w = _answer_word(tok)
-            if w:
-                mass[w] += math.exp(lp)
-        if alts:
-            _LOGPROBS_OK = True
-        elif _LOGPROBS_OK is None:
-            _LOGPROBS_OK = False
-            print("    NOTE this Ollama returns no logprobs (it needs a recent "
-                  "version), so the graded 0-100 score stands in for P(scam)")
-        total = mass["scam"] + mass["legit"]
-        if total > 0:
-            return mass["scam"] / total, "logprobs"
-        if alts:
-            # it answered with something that is neither word: read the text
-            w = _answer_word(text)
-            if w:
-                return (1.0 if w == "scam" else 0.0), "logprobs"
-    score, _ = assess_confidence(transcript, evidence)
-    return score / 100.0, "verbal"
 
 
 # =========================================================================
@@ -771,65 +639,4 @@ def detect(transcript, collection, use_web=True, threshold=50,
         "confidence": confidence,
         "reason": reason,
         "predicted": decide(confidence, threshold),
-    }
-
-
-# =========================================================================
-# ADAPTIVE: search the web only when the model is unsure
-# =========================================================================
-# Judge with the local KB first and measure how sure the model is - P(scam)
-# from the probability it puts on the answer word, not a number it writes. A
-# call it is sure about (P(scam) >= CONFIDENT, or <= 1 - CONFIDENT) keeps that
-# verdict. Only the rest go out to a live web search, and are judged again
-# with the KB and web evidence together. Web search is slow and costs Tavily
-# credits, so it is spent where the model says it needs help.
-CONFIDENT = _env_float("SCAM_ADAPTIVE_CONFIDENT", 0.90)
-# Preview: measure every call's P(scam) from the KB and say which would go to
-# the web, without searching. Costs no Tavily credits, so the cut-off can be
-# chosen from the picture before any are spent.
-PREVIEW = _env_flag("SCAM_ADAPTIVE_PREVIEW", False)
-
-
-def detect_adaptive(transcript, collection, confident=None,
-                    min_similarity=None, use_llm_gate=None, search_web=None):
-    confident = CONFIDENT if confident is None else confident
-    search_web = (not PREVIEW) if search_web is None else search_web
-    signals = extract_signals(transcript)
-
-    kb_candidates = retrieve_kb(collection, signals)
-    kb_items, kb_dropped, gate_note = filter_relevant_kb(
-        transcript, kb_candidates,
-        min_similarity=min_similarity, use_llm_gate=use_llm_gate)
-    evidence = build_evidence_block(kb_items, [])
-    p_kb, how = scam_probability(transcript, evidence)
-
-    p, web_candidates, web_items, web_dropped = p_kb, [], [], []
-    escalated = max(p_kb, 1.0 - p_kb) < confident
-    if escalated and search_web:
-        web_candidates = retrieve_web(signals)
-        web_items, web_dropped = filter_relevant_web(
-            transcript, web_candidates, use_llm_gate=use_llm_gate)
-        web_items = score_credibility(web_items)
-        web_evidence = build_evidence_block(kb_items, web_items)
-        if web_items and web_evidence:
-            p, how = scam_probability(transcript, web_evidence)
-            evidence = web_evidence
-
-    return {
-        "signals": signals,
-        "n_kb_candidates": len(kb_candidates),
-        "n_kb_kept": len(kb_items),
-        "n_kb_dropped": len(kb_dropped),
-        "gate_note": gate_note,
-        "evidence_used": evidence is not None,
-        "p_kb": p_kb,
-        "escalated": escalated,
-        "searched": escalated and search_web,
-        "n_web_candidates": len(web_candidates),
-        "n_web": len(web_items),
-        "n_web_dropped": len(web_dropped),
-        "p_scam": p,
-        "how": how,
-        "confidence": round(100.0 * p, 2),
-        "predicted": "Fraud" if p >= 0.5 else "Normal",
     }

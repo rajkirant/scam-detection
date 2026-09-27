@@ -24,8 +24,7 @@ WANT = [
     ("llm_only",     "combined.log", r"^\s*llm_only\b"),
     ("singh",        "combined.log", r"^\s*singh\b"),
     ("webrag",       "combined.log", r"^\s*webrag\b"),
-    # a preview run is webrag_adaptive_preview, which "\b" keeps out of this
-    ("webrag_adaptive", "combined.log", r"^\s*webrag_adaptive\b"),
+    ("llm_prob",     "combined.log", r"^\s*llm_prob\b"),
     ("qwen_kb",       "combined.log", r"^\s*qwen_kb\b"),
     ("hybrid",       "combined.log", r"^\s*hybrid\b"),
     ("ontology_rag", "ontology.log", None),          # last metric line
@@ -47,7 +46,7 @@ WANT_STRIPPED = {
     "llm_only":     ("combined.log",          r"^\s*llm_only__stripped\b"),
     "singh":        ("combined.log",          r"^\s*singh__stripped\b"),
     "webrag":       ("combined.log",          r"^\s*webrag__stripped\b"),
-    "webrag_adaptive": ("combined.log",       r"^\s*webrag_adaptive__stripped\b"),
+    "llm_prob":     ("combined.log",          r"^\s*llm_prob__stripped\b"),
     "qwen_kb":      ("combined.log",          r"^\s*qwen_kb__stripped\b"),
     "hybrid":       ("combined.log",          r"^\s*hybrid__stripped\b"),
     "ontology_rag": ("ontology_stripped.log", None),
