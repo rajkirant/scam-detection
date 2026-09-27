@@ -860,6 +860,17 @@ it got right against the ones it got wrong. That comparison is the question
 this baseline is for: are the mistakes the unfamiliar calls? The log prints the
 same.
 
+**Speed.** Both answers come from one request per call: the model replies
+with the word and then the letter, and Ollama returns the probabilities at each
+token it writes. The context window is sized once, before the first call, for
+the longest transcript in the run, so the model loads once instead of
+reloading each time a longer call turns up. The log shows the seconds per call
+and the time left. To send several calls at once, start Ollama with
+`OLLAMA_NUM_PARALLEL=2` (or more) and the web UI or `run_all.sh` with
+`SCAM_LLM_PARALLEL=2`. That only helps if the GPU has room for the extra
+context (check the `ollama ps` line the run prints), and the results come back
+in the same order.
+
 An Ollama too old to return logprobs still answers both questions. The verdict
 is then the word and novelty the chosen letter's value (5 levels only), and the
 log says so on `novelty measured from logprobs on N/N calls`.

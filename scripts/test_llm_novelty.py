@@ -50,6 +50,28 @@ def fake_post(path, payload, timeout):
         return {"response": "The", "logprobs": [{"token": "The", "logprob": 0.0,
                 "top_logprobs": [{"token": "The", "logprob": 0.0}]}]}
     p, letters = next(v for k, v in BELIEF.items() if k in prompt)
+    if prompt.rstrip().endswith("Nothing else.\nAnswer:"):
+        # both answers in one reply: the verdict (Legit as two tokens, the
+        # way Qwen may split it), then " " + the letter
+        scam = p >= .5
+        v_alts = [{"token": "Sc", "logprob": math.log(p * 0.8)},
+                  {"token": " Scam", "logprob": math.log(p * 0.2)},
+                  {"token": "Leg", "logprob": math.log(1 - p)}]
+        l_alts = [{"token": " " + k, "logprob": math.log(v)}
+                  for k, v in letters.items()]
+        best = max(l_alts, key=lambda a: a["logprob"])
+        pos = [{"token": "Sc" if scam else "Leg", "logprob": 0.0,
+                "top_logprobs": v_alts}]
+        text = "Scam" if scam else "Legit"
+        if not scam:
+            pos.append({"token": "it", "logprob": 0.0, "top_logprobs":
+                        [{"token": "it", "logprob": 0.0}]})
+        pos.append({"token": best["token"], "logprob": best["logprob"],
+                    "top_logprobs": l_alts})
+        text += best["token"]
+        if not STATE["logprobs"]:
+            return {"response": text}
+        return {"response": text, "logprobs": pos}
     if prompt.rstrip().endswith("A to E.\nAnswer:"):
         alts = [{"token": (" " if k == "B" else "") + k, "logprob": math.log(v)}
                 for k, v in letters.items()]
@@ -101,6 +123,21 @@ check("neither word is unreadable", LN.verdict("GIBBERISH call")[0], None)
 check("no letter is unreadable novelty",
       LN.novelty("GIBBERISH call")[:2], (None, "unreadable"))
 
+print("\nboth answers from one request")
+STATE["calls"] = 0
+pred, word, nov, how, letter = LN.judge("CRYPTOPIG call")
+check("one Ollama request", STATE["calls"], 1)
+check("the verdict is read from the first answer token",
+      (pred, word), ("Normal", "legit"))
+check("novelty is read from the letter after it (77.5)",
+      (round(nov, 2), how, letter), (77.5, "logprobs", "D"))
+pred, word, nov, how, letter = LN.judge("GIFTCARD call")
+check("a textbook scam: Fraud, novelty 5", (pred, round(nov, 2)), ("Fraud", 5.0))
+pl = STATE["payloads"][-1]
+check("a few tokens, not one", pl["options"]["num_predict"], LN.BOTH_TOKENS)
+check("presize asks once for the longest call's window",
+      LN.presize(["short", "a much longer transcript " * 50]) >= 2048)
+
 print("\nan Ollama without logprobs")
 STATE["logprobs"] = False
 LN._LOGPROBS_OK = None
@@ -110,6 +147,8 @@ with contextlib.redirect_stdout(buf):
     v, _ = LN.verdict("GIFTCARD call")
 check("novelty falls back to the letter's value", (n, how, letter),
       (75.0, "letter", "D"))
+check("and so does the one-request judge",
+      LN.judge("CRYPTOPIG call")[:5], ("Normal", "legit", 75.0, "letter", "D"))
 check("the verdict falls back to the word", v, "Fraud")
 check("and it says so, once", buf.getvalue().count("no logprobs"), 1)
 STATE["logprobs"] = True
@@ -125,12 +164,18 @@ buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     out, raws, reasons, scores = C.run_llm_novelty(data)
 log = buf.getvalue()
-check("two one-token Ollama calls per transcript", STATE["calls"], 8)
+check("one Ollama request per transcript", STATE["calls"], 4)
 check("verdicts", [p for p, _ in out], ["Fraud", "Normal", "Normal", "Normal"])
 check("scores are novelty 0-100, unreadable left blank",
       scores, [5.0, 10.0, 77.5, None])
 check("the log compares novelty of right and wrong calls",
       "median novelty: 5.0 on the 2 calls it got right, 77.5 on the 1" in log)
+check("the log says how long a call takes", "s a call" in log)
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    out2, _, _, scores2 = C.run_llm_novelty(data, parallel=3)
+check("in parallel: same verdicts and scores, same order",
+      ([p for p, _ in out2], scores2), ([p for p, _ in out], scores))
 check("a novelty system writes a _novelty column, not _pct",
       (C.is_novelty("webrag"), C.is_novelty("webrag__stripped"),
        C.is_novelty("hybrid")), (True, True, False))

@@ -61,6 +61,23 @@ E - novel: unlike calls you have seen before
 Answer with exactly one letter, A to E.
 Answer:"""
 
+# Both answers from ONE request: the word, then the letter, on one line. The
+# model reads the transcript once instead of twice, and Ollama returns the
+# probabilities at each token it writes, so the verdict comes from the first
+# answer token and novelty from the letter that follows it.
+BOTH_Q = """Answer two questions.
+1. Is the caller attempting a scam? Scam or Legit.
+2. Setting that aside, how familiar is the pattern of this call - what the
+caller wants and how they go about it?
+A - textbook: a very common, well-known script
+B - familiar: a common pattern with small variations
+C - somewhat unusual
+D - unusual: an uncommon approach
+E - novel: unlike calls you have seen before
+Reply on one line: the word, a space, then the letter. Nothing else.
+Answer:"""
+BOTH_TOKENS = 6              # "Legit" can be two tokens, then " B", and spare
+
 LEVELS = {"A": 0.0, "B": 25.0, "C": 50.0, "D": 75.0, "E": 100.0}
 TOP_LOGPROBS = 20
 _LOGPROBS_OK = None          # None = not tried yet; False = this Ollama has none
@@ -93,6 +110,109 @@ def answer_letter(token):
     trailing bracket or full stop."""
     t = token.strip().strip("*\"'`().:").upper()
     return t if t in LEVELS else None
+
+
+def generate(prompt, n_tokens, top=TOP_LOGPROBS, timeout=300):
+    """(text, [[(token, logprob), ...] per generated token]). The inner lists
+    are the alternatives Ollama weighed at each position, the chosen token
+    among them; they are empty when this Ollama returns no logprobs."""
+    num_ctx = ollama_ctx.fit_num_ctx(prompt, n_tokens + 2, where="webrag")
+    payload = {
+        "model": llm_judge.DEFAULT_MODEL, "prompt": prompt, "stream": False,
+        "logprobs": True, "top_logprobs": top,
+        "options": {"temperature": 0.0, "num_predict": n_tokens,
+                    "num_ctx": int(num_ctx)},
+    }
+    try:
+        body = llm_judge._post("/api/generate", payload, timeout)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("ollama refused that (%s): %s"
+                           % (e.code, e.read().decode("utf-8", "replace")[:300]))
+    except OSError as e:           # URLError, a refused connection, a timeout
+        raise llm_judge._unreachable(e)
+    steps = []
+    for pos in body.get("logprobs") or []:
+        alts = [(a.get("token", ""), a["logprob"])
+                for a in (pos.get("top_logprobs") or [])
+                if a.get("logprob") is not None]
+        if not alts and pos.get("logprob") is not None:
+            alts = [(pos.get("token", ""), pos["logprob"])]
+        steps.append((pos.get("token", ""), alts))
+    return body.get("response", ""), steps
+
+
+def presize(transcripts):
+    """Size the context window once, for the longest call in the run.
+
+    The window only grows (ollama_ctx.STICKY), and Ollama reloads the whole
+    model each time it does - seconds for a 14B model, and it happened once
+    per step the window grew through as longer calls turned up. Asking for
+    the largest up front means one load for the run."""
+    if not transcripts:
+        return None
+    longest = max(transcripts, key=lambda t: len(t or ""))
+    return ollama_ctx.fit_num_ctx(
+        HEAD.format(transcript=longest) + BOTH_Q, BOTH_TOKENS + 2,
+        where="webrag")
+
+
+def judge(transcript):
+    """Verdict and novelty from one request.
+
+    Returns (pred, word, novelty, how, letter): pred "Fraud" | "Normal" | None
+    (None when the answer is neither word), novelty 0..100 or None, how
+    "logprobs" | "letter" | "unreadable" as for novelty() below."""
+    global _LOGPROBS_OK
+    text, steps = generate(HEAD.format(transcript=transcript) + BOTH_Q,
+                           BOTH_TOKENS)
+    has_lp = any(alts for _, alts in steps)
+    if has_lp:
+        _LOGPROBS_OK = True
+    else:
+        _note_no_logprobs()
+
+    # the verdict: the first token that starts one of the two words
+    vi = next((i for i, (tok, _) in enumerate(steps) if answer_word(tok)), None)
+    pred, word = None, None
+    if vi is not None:
+        word = answer_word(steps[vi][0])
+        mass = {"scam": 0.0, "legit": 0.0}
+        for tok, lp in steps[vi][1]:
+            w = answer_word(tok)
+            if w:
+                mass[w] += math.exp(lp)
+        if mass["scam"] + mass["legit"] > 0:
+            pred = "Fraud" if mass["scam"] >= mass["legit"] else "Normal"
+        else:
+            pred = "Fraud" if word == "scam" else "Normal"
+    elif not steps:
+        # no logprobs at all: read the reply text
+        head = (text.split() or [""])[0]
+        word = answer_word(head)
+        pred = None if word is None else ("Fraud" if word == "scam" else "Normal")
+
+    # novelty: the first letter A-E after the verdict
+    start = (vi + 1) if vi is not None else 0
+    li = next((i for i in range(start, len(steps))
+               if answer_letter(steps[i][0])), None)
+    if li is not None:
+        letter = answer_letter(steps[li][0])
+        mass = dict.fromkeys(LEVELS, 0.0)
+        for tok, lp in steps[li][1]:
+            k = answer_letter(tok)
+            if k:
+                mass[k] += math.exp(lp)
+        total = sum(mass.values())
+        if has_lp and total > 0:
+            nov = sum(LEVELS[k] * m for k, m in mass.items()) / total
+            return pred, word, nov, "logprobs", letter
+        return pred, word, LEVELS[letter], "letter", letter
+    if not steps:
+        parts = text.split()
+        letter = answer_letter(parts[1]) if len(parts) > 1 else None
+        if letter:
+            return pred, word, LEVELS[letter], "letter", letter
+    return pred, word, None, "unreadable", text
 
 
 def generate_one(prompt, top=TOP_LOGPROBS, timeout=300):
@@ -175,8 +295,7 @@ def main():
     ap = argparse.ArgumentParser(description="verdict and novelty for one transcript")
     ap.add_argument("--text", required=True)
     args = ap.parse_args()
-    v, word = verdict(args.text)
-    n, how, letter = novelty(args.text)
+    v, word, n, how, letter = judge(args.text)
     print("verdict  %s  (answered %r)" % (v or "unreadable", word))
     print("novelty  %s  (%s, answered %r)"
           % ("%.1f" % n if n is not None else "unreadable", how, letter))
