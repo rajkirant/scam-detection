@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Offline tests for llm_novelty: the plain LLM judge, each call scored 0-100
-by how novel it is.
+Offline tests for llm_novelty: the Web-RAG baseline is now the plain LLM
+judge, each call scored 0-100 by how novel it is.
 
 No Ollama: llm_judge._post is replaced by a fake that answers the way
 Ollama's /api/generate does with logprobs on (and, for the fallback, the way
@@ -132,8 +132,8 @@ check("scores are novelty 0-100, unreadable left blank",
 check("the log compares novelty of right and wrong calls",
       "median novelty: 5.0 on the 2 calls it got right, 77.5 on the 1" in log)
 check("a novelty system writes a _novelty column, not _pct",
-      (C.is_novelty("llm_novelty"), C.is_novelty("llm_novelty__stripped"),
-       C.is_novelty("webrag")), (True, True, False))
+      (C.is_novelty("webrag"), C.is_novelty("webrag__stripped"),
+       C.is_novelty("hybrid")), (True, True, False))
 
 print("\n" + ("all good - novelty is measured, from the transcript alone"
               if not fails else "%d FAILED" % fails))

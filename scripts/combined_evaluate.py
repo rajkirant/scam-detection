@@ -10,7 +10,8 @@ Systems (escalation ladder):
     2. bag-of-words    TF-IDF + LogisticRegression, 5-fold CV
     3. LLM-only        the model decides alone, NO retrieval  (the control)
     4. Singh           policy-compliance vs bank_policies collection
-    5. Web-RAG         this project's system, KB-only (use_web=False)
+    5. Web-RAG         the plain LLM judge, no retrieval, each call scored
+                       0-100 by novelty (llm_novelty.py)
     6. Qwen-KB         the LLM generalises a TRAINING SPLIT of this dataset
                       into scam patterns, indexes them as a knowledge base,
                       and judges held-out calls against what it retrieves
@@ -578,52 +579,8 @@ def run_singh(data, max_tokens=300, debug=False, pass_label=""):
     return out, raws, reasons
 
 
-def run_webrag(data, debug=False, pass_label=""):
-    """Web-RAG system, KB-only (use_web=False).
-
-    NOTE: this delegates to webrag_system.detect(), which does its own
-    prompting and parsing. The fixes in this file do NOT reach inside it.
-    If Web-RAG's numbers also look odd on a verbose model, check the
-    verdict parsing and token budget in webrag_system.py too.
-    """
-    import webrag_system as W
-    coll = W.get_kb_collection()
-    print("    gate: min similarity %.2f, LLM relevance check %s"
-          % (W.MIN_KB_SIMILARITY, "on" if W.USE_LLM_GATE else "off"))
-
-    gate = Counter()
-    out, raws, reasons, scores = [], [], [], []
-    for i, (text, true) in enumerate(data, 1):
-        res = W.detect(text, coll, use_web=False, threshold=50)
-        out.append((res["predicted"], true))
-        scores.append(res.get("confidence"))
-        raws.append(json.dumps(res, default=str)[:500])
-        reasons.append(webrag_reason(res))
-        gate["with_evidence" if res["evidence_used"] else "no_evidence"] += 1
-        gate["kept"] += res["n_kb_kept"]
-        gate["dropped"] += res["n_kb_dropped"]
-        if res["gate_note"] == "unreadable":
-            gate["judge_unreadable"] += 1
-        if i % 20 == 0:
-            print("    WebRAG%s: %d/%d" % (pass_label, i, len(data)))
-
-    # How often retrieval actually contributed. If with_evidence is ~100% the
-    # gate is not biting and the Fraud prior is back; if it is ~0% this is the
-    # LLM-only control wearing a different name. Either extreme is a finding.
-    n = max(len(data), 1)
-    print("    retrieval gate: %d/%d transcripts got evidence (%.0f%%), "
-          "%d chunks kept / %d discarded as irrelevant"
-          % (gate["with_evidence"], n, 100.0 * gate["with_evidence"] / n,
-             gate["kept"], gate["dropped"]))
-    if gate["judge_unreadable"]:
-        print("    WARNING: relevance judge unreadable on %d transcripts "
-              "(kept their candidates rather than guessing)"
-              % gate["judge_unreadable"])
-    return out, raws, reasons, scores
-
-
 def run_llm_novelty(data, pass_label=""):
-    """The plain LLM judge, scoring each call by novelty rather than P(scam).
+    """Web-RAG: the plain LLM judge, scoring each call by novelty.
 
     No retrieval at all: the transcript goes to the model on its own, as in
     llm_only. Two one-token questions on the same prompt: the verdict (Scam or
@@ -652,7 +609,7 @@ def run_llm_novelty(data, pass_label=""):
                           % letter))
         raws.append("%s | %s" % (word, letter))
         if i % 20 == 0:
-            print("    LLM novelty%s: %d/%d" % (pass_label, i, len(data)),
+            print("    Web-RAG%s: %d/%d" % (pass_label, i, len(data)),
                   flush=True)
     print("    novelty measured from logprobs on %d/%d calls%s%s%s"
           % (tally["logprobs"], len(data),
@@ -697,8 +654,9 @@ def score_ranges(pairs, scores):
 
 def is_novelty(system):
     """A system whose 0-100 score is novelty, not a scam chance: no threshold,
-    and its CSV column is <system>_novelty rather than <system>_pct."""
-    return system.startswith("llm_novelty")
+    and its CSV column is <system>_novelty rather than <system>_pct. That is
+    Web-RAG (and its stripped pass); the hybrid's score is still a chance."""
+    return system == "webrag" or system.startswith("webrag__")
 
 
 def show_score_ranges(name, pairs, scores):
@@ -1370,8 +1328,8 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--trivial-only", action="store_true")
     ap.add_argument("--skip", default="",
-                    help="comma list: length,bow,llm_only,llm_novelty,singh,"
-                         "webrag,qwen_kb,hybrid")
+                    help="comma list: length,bow,llm_only,singh,webrag,qwen_kb,"
+                         "hybrid")
     ap.add_argument("--max-tokens", type=int, default=300,
                     help="token budget for LLM verdicts (was 60, which truncated "
                          "verbose models mid-answer)")
@@ -1517,36 +1475,18 @@ def main():
             print("    (%.0fs)" % (time.time() - t0))
 
     if "webrag" not in skip:
-        print("\nWeb-RAG system (KB-only):")
+        # Web-RAG no longer retrieves anything: no KB, no vector database, no
+        # web search. It is the plain LLM judge, scored 0-100 by novelty.
+        print("\nWeb-RAG (plain LLM, no retrieval, each call scored 0-100 by "
+              "novelty):")
         t0 = time.time()
-        print("    %s calls to go, one per transcript" % len(data), flush=True)
-        (results["webrag"], raw_log["webrag"],
-         reasons["webrag"], scores["webrag"]) = run_webrag(data, args.debug)
-        show("Web-RAG (KB-only)", metrics(results["webrag"]))
+        (results["webrag"], raw_log["webrag"], reasons["webrag"],
+         scores["webrag"]) = run_llm_novelty(data)
+        show("webrag", metrics(results["webrag"]))
         show_score_ranges("webrag", results["webrag"], scores["webrag"])
         print("    (%.0fs)" % (time.time() - t0))
         if data_s is not None:
-            t0 = time.time()
-            print("    stripped copy, %d calls ..." % len(data_s), flush=True)
-            (results["webrag" + S], raw_log["webrag" + S],
-             reasons["webrag" + S], scores["webrag" + S]) = run_webrag(
-                data_s, args.debug, " (stripped)")
-            show("webrag" + S, metrics(results["webrag" + S]))
-            show_score_ranges("webrag" + S, results["webrag" + S],
-                              scores["webrag" + S])
-            print("    (%.0fs)" % (time.time() - t0))
-
-    if "llm_novelty" not in skip:
-        print("\nLLM novelty (plain LLM, no retrieval, scored 0-100 by novelty):")
-        t0 = time.time()
-        (results["llm_novelty"], raw_log["llm_novelty"],
-         reasons["llm_novelty"], scores["llm_novelty"]) = run_llm_novelty(data)
-        show("llm_novelty", metrics(results["llm_novelty"]))
-        show_score_ranges("llm_novelty", results["llm_novelty"],
-                          scores["llm_novelty"])
-        print("    (%.0fs)" % (time.time() - t0))
-        if data_s is not None:
-            k = "llm_novelty" + S
+            k = "webrag" + S
             (results[k], raw_log[k], reasons[k], scores[k]) = run_llm_novelty(
                 data_s, " (stripped)")
             show(k, metrics(results[k]))
