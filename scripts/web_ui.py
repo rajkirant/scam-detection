@@ -69,9 +69,9 @@ BASELINES = [
     ("length",   "Length only",           "word count against one threshold, no LLM", False),
     ("bow",      "Bag of words",          "TF-IDF into logistic regression, no LLM", False),
     ("llm_only", "LLM-only",              "the model decides alone, no retrieval", True),
+    ("llm_prob", "LLM P(scam)",           "plain LLM, no retrieval, P(scam) from logprobs", True),
     ("singh",    "Singh",                 "policy-compliance baseline",           True),
     ("webrag",   "Web-RAG",               "KB-only retrieval",                    True),
-    ("webrag_adaptive", "Web-RAG adaptive", "KB first; web search only when the model is unsure", True),
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
@@ -479,11 +479,6 @@ def start_run(form):
                              "call twice; it cannot run on a single transcript")
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
-    adaptive_confident = None
-    if "webrag_adaptive" in baselines:
-        adaptive_confident = numeric(
-            form, {"adaptive_confident": ("adaptive_confident", float, 50, 100,
-                                          None)}, "adaptive_confident")
     # One model, not a choice: run_all.sh uses it for every LLM baseline.
     model = ollama_ctx.MODEL if any(known[b][3] for b in baselines) else ""
 
@@ -520,10 +515,6 @@ def start_run(form):
     # of long calls is the difference between a verdict and a guess.
     if num_ctx:
         env["SCAM_NUM_CTX"] = str(num_ctx)
-    if adaptive_confident is not None:
-        env["SCAM_ADAPTIVE_CONFIDENT"] = "%.4f" % (adaptive_confident / 100.0)
-    if "webrag_adaptive" in baselines:
-        env["SCAM_ADAPTIVE_PREVIEW"] = "1" if form.get("adaptive_preview") else "0"
 
     with open(log, "wb") as out:
         out.write(("$ ./run_all.sh " + " ".join(shlex.quote(f) for f in flags)
@@ -996,16 +987,6 @@ def scores_of(run_id):
     import csv
     csv.field_size_limit(sys.maxsize)
     out = []
-    # Web-RAG adaptive prints the cut-off it ran with; the page shades that
-    # band and counts the calls in it (the ones that go, or would go, to the web)
-    cutoff = None
-    try:
-        text = run_path(run_id, "log").read_text(encoding="utf-8",
-                                                 errors="replace")
-        m = re.search(r"confident at P\(scam\) >= ([\d.]+)", text)
-        cutoff = float(m.group(1)) if m else None
-    except OSError:
-        pass
     for c in artifacts_of(run_id)["csvs"]:
         with open(PROJECT_DIR / "results" / c["name"], newline="",
                   encoding="utf-8", errors="replace") as f:
@@ -1028,10 +1009,7 @@ def scores_of(run_id):
                                       row[t], row[vi]])
         for name, _, _ in want:
             if pts[name]:
-                adaptive = name.startswith("webrag_adaptive")
                 out.append({"system": name, "csv": c["name"], "threshold": 50,
-                            "cutoff": (cutoff or 0.9) if adaptive else None,
-                            "preview": "_preview" in name,
                             "points": pts[name]})
     return {"systems": out}
 
@@ -1941,7 +1919,6 @@ class Handler(BaseHTTPRequestHandler):
                     "baselines": [{"key": k, "label": l, "note": n, "needs_model": m}
                                   for k, l, n, m in BASELINES],
                     "model": ollama_ctx.MODEL,
-                    "tavily": tavily_key_present(),
                     "ollama": ollama_state(),
                     "kb_modes": [{"key": k, "label": l, "note": n,
                                   "harvests": h is not None, "exclusive": x}
@@ -2880,20 +2857,6 @@ PAGE = r"""<!doctype html>
           minutes.</div>
       </div>
 
-      <div id="adaptbox" hidden>
-        <label for="adaptconf">Web-RAG adaptive: search the web below</label>
-        <input type="text" id="adaptconf" value="90" spellcheck="false">
-        <div class="hint" id="adapthint">How sure the model must be, in %, to
-          keep its verdict without a web search. At 90 a call scored between
-          10% and 90% scam goes to the web; higher sends more calls.</div>
-        <label class="inline" style="margin-top:8px">
-          <input type="checkbox" id="adaptpreview" checked>
-          <span><span class="name">Preview only</span>
-          <span class="note">measure P(scam) and count the calls that would
-            need Tavily, without searching</span></span>
-        </label>
-      </div>
-
       <button class="go" id="go">Run</button>
       <div class="hint" id="formerr" style="color:var(--bad)"></div>
     </div>
@@ -2991,15 +2954,6 @@ results table, and the prediction it made for every single call.</pre>
       <div class="card">
         <div class="seg" id="scoresys"></div>
         <div class="hint" id="scorehead" style="margin:0 0 10px"></div>
-        <div id="cutbox" hidden style="margin:0 0 12px">
-          <label class="inline" style="gap:10px">
-            <span class="name">Web-search cut-off</span>
-            <input type="range" id="cutrange" min="50" max="99" step="1"
-                   style="width:220px">
-            <b id="cutval"></b>
-          </label>
-          <div id="cutsum" style="margin-top:6px"></div>
-        </div>
         <div class="scroll viz" id="scoreplot"></div>
         <div id="scoresum" style="margin-top:14px"></div>
         <div class="scroll" style="margin-top:12px"><table id="scorebands"></table></div>
@@ -3992,7 +3946,6 @@ async function boot() {
   $('ollama').title = $('ollama').textContent;
 
   for (const c of checks()) c.onchange = onBaselines;
-  $('adaptpreview').onchange = onBaselines;
   $('clearhist').onclick = clearFinished;
   $('pickall').onclick = () => setAll(true);
   $('picknone').onclick = () => setAll(false);
@@ -4076,21 +4029,10 @@ async function sizeContext() {
 
 function onBaselines() {
   const sel = chosen();
-  const adaptive = sel.includes('webrag_adaptive');
-  $('adaptbox').hidden = !adaptive;
-  const nokey = adaptive && !CFG.tavily && !$('adaptpreview').checked;
-  $('adapthint').style.color = nokey ? 'var(--bad)' : '';
-  $('adapthint').textContent = nokey
-    ? 'No TAVILY_API_KEY in .env - unsure calls cannot be searched and will '
-      + 'keep their KB verdict.'
-    : 'How sure the model must be, in %, to keep its verdict without a web '
-      + 'search. At 90 a call scored between 10% and 90% scam goes to the '
-      + 'web; higher sends more calls.';
   $('modelbox').hidden = !sel.some(k =>
     CFG.baselines.find(b => b.key === k).needs_model);
   $('go').disabled = sel.length === 0;
-  $('go').textContent = sel.length > 1 ? `Run ${sel.length} baselines`
-    : adaptive && $('adaptpreview').checked ? 'Run preview' : 'Run';
+  $('go').textContent = sel.length > 1 ? `Run ${sel.length} baselines` : 'Run';
   if (!sel.length) $('formerr').textContent = '';
 }
 
@@ -4163,8 +4105,6 @@ async function go() {
     baselines: chosen(),
     limit: limit,
     num_ctx: $('numctx').value,
-    adaptive_confident: $('adaptconf').value,
-    adaptive_preview: $('adaptpreview').checked,
     stripped: $('stripped').checked,
   });
   onBaselines();
@@ -4434,7 +4374,7 @@ function select(id) {
   benchView('run');
   current = id; offset = 0; page = 0;
   ART = {steps: [], csvs: []};
-  SCORES = null; scoreCut = null;
+  SCORES = null;
   $('log').textContent = '';
   $('tabs').hidden = false;
   $('results').innerHTML = '';
@@ -4859,12 +4799,11 @@ async function loadCalls() {
 }
 
 // ------------------------------------------------------------- scam chance
-// Web-RAG and the hybrid score every call 0-100 and call it a scam at 50 or
-// over. Accuracy counts the calls on the wrong side of that line; this shows
+// Web-RAG, the hybrid and LLM P(scam) score every call 0-100 and call it a
+// scam at 50 or over. Accuracy counts the calls on the wrong side of that line; this shows
 // how far over it they are. One row per outcome, one dot per call, stacked
 // where calls share a score. The two kinds of mistake are the orange rows.
-let SCORES = null, scoreSys = null, scoreCut = null;
-const TAVILY_CREDITS = 2;      // advanced search, which retrieve_web uses
+let SCORES = null, scoreSys = null;
 const OUTCOMES = [
   {k: 'TP', label: 'Scam, flagged'},
   {k: 'FN', label: 'Scam, missed', wrong: true},
@@ -4882,7 +4821,7 @@ function hasScores() { return !!(SCORES && SCORES.systems && SCORES.systems.leng
 function paintScores() {
   if (!hasScores()) {
     $('scoreplot').innerHTML = '<div class="muted">no system in this run gives a '
-      + 'scam-chance score - Web-RAG and the hybrid do</div>';
+      + 'scam-chance score - LLM P(scam), Web-RAG and the hybrid do</div>';
     $('scoresys').innerHTML = $('scorehead').textContent = '';
     $('scoresum').innerHTML = $('scorebands').innerHTML = '';
     return;
@@ -4894,20 +4833,10 @@ function paintScores() {
     `<button data-sys="${esc(s.system)}" class="${s.system === scoreSys ? 'on' : ''}">`
     + `${esc(sysName(s.system))}</button>`).join('');
   for (const b of $('scoresys').querySelectorAll('button'))
-    b.onclick = () => { scoreSys = b.dataset.sys; scoreCut = null; paintScores(); };
+    b.onclick = () => { scoreSys = b.dataset.sys; paintScores(); };
 
   const sy = systems.find(s => s.system === scoreSys);
   const th = sy.threshold;
-  // Web-RAG adaptive: the calls between 100-cut and cut are the ones that go
-  // (or, in a preview, would go) to a web search. The slider moves the line
-  // so the count can be read off before any Tavily credits are spent.
-  const cut = sy.cutoff ? (scoreCut ?? Math.round(sy.cutoff * 100)) : null;
-  $('cutbox').hidden = cut === null;
-  if (cut !== null) {
-    $('cutrange').value = cut;
-    $('cutval').textContent = cut + '%';
-    $('cutrange').oninput = () => { scoreCut = +$('cutrange').value; paintScores(); };
-  }
   const pts = sy.points.map(([idx, v, t, p]) => ({idx, v, o: outcomeOf(t, p)}));
   const by = {TP: [], FN: [], FP: [], TN: []};
   for (const q of pts) by[q.o].push(q);
@@ -4943,15 +4872,6 @@ function paintScores() {
   const H = y0 + AXIS;
 
   let g = '';
-  if (cut !== null) {
-    const lo = 100 - cut;
-    g += `<rect x="${x(lo)}" y="${PADT}" width="${x(cut) - x(lo)}" height="${y0 - PADT}"
-           fill="var(--series-1)" opacity=".09"/>`;
-    for (const v of [lo, cut])
-      g += `<line x1="${x(v)}" y1="${PADT}" x2="${x(v)}" y2="${y0}"
-             stroke="var(--series-1)" stroke-width="1.5"/>`;
-    g += `<text class="val" x="${x(lo) + 4}" y="${PADT + 12}">web search band</text>`;
-  }
   // recessive grid every 10 points, the threshold as the one strong line
   for (let v = 0; v <= 100; v += 10) {
     g += `<line x1="${x(v)}" y1="${PADT}" x2="${x(v)}" y2="${y0}"
@@ -4999,29 +4919,6 @@ function paintScores() {
     el.onmouseleave = hideTip;
   }
 
-  if (cut !== null) {
-    const inBand = c => pts.filter(q => Math.max(q.v, 100 - q.v) < c).length;
-    const k = inBand(cut);
-    const isWrong = q => q.o === 'FP' || q.o === 'FN';
-    const wrongIn = pts.filter(q => isWrong(q) && Math.max(q.v, 100 - q.v) < cut).length;
-    const wrongOut = pts.filter(q => isWrong(q) && Math.max(q.v, 100 - q.v) >= cut).length;
-    const saved = sy.cutoff && cut === Math.round(sy.cutoff * 100);
-    $('cutsum').innerHTML = `<b>${k} of ${pts.length} calls `
-      + `(${(100 * k / Math.max(pts.length, 1)).toFixed(1)}%)</b> `
-      + `${sy.preview ? 'would need' : 'needed'} a Tavily search at ${cut}% `
-      + `- about ${k * TAVILY_CREDITS} credits (advanced search, 2 each; `
-      + `cached queries are free). ${wrongIn} of them are wrong ${sy.preview
-          ? 'now' : 'after the web'}${sy.preview ? ' - the most a web search could fix' : ''}; `
-      + `${wrongOut} wrong call${wrongOut === 1 ? '' : 's'} sit outside the band, `
-      + `confident mistakes the web never sees. `
-      + `<span class="muted">`
-      + [60, 70, 80, 90, 95, 99].map(c => `${c}%: ${inBand(c)}`).join(' · ')
-      + `</span>`
-      + (!sy.preview && !saved ? '<div class="muted">This run searched at '
-         + Math.round(sy.cutoff * 100) + '%; the slider only shows what another '
-         + 'cut-off would have sent.</div>' : '');
-  }
-
   // where the mistakes fall, in words
   const said = [];
   for (const k of ['FP', 'FN']) {
@@ -5033,8 +4930,10 @@ function paintScores() {
     for (const v of vs) counts[bandOf(v)]++;
     const top = counts.indexOf(Math.max(...counts));
     const near = vs.filter(v => Math.abs(v - th) < 10).length;
-    const med = vs[Math.floor((vs.length - 1) / 2)];
-    const q1 = vs[Math.floor((vs.length - 1) / 4)], q3 = vs[Math.floor(3 * (vs.length - 1) / 4)];
+    const r1 = v => Math.round(v * 10) / 10;
+    const med = r1(vs[Math.floor((vs.length - 1) / 2)]);
+    const q1 = r1(vs[Math.floor((vs.length - 1) / 4)]);
+    const q3 = r1(vs[Math.floor(3 * (vs.length - 1) / 4)]);
     said.push(`<div style="margin-bottom:6px"><b>${what}:</b> ${vs.length}. `
       + `Most fall in <b>${BANDS[top][0]}–${BANDS[top][1]}%</b> (${counts[top]} of ${vs.length}); `
       + `the middle half scores ${q1}–${q3}% (median ${med}%). `
