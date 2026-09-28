@@ -267,11 +267,30 @@ needed) and prints the public URL:
   ok public    https://fa58e6c3b454ab.lhr.life
 ```
 
-The tunnel is supervised — localhost.run drops it eventually, and a new one is
-opened and announced in the terminal. With an SSH key on this machine the
-address survives a reconnect; without one it changes each time
-(`ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr`, once, fixes that). See
-`results/logs/tunnel.log` for the connection history.
+The tunnel is supervised: when it drops, or the address stops answering, it is
+reopened and announced in the terminal. **localhost.run's address is not
+permanent.** An SSH key (`ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr`, once)
+keeps it for a while, but localhost.run retires free addresses from time to
+time (the old link answers 503) and the next connection gets a new one.
+
+**For a permanent address, use ngrok.** Every free ngrok account comes with
+one static domain that never changes:
+
+1. Sign up at <https://ngrok.com> (free) and download the ngrok program for
+   Linux. Put it on `PATH`, or in `~/bin`, `~/.local/bin` or `./bin`. It is a
+   single file and needs no root.
+2. `ngrok config add-authtoken <the token on your ngrok dashboard>`
+3. Copy your free static domain from the dashboard (Domains) into `.env`:
+   `NGROK_DOMAIN=your-name.ngrok-free.app`
+
+From then on `./web_ui.sh --public` (or `--tmux --public`) always comes up on
+`https://your-name.ngrok-free.app`, and every reconnect comes back on the same
+address. `--domain` on the command line does the same without `.env`. ngrok's
+free plan shows each new browser a one-time warning page; press *Visit Site*
+once. If ngrok will not start, its own reason (no authtoken, the domain
+belonging to another account, the domain already online from another ngrok) is
+printed in the terminal. See `results/logs/tunnel.log` for the connection
+history.
 
 > **That link has no password in front of it.** Anyone who opens it can start
 > and stop runs on this box and read every transcript. Fine for showing a
@@ -1450,12 +1469,12 @@ pass `--cpu`.
 route in setup step 4.
 
 **A run reports many unreadable verdicts** — the model is being verbose and
-running out of tokens before it reaches its answer. Try the other model, or
-lower `--limit` and inspect the `<system>_why` column in the per-call CSV.
+running out of tokens before it reaches its answer. Lower `--limit` and inspect the `<system>_why` column in the per-call CSV.
 
-**The public link stopped working** — localhost.run rotates anonymous
-subdomains on every reconnect. `ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr`,
-once, keeps the address stable. History is in `results/logs/tunnel.log`.
+**The public link keeps changing** — localhost.run's free addresses are not
+permanent, with or without an SSH key. Set up ngrok's free static domain
+(see [the public link](#a-browser-ui) above) for one that never changes.
+History is in `results/logs/tunnel.log`.
 
 ---
 
