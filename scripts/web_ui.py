@@ -1902,6 +1902,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):      # one line per run, not per poll
         pass
 
+    # The browser went away before the reply was written - the public tunnel
+    # dropped, or the tab was closed mid-poll. Nothing is wrong with the
+    # server and nothing can be sent, so drop the connection quietly instead
+    # of letting socketserver print two tracebacks about a broken pipe.
+    def handle(self):
+        try:
+            super().handle()
+        except ConnectionError:
+            pass
+
     def _send(self, code, body, ctype="application/json"):
         if isinstance(body, (dict, list)):
             body = json.dumps(body)
@@ -2009,6 +2019,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
+        except ConnectionError:
+            raise                       # the client is gone: see handle()
         except Exception as e:
             return self._send(500, {"error": str(e)})
 
@@ -2118,6 +2130,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
+        except ConnectionError:
+            raise                       # the client is gone: see handle()
         except Exception as e:
             return self._send(500, {"error": str(e)})
 
