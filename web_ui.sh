@@ -6,7 +6,8 @@
 #   ./web_ui.sh --port 8080
 #   ./web_ui.sh --tmux          # detached, survives an SSH disconnect
 #   ./web_ui.sh --local         # this machine only
-#   ./web_ui.sh --public        # plus a public https link, via localhost.run
+#   ./web_ui.sh --public        # plus a public https link
+#   ./web_ui.sh --public --domain your-name.ngrok-free.app   # a permanent one
 #
 # It binds every interface, so another machine on the same network can open
 # it directly - the startup banner prints the address to use. Anyone who can
@@ -24,22 +25,29 @@
 # anyone who opens it can start and stop runs on this machine and read every
 # transcript, with no password in front of it.
 #
-# localhost.run does not hold a connection forever, so the tunnel is
-# supervised: when it drops, a new one is opened and the link is printed here
-# again. An anonymous tunnel can also expire without the connection closing -
-# the address stops serving while ssh sits there looking healthy - so the
-# supervisor asks the public URL itself once a minute and reconnects when the
-# answer stops coming, which prints the new link too.
-# If this machine has an SSH key the address stays the same across
-# those reconnects; without one every reconnect gets a fresh address, and the
-# previous link stops working - so on a box you will share a link from,
+# A PERMANENT ADDRESS needs ngrok. localhost.run's free addresses are not
+# permanent: an SSH key keeps the same one for a while, but localhost.run
+# retires free addresses from time to time (the old one answers 503) and the
+# next connection gets a new one. ngrok gives every free account one static
+# domain that never changes. Once:
 #
-#   ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr      (once)
+#   1. sign up at https://ngrok.com (free) and download the ngrok program
+#      for Linux; put it on PATH, or in ~/bin, ~/.local/bin or ./bin
+#   2. ngrok config add-authtoken <the token on your ngrok dashboard>
+#   3. copy your free static domain from the dashboard (Domains), and put
+#      NGROK_DOMAIN=your-name.ngrok-free.app in this project's .env
 #
-# is worth doing - ~/.ssh/id_lhr is used for the tunnel in preference to the
-# box's own key, which on a shared machine is often passphrase-protected or
-# otherwise not one localhost.run will take. Any default key is still used if
-# that file is absent. The whole history is in results/logs/tunnel.log.
+# after which ./web_ui.sh --public always comes up on that address (or pass
+# --domain on the command line). Without a domain it falls back to
+# localhost.run as before.
+#
+# Either way the tunnel is supervised: when it drops it is reopened, and the
+# public URL itself is asked once a minute, because a tunnel can stop serving
+# while the process behind it looks healthy. With ngrok the address stays the
+# same through all of that. With localhost.run, ~/.ssh/id_lhr (made with
+# ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr) is used in preference to the
+# box's own key and keeps the address for longer, but not forever. The whole
+# history is in results/logs/tunnel.log.
 #
 # Benchmark runs started from the page are detached from this server, so
 # stopping it does not stop a run that is already going.
@@ -60,12 +68,14 @@ HOST=0.0.0.0        # every interface: other machines can reach it
 DETACH=0
 PUBLIC=0
 SESSION="scam_ui"
+DOMAIN="${NGROK_DOMAIN:-}"      # a permanent ngrok address, if there is one
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--port)    PORT="${2:-}";    shift 2 ;;
     --host)       HOST="${2:-}";    shift 2 ;;
     --local)      HOST=127.0.0.1;   shift   ;;
     --public)     PUBLIC=1;         shift   ;;
+    --domain)     DOMAIN="${2:-}";  PUBLIC=1; shift 2 ;;
     -t|--tmux)    DETACH=1;         shift   ;;
     -s|--session) SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
@@ -87,6 +97,15 @@ fi
 # requirement - but the runs it launches do need it, and they inherit it.
 command -v python3 >/dev/null || die "python3 not found"
 
+# The permanent address, if none was given: NGROK_DOMAIN in .env, where the
+# Tavily key already lives. Only that one line is read.
+if [[ -z "$DOMAIN" && -f .env ]]; then
+  DOMAIN="$(sed -n 's/^[[:space:]]*NGROK_DOMAIN[[:space:]]*=[[:space:]]*//p' .env \
+            | tail -1 | tr -d "\"'" | tr -d '[:space:]')"
+fi
+# people paste the whole URL; ngrok wants the host
+DOMAIN="${DOMAIN#https://}"; DOMAIN="${DOMAIN#http://}"; DOMAIN="${DOMAIN%%/*}"
+
 # localhost.run needs no account: it accepts any key for the "nokey" user and
 # prints the public URL over the session. That output goes to a file so the URL
 # can be picked out of it without tangling with the server's own output.
@@ -107,7 +126,7 @@ PUBLIC_URL_FILE="$PROJECT_DIR/results/logs/public_url.txt"
 TUNNEL_TARGET="nokey@localhost.run"
 # How often the live link is asked whether it still answers, and how many
 # misses in a row mean it is gone rather than a blip.
-TUNNEL_CHECK_EVERY=60
+TUNNEL_CHECK_EVERY="${SCAM_TUNNEL_CHECK_EVERY:-60}"
 TUNNEL_CHECK_FAILS=2
 LAST_CODE=""        # what the last url_answers call got back
 # A key kept for this tunnel alone. Optional, and the reason it exists is that
@@ -214,7 +233,11 @@ supervise() {
     echo "[$(date "+%F %T")] $url answered ${LAST_CODE:-nothing} ($miss of $TUNNEL_CHECK_FAILS)" >> "$TUNNEL_LOG"
     (( miss < TUNNEL_CHECK_FAILS )) && continue
     echo
-    warn "the public link stopped answering (HTTP ${LAST_CODE:-no reply}) - opening a new one"
+    if [[ "$PROVIDER" == ngrok ]]; then
+      warn "the public link stopped answering (HTTP ${LAST_CODE:-no reply}) - reconnecting, same address"
+    else
+      warn "the public link stopped answering (HTTP ${LAST_CODE:-no reply}) - opening a new one"
+    fi
     kill "$sshpid" 2>/dev/null
     return 0
   done
@@ -298,10 +321,136 @@ tunnel_loop() {
   done
 }
 
+# ------------------------------------------------------------------ ngrok
+# The permanent address. ngrok's free plan includes one static domain per
+# account, so every connection - the first, and every reconnect after a drop -
+# comes up on the same https://<domain>, and a link handed to someone keeps
+# working for as long as this script is running.
+PROVIDER=localhost.run
+NGROK=""
+
+find_ngrok() {
+  local c
+  for c in "$(command -v ngrok 2>/dev/null)" "$PROJECT_DIR/bin/ngrok" \
+           "$HOME/bin/ngrok" "$HOME/.local/bin/ngrok"; do
+    [[ -n "$c" && -x "$c" ]] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+# How many times ngrok has said it is up, so far this run.
+ngrok_started() {
+  local n
+  n="$(grep -c 'started tunnel' "$TUNNEL_LOG" 2>/dev/null)"
+  echo "${n:-0}"
+}
+
+# Wait for this ngrok to be serving: its own "started tunnel" line, or the
+# address answering. $1 = the count before it started, $2 = seconds, $3 = pid.
+await_ngrok() {
+  local n0="$1" secs="$2" pid="$3" i
+  for (( i = 0; i < secs; i++ )); do
+    (( $(ngrok_started) > n0 )) && return 0
+    kill -0 "$pid" 2>/dev/null || return 1
+    (( i % 5 == 4 )) && url_answers "https://$DOMAIN" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+# ngrok's own last complaint, which is what to show when it will not start -
+# no authtoken, the domain belonging to another account, or this domain
+# already online from another copy of ngrok.
+ngrok_error() {
+  grep -E 'lvl=(eror|crit)|ERR_NGROK|ERROR:' "$TUNNEL_LOG" 2>/dev/null | tail -1 \
+    | sed -e 's/.*err="\{0,1\}//' -e 's/"$//' | cut -c1-240
+}
+
+ngrok_loop() {
+  local pid n0 t0 el fails=0 pause had=0 said="" url="https://$DOMAIN" where=()
+  # ngrok 3.16+ takes --url, older 3.x --domain; ask which this one knows
+  if "$NGROK" http --help 2>&1 | grep -q -- "--url"; then
+    where=(--url "$url")
+  else
+    where=(--domain "$DOMAIN")
+  fi
+  while true; do
+    n0="$(ngrok_started)"
+    t0=$(date +%s)
+    "$NGROK" http "$PORT" "${where[@]}" --log stdout --log-format logfmt \
+      < /dev/null >> "$TUNNEL_LOG" 2>&1 &
+    pid=$!
+    echo "$pid" > "$TUNNEL_PIDFILE"
+    if await_ngrok "$n0" 45 "$pid"; then
+      fails=0
+      echo "$url" > "$PUBLIC_URL_FILE"
+      if [[ "$had" -eq 1 ]]; then
+        echo -e "\n${YLW}  warn${NC} the tunnel dropped and reconnected"
+        echo -e "${GRN}  ok${NC} public    $url   (same address as before)"
+      fi
+      had=1
+      supervise "$pid" "" "$url"
+    else
+      fails=$(( fails + 1 ))
+    fi
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null
+    el=$(( $(date +%s) - t0 ))
+    echo "[$(date "+%F %T")] ngrok exited after ${el}s (consecutive failures: $fails)" \
+      >> "$TUNNEL_LOG"
+    # say why once, not on every retry
+    if (( fails > 0 )); then
+      local why; why="$(ngrok_error)"
+      if [[ -n "$why" && "$why" != "$said" ]]; then
+        echo -e "${YLW}  warn${NC} ngrok: $why"
+        said="$why"
+      fi
+    fi
+    pause=$(( fails <= 1 ? 3 : fails * 10 ))
+    (( pause > 60 )) && pause=60
+    sleep "$pause"
+  done
+}
+
+start_ngrok() {
+  say "Opening the public link (ngrok, permanent address)"
+  ngrok_loop &
+  TUNNEL_PID=$!
+  local url="https://$DOMAIN" i
+  for (( i = 0; i < 60; i++ )); do
+    [[ -s "$PUBLIC_URL_FILE" ]] && break
+    kill -0 "$TUNNEL_PID" 2>/dev/null || break
+    sleep 1
+  done
+  if [[ -s "$PUBLIC_URL_FILE" ]]; then
+    ok "public    $url"
+    check_public "$url"
+    ok "permanent this address stays the same across reconnects and restarts"
+    warn "no password in front of it - anyone with the link can start runs here"
+    warn "ngrok's free plan shows a one-time warning page to each new browser;"
+    warn "press Visit Site once and it does not come back"
+  else
+    # the retry loop has already printed ngrok's own reason, if it gave one
+    warn "ngrok did not come up on $DOMAIN"
+    warn "it keeps retrying in the background; the log is $TUNNEL_LOG"
+  fi
+}
+
 start_tunnel() {
-  command -v ssh >/dev/null || die "ssh not found, needed for --public"
   mkdir -p results/logs
   : > "$TUNNEL_LOG"
+  rm -f "$PUBLIC_URL_FILE"
+  if [[ -n "$DOMAIN" ]]; then
+    if NGROK="$(find_ngrok)"; then
+      PROVIDER=ngrok
+      start_ngrok
+      return
+    fi
+    warn "NGROK_DOMAIN is $DOMAIN but the ngrok program was not found"
+    warn "(looked on PATH, ./bin, ~/bin and ~/.local/bin) - using localhost.run,"
+    warn "whose address is not permanent"
+  fi
+  command -v ssh >/dev/null || die "ssh not found, needed for --public"
   TUNNEL_TARGET="$(pick_target)"
   echo "$TUNNEL_TARGET" > "$TUNNEL_TARGETFILE"
 
@@ -318,8 +467,10 @@ start_tunnel() {
     check_public "$url"
     if [[ "$target" == nokey@* ]]; then
       warn "anonymous tunnel, so a reconnect gets a different address"
-      warn "(an SSH key on this machine would keep the address stable)"
+    else
+      warn "localhost.run keeps this address for a while, but not for good"
     fi
+    warn "for a permanent address, set up ngrok: ./web_ui.sh --help"
     warn "no password in front of it - anyone with the link can start runs here"
     ok "current   $PUBLIC_URL_FILE always holds the live address"
   else
@@ -334,7 +485,8 @@ start_tunnel() {
 url_answers() {
   LAST_CODE=""
   command -v curl >/dev/null || return 0
-  LAST_CODE="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 "$1" 2>/dev/null)"
+  LAST_CODE="$(curl -sS -o /dev/null -w "%{http_code}" --max-time 25 \
+               -H "ngrok-skip-browser-warning: 1" "$1" 2>/dev/null)"
   [[ "$LAST_CODE" == "200" ]]
 }
 
@@ -368,6 +520,7 @@ if [[ "$DETACH" -eq 1 ]]; then
   # sets up the tunnel exactly the way the foreground one does
   CMD="cd $(printf %q "$PROJECT_DIR") && exec bash web_ui.sh --port $PORT --host $HOST"
   [[ "$PUBLIC" -eq 1 ]] && CMD="$CMD --public"
+  [[ -n "$DOMAIN" ]] && CMD="$CMD --domain $(printf %q "$DOMAIN")"
   say "Starting the UI detached"
   if command -v tmux >/dev/null; then
     tmux has-session -t "$SESSION" 2>/dev/null \
