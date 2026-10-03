@@ -165,15 +165,20 @@ check("ask_verdict (llm_only, singh, qwen_kb, hybrid)",
       last_options().get("num_ctx", 0) > ollama_ctx.FLOOR,
       "still on the 2048 default: %s" % last_options())
 
-import mcq_ontology_rag as M
-
-det = M.MCQOntologyDetector.__new__(M.MCQOntologyDetector)
-det.max_tokens = 700
-det._ask(LONG, where="mcq questions")
-check("MCQOntologyDetector._ask (mcq)",
-      last_options().get("num_ctx", 0) > ollama_ctx.FLOOR, last_options())
-
 import llm_judge as J
+import mcq_ontology as M
+
+# the MCQ ontology LLM speaks to Ollama through llm_judge, not requests
+_sent_j = []
+_real_jpost = J._post
+J._post = lambda path, payload, timeout: (_sent_j.append(payload) or
+                                          {"response": "A", "logprobs": []})
+M.judge(LONG, M.load_ontology())
+J._post = _real_jpost
+check("mcq_ontology.judge (mcq)",
+      _sent_j and _sent_j[-1]["options"].get("num_ctx", 0)
+      >= ollama_ctx.estimate_tokens(LONG),
+      _sent_j[-1]["options"] if _sent_j else "nothing sent")
 
 check("llm_judge and the benchmark agree on the estimate",
       J.estimate_tokens(LONG) == ollama_ctx.estimate_tokens(LONG))

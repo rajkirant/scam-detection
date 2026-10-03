@@ -2,22 +2,20 @@
 """
 evaluate_mcq_ontology.py
 
-Evaluate the MCQ-scored ontology detector on a labelled transcript CSV.
-Output format matches combined_evaluate.py so the numbers drop straight into
-the benchmark table.
+The benchmark's `mcq` baseline: the MCQ ontology LLM over a labelled
+transcript CSV. One question - the call's category - from the ontology JSON,
+one request per call; see mcq_ontology.py for how the answer becomes a
+category, a P(scam) and a verdict. The metric line matches combined_evaluate.py
+so the numbers drop straight into the benchmark table, and the per-call CSV
+carries <system>_pct (P(scam)) so the run's Scores tab plots it.
 
 Usage:
-    python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_scam_vs_legit_794.csv --limit 20 --debug
-    python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_scam_vs_legit_794.csv
-
-Two calls to the model per transcript (routing, then the branch questions),
-so expect roughly twice the wall time of a single-prompt baseline.
+    python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_english_646.csv --limit 20 --debug
+    python scripts/evaluate_mcq_ontology.py --csv datasets/huggingface_1600.csv
 """
 
 import argparse
 import csv
-import json
-import os
 import random
 import sys
 import time
@@ -30,13 +28,18 @@ csv.field_size_limit(sys.maxsize)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from mcq_ontology_rag import MCQOntologyDetector, DEFAULT_ONTOLOGY
+import mcq_ontology as MCQ                                     # noqa: E402
 
 SEED = 42
-SCAM_WORDS = {"scam", "fraud", "fraudulent", "1", "true", "yes"}
 
 
 def load(csv_path, limit=None):
+    """(text, "Fraud"|"Normal") in the benchmark's order.
+
+    The order is fixed - seed 42, a balanced sample for --limit, then a
+    shuffle - because run_all.sh's idx:<n> and check_one.py --idx reproduce
+    it to pick out the n-th call of a run. Do not change it.
+    """
     p = Path(csv_path)
     if not p.exists():
         sys.exit("ERROR: not found: %s" % csv_path)
@@ -83,73 +86,107 @@ def show(name, m):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", required=True)
-    ap.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
+    ap.add_argument("--ontology", default=str(MCQ.DEFAULT_ONTOLOGY))
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default=None)
-    ap.add_argument("--max-tokens", type=int, default=700)
-    ap.add_argument("--no-verify-quotes", action="store_true",
-                    help="skip checking quotes against the transcript "
-                         "(use to measure how much the check is worth)")
-    ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--system", default="mcq_ontology",
+                    help="column name in the per-call CSV (run_all.sh passes "
+                         "mcq_ontology__stripped for the content-deletion pass)")
+    ap.add_argument("--debug", action="store_true",
+                    help="print every option's probability for the first calls")
     args = ap.parse_args()
 
+    try:
+        onto = MCQ.load_ontology(args.ontology)
+    except ValueError as e:
+        sys.exit("ERROR %s" % e)
     data = load(args.csv, args.limit)
     n_fraud = sum(1 for _, l in data if l == "Fraud")
 
     print("=" * 74)
-    print("MCQ ontology evaluation - %d calls (%d scam, %d non-scam)"
+    print("MCQ ontology LLM - %d calls (%d scam, %d non-scam)"
           % (len(data), n_fraud, len(data) - n_fraud))
     print("  dataset : %s" % args.csv)
     print("  ontology: %s" % args.ontology)
+    print("  question: %s  (%d options, one request per call)"
+          % (onto["prompt"], len(onto["options"])))
+    for i, o in enumerate(onto["options"]):
+        print("    %s %-5s %s" % (MCQ.LETTERS[i], o["verdict"], o["text"][:62]))
     import ollama_ctx
     print("  model   : %s" % ollama_ctx.MODEL)
-    print("  quote verification: %s" % ("OFF" if args.no_verify_quotes else "on"))
+    built = (onto.get("built_from") or {}).get("dataset")
+    if built and Path(built).name == Path(args.csv).name:
+        print("  NOTE the options were built from this dataset's own "
+              "categories: the model only has\n       to recognise the topic, "
+              "so read the score with that in mind.")
+    print("  context window %s for the run"
+          % MCQ.presize([t for t, _ in data], onto))
     print("=" * 74)
 
-    det = MCQOntologyDetector(args.ontology,
-                              max_tokens=args.max_tokens,
-                              verify_quotes=not args.no_verify_quotes,
-                              debug=args.debug)
-
-    rows, records = [], []
+    rows, results = [], []
     t0 = time.time()
+    answers = MCQ.judge_all([t for t, _ in data], onto)
     for i, (text, true) in enumerate(data, 1):
         try:
-            res = det.detect(text)
-        except Exception as exc:
+            res = next(answers)
+        except StopIteration:
+            break
+        except RuntimeError as exc:
+            # Ollama went away: stop rather than score the rest as Normal
             print("    ! call %d failed: %s" % (i, exc))
-            res = {"call_type": "other", "raw_score": 0.0, "normalised": 0.0,
-                   "band": "uncertain", "predicted": "Normal", "detail": []}
-        rows.append((res["predicted"], true))
-        records.append((i - 1, true, text, res))
-
+            break
+        pred = res["verdict"] or "Normal"     # unreadable scores Normal, as
+        rows.append((pred, true))             # every other LLM system does
+        results.append(res)
         if args.debug and i <= 3:
             print("\n  --- call %d (true: %s) ---" % (i, true))
-            print(det.explain(res))
-            print()
+            for j, (o, p) in enumerate(zip(onto["options"], res["probs"])):
+                print("    %s %5.1f%%  %-5s %s" % (MCQ.LETTERS[j], 100 * p,
+                                               o["verdict"], o["id"]))
+            print("    " + MCQ.explain(res, onto))
         if i % 20 == 0:
-            print("    MCQ: %d/%d" % (i, len(data)))
+            el = time.time() - t0
+            print("    MCQ: %d/%d  (%.2fs a call)" % (i, len(data), el / i),
+                  flush=True)
 
     elapsed = time.time() - t0
     m = metrics(rows)
-
+    hows = [r["how"] for r in results]
     print("\n" + "=" * 74)
     show("mcq_ontology", m)
-    print("    (%.0fs, %.1fs per call)" % (elapsed, elapsed / max(1, len(data))))
-    det.stats.report()
+    print("    (%.0fs, %.2fs per call)" % (elapsed, elapsed / max(1, len(rows))))
+    print("    P(scam) measured from logprobs on %d/%d calls%s"
+          % (hows.count("logprobs"), len(hows),
+             "; %d unreadable, scored Normal" % hows.count("unreadable")
+             if "unreadable" in hows else ""))
+    print()
+    for line in MCQ.category_table(onto, [r["choice"] for r in results],
+                                   [t == "Fraud" for _, t in rows]):
+        print("    " + line)
+    try:
+        from combined_evaluate import show_score_ranges
+        show_score_ranges(args.system, rows,
+                          [None if r["p_scam"] is None else 100 * r["p_scam"]
+                           for r in results])
+    except ImportError:
+        pass
 
     out = args.out or ("results/mcq_ontology_results_%d.csv" % len(data))
     Path(out).parent.mkdir(parents=True, exist_ok=True)
+    s = args.system
     with open(out, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
-        w.writerow(["idx", "true", "predicted", "call_type", "raw_score",
-                    "normalised", "band", "text", "detail_json"])
-        for idx, true, text, res in records:
-            w.writerow([idx, true, res["predicted"], res["call_type"],
-                        res.get("raw_score"), res.get("normalised"),
-                        res.get("band"), text.replace("\n", " ")[:400],
-                        json.dumps(res.get("detail", []))])
-    print("  per-call results: %s" % out)
+        # <s>_pct and <s>_category are read by the web UI: the first is
+        # plotted on the Scores tab, the second shown as plain text
+        w.writerow(["idx", "true", "text", s, s + "_pct", s + "_category",
+                    s + "_why"])
+        for idx, ((text, true), (pred, _), res) in enumerate(
+                zip(data, rows, results)):
+            w.writerow([idx, true, text.replace("\n", " ")[:400], pred,
+                        "" if res["p_scam"] is None
+                        else round(100 * res["p_scam"], 2),
+                        res["category"] or "", MCQ.explain(res, onto)])
+    print("\n  per-call results: %s" % out)
     print("=" * 74)
 
 
