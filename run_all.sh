@@ -81,7 +81,7 @@ BL_LABELS=(
   "Qwen-KB                   learns a KB from a held-out split, k-fold"
   "Hybrid                    Web-RAG + Qwen-KB over one shared KB"
   "Ontology RAG              scam_ontology.json"
-  "MCQ ontology              mcq_ontology.json, 2 calls per transcript"
+  "MCQ ontology LLM          one question, the call's category (mcq_ontology.json)"
   "BERT                      fine-tuned classifier, no LLM"
 )
 
@@ -733,8 +733,8 @@ fi
 if [[ "$RUN_ONTOLOGY" -eq 1 ]]; then
   DEBUG_FLAG=""; [[ "$SINGLE_MODE" -eq 1 ]] && DEBUG_FLAG="--debug"
   if [[ "$SINGLE_MODE" -eq 1 ]]; then
-    warn "evaluate_ontology.py (term-list) has no per-question explain output;"
-    warn "choose baseline 'mcq' instead to see the Agent/Caller breakdown"
+    warn "evaluate_ontology.py (term-list) has no per-call explain output;"
+    warn "choose baseline 'mcq' instead to see the probability of every option"
   fi
   # shellcheck disable=SC2086
   run_step "ontology" python -u scripts/evaluate_ontology.py \
@@ -761,6 +761,7 @@ if [[ "$RUN_MCQ" -eq 1 ]]; then
     # shellcheck disable=SC2086
     run_step "mcq_stripped" python -u scripts/evaluate_mcq_ontology.py \
       --csv "$ARG_STRIPPED" --ontology "$MCQ_ONTOLOGY" \
+      --system mcq_ontology__stripped \
       --out "${MCQ_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
   fi
 fi

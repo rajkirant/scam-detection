@@ -48,7 +48,7 @@ The ten baselines, in escalating order:
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
-| `mcq` | MCQ ontology, two LLM calls per transcript | yes |
+| `mcq` | MCQ ontology LLM: one question, the call's category, from `knowledge/mcq_ontology.json`; P(scam) from the model's probabilities | yes |
 | `bert` | fine-tuned BERT classifier, k-fold CV | no (but wants the GPU) |
 
 ---
@@ -626,17 +626,63 @@ Two things the page shows that the benchmark does not:
   settles for Normal. Here it says so, because on a single call "Normal"
   should not sometimes mean "the model did not answer".
 
+### MCQ ontology page
+
+The classifier after the LLM judge, and the `mcq` baseline from the Benchmark
+page asked one call at a time. It starts from a JSON file in `knowledge/`
+(picked under *Ontology* on the left; `mcq_ontology.json` by default) that
+holds **one question, the call's category**, and a few options. Each option is
+a category of call with a verdict, scam or legit. The default file's eight
+options are the categories `huggingface_1600`'s transcripts are filed under:
+Social Security, refund, computer support and prize calls are scam; delivery,
+insurance, sales and wrong-number calls are legitimate.
+
+**Ask** puts the transcript, the question and the lettered options to the
+model, with no retrieval. The model answers one letter, and the probability it
+put on every letter comes back, so the answer is a bar per option:
+- **Category:** the most likely option.
+- **P(scam):** the total on the scam options.
+- **Verdict:** scam at 50% or more.
+
+So a call the model splits between two scam categories is still clearly a
+scam, and one split between a scam and a legitimate category shows up as
+uncertain.
+
+The other tabs:
+- **Score a dataset:** the shared run below. Its card adds a table of which
+  category the model put the scam and legitimate calls in.
+- **Edit the JSON:** the file itself. It is saved only if it is a valid
+  one-question ontology (2–12 options, each with a `text` and a `verdict`, at
+  least one of each verdict), and never over `scam_ontology.json` or
+  `scam_patterns.json`. Save edits under your own name: the shipped file is
+  tracked by git.
+- **Build options from a dataset** (left): makes a new file from the
+  categories in a dataset's transcripts. Only datasets with a category column
+  qualify: `huggingface_1600` (`type`), `everything_7013` (`scam_type`) and the
+  fold files. Each category gets the verdict most of its calls carry, scam
+  and legitimate options are interleaved so a preference for early letters
+  cannot line up with one verdict, and with *describe* ticked the model reads
+  three calls of each category and writes the option text.
+
+**Read the score with its source in mind.** Options built from a dataset's
+own categories only ask the model to recognise the topic. On
+`huggingface_1600`, the topic alone decides the label, and the score card says
+so when the options came from the dataset being scored. Other datasets and
+the content-deletion test are the fairer reads. `scambait_synthetic_196`'s
+topics hold one scam and one legitimate call each, so Build refuses them: the
+category says nothing there.
+
 ### Scoring a whole dataset
 
-Every one of the four model pages has a **Score a dataset** tab: pick a
+Every one of the five model pages has a **Score a dataset** tab: pick a
 dataset from the dropdown, press the button, and the model is put to every
 call in it. What comes back is the confusion matrix and what falls out of it —
 accuracy, precision, recall, F1, balanced accuracy, specificity — plus a
 sample of the calls it got wrong and a per-call CSV in `results/`.
 
-All four go through `scripts/eval_common.py`, deliberately: four confusion
-matrices computed four ways could not be compared, and comparing them is the
-only reason to have four pages.
+All of them go through `scripts/eval_common.py`, deliberately: confusion
+matrices computed different ways could not be compared, and comparing them is
+the only reason to have several pages.
 
 Three things the card shows that an accuracy on its own does not:
 
@@ -807,13 +853,26 @@ python scripts/bert_baseline.py cv --csv datasets/scambait_synthetic_196.csv \
 for training on one dataset and evaluating on another, and `--cpu` to force the
 CPU.
 
-### 4. MCQ ontology (two LLM calls per transcript)
+### 4. MCQ ontology LLM (one question, one call per transcript)
 
 ```bash
 python scripts/evaluate_mcq_ontology.py \
-  --csv datasets/scambait_synthetic_196.csv \
-  --limit 20 --debug
+  --csv datasets/zhi_english_646.csv \
+  --limit 20 --debug                     # the benchmark's mcq step
+
+python scripts/mcq_ontology.py ask --text "Hello, this is the Social Security office..."
+python scripts/mcq_ontology.py build --csv datasets/huggingface_1600.csv \
+  --out knowledge/mcq_huggingface.json --describe   # options from its categories
+python scripts/test_mcq_ontology.py      # offline: a fake Ollama
 ```
+
+The question and options come from `knowledge/mcq_ontology.json` (`--ontology`
+for another). The model answers one letter, and its probability on every
+letter gives the category and P(scam), the total on the scam options. See
+[the MCQ ontology page](#mcq-ontology-page). The run prints which category the
+scam and legitimate calls were put in, the P(scam) band table, and a per-call
+CSV with `mcq_ontology_pct` (plotted on the run's Scores tab) and
+`mcq_ontology_category`.
 
 ### 5. Re-print the table for any past run
 
@@ -906,8 +965,10 @@ python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19
 python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19 --runs 5
 ```
 
-`--idx` uses the same shuffled order (seed 42) as `evaluate_mcq_ontology.py`,
-so idx 19 here is the same call as idx 19 in a prior `--limit 40` run.
+It runs the MCQ ontology LLM on that one call and prints the probability on
+every option. `--idx` uses the same shuffled order (seed 42) as
+`evaluate_mcq_ontology.py`, so idx 19 here is the same call as idx 19 in a
+prior `--limit 40` run.
 `--runs N` repeats the same transcript to show how much the verdict moves
 between calls. Use `--raw-row` for a row by its position in the CSV as it sits
 on disk.
@@ -1112,7 +1173,7 @@ is one with `config.json`, and each listing skips the other kind.
 
 ### 14. Score a whole dataset from the command line
 
-The command line behind the **Score a dataset** tab on all four model pages
+The command line behind the **Score a dataset** tab on all five model pages
 ([section A](#scoring-a-whole-dataset)). Same subcommand, same flags, same
 numbers out:
 
@@ -1123,6 +1184,7 @@ python scripts/bert_classify.py   evaluate --name bank-bert   --csv datasets/zhi
 python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40
 python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40 \
     --profile zhi-prompt
+python scripts/mcq_ontology.py    evaluate --csv datasets/zhi_english_646.csv --limit 40
 ```
 
 Each prints a running tally, then the confusion matrix next to what

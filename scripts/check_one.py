@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-check_one.py - run the MCQ ontology detector on a single row from a dataset.
+check_one.py - run the MCQ ontology LLM on a single row from a dataset, and
+show the probability it put on every option.
 
 Usage:
     python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19
     python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19 --runs 5
-    python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19
-    python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19 --no-label
+    python scripts/check_one.py --csv datasets/huggingface_1600.csv --raw-row 0
 
 --idx uses the SAME shuffled order as evaluate_mcq_ontology.py (seed 42, same
 --limit), so idx 19 here is the same call as idx 19 in a prior --limit 40 run.
@@ -29,7 +29,7 @@ from pathlib import Path
 csv.field_size_limit(sys.maxsize)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from mcq_ontology_rag import MCQOntologyDetector, DEFAULT_ONTOLOGY
+import mcq_ontology as MCQ                                     # noqa: E402
 
 
 def load_shuffled(csv_path, limit=None, seed=42):
@@ -75,9 +75,7 @@ def main():
     ap.add_argument("--limit", type=int, default=40,
                     help="must match the --limit used when --idx was read off a prior run")
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
-    ap.add_argument("--no-label", action="store_true",
-                    help="disable the speaker-labelling pre-pass, for comparison")
+    ap.add_argument("--ontology", default=str(MCQ.DEFAULT_ONTOLOGY))
     ap.add_argument("--runs", type=int, default=1,
                     help="repeat the same transcript N times to check stability")
     args = ap.parse_args()
@@ -100,19 +98,27 @@ def main():
     print("text      :", text[:200] + ("..." if len(text) > 200 else ""))
     print("=" * 74)
 
-    det = MCQOntologyDetector(args.ontology, debug=True,
-                              label_speakers=not args.no_label)
+    try:
+        onto = MCQ.load_ontology(args.ontology)
+    except ValueError as e:
+        sys.exit("ERROR %s" % e)
+    print(onto["prompt"])
 
     verdicts = []
     for i in range(args.runs):
         if args.runs > 1:
             print("\n--- run %d/%d ---" % (i + 1, args.runs))
-        result = det.detect(text)
-        print(det.explain(result))
-        correct = result["predicted"] == true_label
-        print("predicted:", result["predicted"],
+        result = MCQ.judge(text, onto)
+        for j, (o, p) in enumerate(zip(onto["options"], result["probs"])):
+            print("  %s %5.1f%%  %-5s  %s%s"
+                  % (MCQ.LETTERS[j], 100 * p, o["verdict"], o["text"][:64],
+                     "  <-" if j == result["choice"] else ""))
+        print(MCQ.explain(result, onto))
+        predicted = result["verdict"] or "Normal"
+        correct = predicted == true_label
+        print("predicted:", predicted,
               " correct" if correct else " WRONG (true: %s)" % true_label)
-        verdicts.append(result["predicted"])
+        verdicts.append(predicted)
 
     if args.runs > 1:
         print("\n" + "=" * 74)
