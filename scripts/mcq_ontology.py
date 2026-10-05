@@ -37,6 +37,16 @@ is then that letter, P(scam) 1 or 0, and the run says so.
     python scripts/mcq_ontology.py build --csv datasets/huggingface_1600.csv \\
         --out knowledge/mcq_huggingface.json --describe
 
+Your own question can be trained on a dataset too: the model answers it in a
+few words about a sample of calls, groups the answers into a few options, and
+counts the scam and legitimate calls on each; the result is saved in
+knowledge/questions/ and asking it later uses the options in that file.
+
+    python scripts/mcq_ontology.py train-question --csv datasets/huggingface_1600.csv \\
+        --question "What does the caller ask for?" --out knowledge/questions/asks.json
+    python scripts/mcq_ontology.py question --saved knowledge/questions/asks.json \\
+        --text "Hello, this is your bank ..."
+
 Standard library only (Ollama is spoken to through llm_judge), so web_ui.py
 can import it without the venv.
 """
@@ -548,8 +558,56 @@ def parse_options(text):
     return " ".join(text.split()), []
 
 
-def ask_question(transcript, question_text, timeout=300):
+def _mcq_prompt(transcript, stem, opts):
+    n = len(opts)
+    return HEAD.format(transcript=transcript) + "\n".join(
+        [stem or "Which of these is right?"]
+        + ["%s - %s" % (LETTERS[i], o) for i, o in enumerate(opts)]
+        + ["Answer with exactly one letter, A to %s." % LETTERS[n - 1],
+           "Answer:"])
+
+
+def choose(transcript, stem, opts, timeout=300):
+    """Put `stem` to the model as a multiple choice over `opts` (texts) about
+    one call. One request. (probs, choice, how, answered, prompt): probs
+    sums to 1 when read; choice is None when no letter could be read."""
+    n = len(opts)
+    prompt = _mcq_prompt(transcript, stem, opts)
+    text, steps = generate(prompt, ANSWER_TOKENS, timeout=timeout)
+    has_lp = any(alts for _, alts in steps)
+    if not has_lp:
+        _note_no_logprobs()
+    probs, how = None, "unreadable"
+    li = next((i for i, (tok, _) in enumerate(steps)
+               if answer_letter(tok, n)), None)
+    if li is not None:
+        mass = [0.0] * n
+        for tok, lp in steps[li][1]:
+            k = answer_letter(tok, n)
+            if k:
+                mass[LETTERS.index(k)] += math.exp(lp)
+        if has_lp and sum(mass) > 0:
+            probs, how = [x / sum(mass) for x in mass], "logprobs"
+        else:
+            probs, how = [0.0] * n, "letter"
+            probs[LETTERS.index(answer_letter(steps[li][0], n))] = 1.0
+    elif not steps:
+        k = answer_letter((text.split() or [""])[0], n)
+        if k:
+            probs, how = [0.0] * n, "letter"
+            probs[LETTERS.index(k)] = 1.0
+    probs = probs or [0.0] * n
+    choice = (max(range(n), key=lambda i: probs[i])
+              if how != "unreadable" else None)
+    return probs, choice, how, text, prompt
+
+
+def ask_question(transcript, question_text, options=None, timeout=300):
     """Answer one typed question about one call. One request.
+
+    `options` - option texts, e.g. a saved question's - makes it multiple
+    choice over those, and the question text is then taken as it is. Without
+    them the question's own listed options are used, if it lists any.
 
     Returns {"mode": "options" | "free", "question": the stem, ...}:
       options   "options": [{"letter", "text", "p"}], "choice", "how"
@@ -557,67 +615,319 @@ def ask_question(transcript, question_text, timeout=300):
       free      "answer": the model's own words, "truncated": whether it ran
                 out of room
     """
-    stem, opts = parse_options(question_text)
+    if options:
+        stem, opts = " ".join(str(question_text or "").split()), list(options)
+    else:
+        stem, opts = parse_options(question_text)
     if not stem and not opts:
         raise ValueError("type a question")
     if len(opts) > MAX_OPTIONS:
         raise ValueError("at most %d options - that question lists %d"
                          % (MAX_OPTIONS, len(opts)))
-    head = HEAD.format(transcript=transcript)
     if opts:
-        n = len(opts)
-        prompt = head + "\n".join(
-            [stem or "Which of these is right?"]
-            + ["%s - %s" % (LETTERS[i], o) for i, o in enumerate(opts)]
-            + ["Answer with exactly one letter, A to %s." % LETTERS[n - 1],
-               "Answer:"])
-        text, steps = generate(prompt, ANSWER_TOKENS, timeout=timeout)
-        has_lp = any(alts for _, alts in steps)
-        if not has_lp:
-            _note_no_logprobs()
-        probs, how = None, "unreadable"
-        li = next((i for i, (tok, _) in enumerate(steps)
-                   if answer_letter(tok, n)), None)
-        if li is not None:
-            mass = [0.0] * n
-            for tok, lp in steps[li][1]:
-                k = answer_letter(tok, n)
-                if k:
-                    mass[LETTERS.index(k)] += math.exp(lp)
-            if has_lp and sum(mass) > 0:
-                probs, how = [x / sum(mass) for x in mass], "logprobs"
-            else:
-                probs, how = [0.0] * n, "letter"
-                probs[LETTERS.index(answer_letter(steps[li][0], n))] = 1.0
-        elif not steps:
-            k = answer_letter((text.split() or [""])[0], n)
-            if k:
-                probs, how = [0.0] * n, "letter"
-                probs[LETTERS.index(k)] = 1.0
-        probs = probs or [0.0] * n
-        choice = (max(range(n), key=lambda i: probs[i])
-                  if how != "unreadable" else None)
+        probs, choice, how, text, prompt = choose(transcript, stem, opts,
+                                                  timeout)
         return {"mode": "options", "question": stem,
                 "options": [{"letter": LETTERS[i], "text": o, "p": probs[i]}
                             for i, o in enumerate(opts)],
                 "choice": choice, "how": how, "answered": text,
                 "prompt_tokens_estimated": ollama_ctx.estimate_tokens(prompt)}
 
-    prompt = head + ("Question: %s\n\nAnswer the question about this call. "
-                     "Use what the transcript says; where it does not say, "
-                     "answer from your own knowledge and say that you are. "
-                     "Keep it to a few sentences.\nAnswer:" % stem)
+    prompt = HEAD.format(transcript=transcript) + (
+        "Question: %s\n\nAnswer the question about this call. "
+        "Use what the transcript says; where it does not say, "
+        "answer from your own knowledge and say that you are. "
+        "Keep it to a few sentences.\nAnswer:" % stem)
     num_ctx = ollama_ctx.fit_num_ctx(prompt, MAX_ANSWER_TOKENS,
                                      where="mcq question")
-    try:
-        out = llm_judge.generate(prompt, max_tokens=MAX_ANSWER_TOKENS,
-                                 num_ctx=num_ctx, timeout=timeout)
-    except RuntimeError as e:
-        raise RuntimeError(str(e))
+    out = llm_judge.generate(prompt, max_tokens=MAX_ANSWER_TOKENS,
+                             num_ctx=num_ctx, timeout=timeout)
     return {"mode": "free", "question": stem,
             "answer": (out.get("response") or "").strip(),
             "truncated": out.get("done_reason") == "length",
             "prompt_tokens_estimated": ollama_ctx.estimate_tokens(prompt)}
+
+
+# ------------------------------------------- a question trained on a dataset
+# A question typed on the page can be trained on a dataset, and saved: the
+# model answers it in a few words about a balanced sample of the dataset's
+# calls, then groups those answers into a few options, and each sampled call
+# is put back to the model as a multiple choice over them, which counts how
+# many scam and legitimate calls land on each option. The question, its
+# options and those counts go to knowledge/questions/<name>.json; asking the
+# saved question later uses the options in that file.
+#
+# A question that already lists its own options keeps them: training then
+# only does the last step, the counting.
+QUESTIONS_DIR = KNOWLEDGE_DIR / "questions"
+TRAIN_CALLS = 20
+TRAIN_OPTIONS = 6
+SHORT_ANSWER_TOKENS = 40
+GROUP_TOKENS = 300
+NOT_SAID = "not said"
+
+
+def short_answer(transcript, stem, timeout=300):
+    """The model's answer to the question about one call, in a few words."""
+    prompt = HEAD.format(transcript=transcript) + (
+        "Question: %s\n\nAnswer in a few words - at most 12 - from what the "
+        "transcript says. If the transcript does not say, answer \"%s\".\n"
+        "Short answer:" % (stem, NOT_SAID))
+    num_ctx = ollama_ctx.fit_num_ctx(prompt, SHORT_ANSWER_TOKENS,
+                                     where="question training")
+    out = llm_judge.generate(prompt, max_tokens=SHORT_ANSWER_TOKENS,
+                             num_ctx=num_ctx, timeout=timeout)
+    line = (out.get("response") or "").strip().split("\n")[0]
+    return line.strip().strip("\"'*").strip().rstrip(".") or NOT_SAID
+
+
+def _clean_option(line):
+    m = _OPT_LINE.match(line)
+    text = m.group(2) if m else line
+    text = re.sub(r"\s*\(\s*\d+\s*(?:answers?|calls?)?\s*\)\s*$", "", text)
+    text = text.strip().strip("\"'*").strip().rstrip(".")
+    return " ".join(text.split())[:120]
+
+
+def group_answers(stem, answers, max_options=TRAIN_OPTIONS, timeout=300):
+    """A few options that cover the short answers, written by the model.
+
+    Falls back to the most common answers themselves when the model's list
+    has fewer than two usable lines.
+    """
+    listed = "\n".join("%d. %s" % (i, a) for i, a in enumerate(answers, 1))
+    prompt = (
+        "A model was asked this question about %d different phone calls:\n\n"
+        "  %s\n\nIts short answers, one per call:\n\n%s\n\n"
+        "Group these answers into at most %d options for a multiple-choice "
+        "version of the question. Each option is a short phrase of at most 8 "
+        "words that covers several of the answers. Together the options must "
+        "cover every answer, and no two may mean the same thing. If some "
+        "answers say the call does not say, keep one option for that.\n"
+        "Write one option per line, each starting with \"- \", and nothing "
+        "else.\nOptions:" % (len(answers), stem, listed, max_options))
+    num_ctx = ollama_ctx.fit_num_ctx(prompt, GROUP_TOKENS,
+                                     where="question training")
+    out = llm_judge.generate(prompt, max_tokens=GROUP_TOKENS, num_ctx=num_ctx,
+                             timeout=timeout)
+    opts, seen = [], set()
+    for line in (out.get("response") or "").split("\n"):
+        o = _clean_option(line)
+        if not o or o.lower().rstrip(":") in ("options", "option") \
+                or o.lower() in seen:
+            continue
+        seen.add(o.lower())
+        opts.append(o)
+    opts = opts[:max_options]
+    if len(opts) >= 2:
+        return opts, "grouped by the model"
+    first = {}
+    for a in answers:
+        first.setdefault(a.lower(), a)
+    common = [first[a] for a, _ in Counter(a.lower() for a in answers)
+              .most_common(max_options)]
+    if len(common) < 2:
+        raise ValueError("every call got the same answer (%r), so there is "
+                         "nothing to make options from - ask something the "
+                         "calls differ on" % (answers[0] if answers else ""))
+    return common, "the most common answers (the model's grouping was unusable)"
+
+
+def sample_calls(csv_path, calls=TRAIN_CALLS, seed=42):
+    """A balanced random sample: [(text, is_scam)], half of each label where
+    the dataset has enough of both."""
+    rows = dataset_io.read_rows(Path(csv_path))
+    tcol, lcol, _ = dataset_io.columns(rows, csv_path)
+    scam, legit = [], []
+    for r in rows:
+        t = (r[tcol] or "").strip()
+        if t:
+            (scam if dataset_io.is_scam(r[lcol]) else legit).append(t)
+    if not scam and not legit:
+        raise ValueError("%s has no transcripts" % csv_path)
+    rng = random.Random(seed)
+    k = min(calls // 2, len(scam))
+    j = min(calls - k, len(legit))
+    k = min(calls - j, len(scam))          # top up from scam if legit ran short
+    pick = ([(t, True) for t in rng.sample(scam, k)]
+            + [(t, False) for t in rng.sample(legit, j)])
+    rng.shuffle(pick)
+    return pick
+
+
+def train_question(csv_path, question_text, calls=TRAIN_CALLS,
+                   max_options=TRAIN_OPTIONS, seed=42, log=print):
+    """Train a question on a dataset; returns what goes in its JSON file."""
+    stem, listed = parse_options(question_text)
+    if not stem:
+        raise ValueError("type a question")
+    if len(listed) > MAX_OPTIONS:
+        raise ValueError("at most %d options - that question lists %d"
+                         % (MAX_OPTIONS, len(listed)))
+    if not 2 <= max_options <= MAX_OPTIONS:
+        raise ValueError("options must be between 2 and %d" % MAX_OPTIONS)
+    if not 2 <= calls <= 500:
+        raise ValueError("train on between 2 and 500 calls")
+    sample = sample_calls(csv_path, calls, seed)
+    n_scam = sum(1 for _, y in sample if y)
+    log("  question: %s" % stem)
+    log("  %d calls from %s (%d scam, %d not), seed %d"
+        % (len(sample), csv_path, n_scam, len(sample) - n_scam, seed))
+    longest = max((t for t, _ in sample), key=len)
+    t0 = time.time()
+
+    answers = []
+    if listed:
+        opts, source = listed, "listed in the question"
+        log("  the question lists its own %d options, so they are kept: "
+            "training only counts\n  which calls land on each" % len(opts))
+    else:
+        log("\n  step 1 of 3: the model answers the question about each call "
+            "in a few words")
+        for i, (text, y) in enumerate(sample, 1):
+            a = short_answer(text, stem)
+            answers.append(a)
+            log("    %2d/%d  %-5s  %s" % (i, len(sample),
+                                          "scam" if y else "legit", a[:90]))
+        log("\n  step 2 of 3: the model groups the %d answers into at most %d "
+            "options" % (len(answers), max_options))
+        opts, source = group_answers(stem, answers, max_options)
+        for i, o in enumerate(opts):
+            log("    %s  %s" % (LETTERS[i], o))
+        if source != "grouped by the model":
+            log("    (%s)" % source)
+
+    log("\n  step %s: each call is put back as a multiple choice over the "
+        "options" % ("3 of 3" if not listed else "1 of 1"))
+    ollama_ctx.fit_num_ctx(_mcq_prompt(longest, stem, opts), ANSWER_TOKENS + 2,
+                           where="question training")
+    counts = [{"scam": 0, "legit": 0} for _ in opts]
+    picked, unread, measured = [], 0, 0
+    for i, (text, y) in enumerate(sample, 1):
+        probs, choice, how, _, _ = choose(text, stem, opts)
+        measured += how == "logprobs"
+        picked.append(choice)
+        if choice is None:
+            unread += 1
+            log("    %2d/%d  %-5s  (no readable letter)"
+                % (i, len(sample), "scam" if y else "legit"))
+            continue
+        counts[choice]["scam" if y else "legit"] += 1
+        log("    %2d/%d  %-5s  %s %5.1f%%  %s"
+            % (i, len(sample), "scam" if y else "legit", LETTERS[choice],
+               100 * probs[choice], opts[choice][:70]))
+
+    options = []
+    for i, (o, c) in enumerate(zip(opts, counts)):
+        options.append({"letter": LETTERS[i], "text": o, "calls": c})
+    log("\n  %-3s %-50s %5s %5s" % ("", "option", "scam", "legit"))
+    for o in options:
+        log("  %-3s %-50s %5d %5d" % (o["letter"], o["text"][:50],
+                                      o["calls"]["scam"], o["calls"]["legit"]))
+    if unread:
+        log("  %d call%s gave no readable letter" % (unread,
+                                                    "" if unread == 1 else "s"))
+    log("  %.0fs" % (time.time() - t0))
+    return {
+        "kind": "question",
+        "prompt": stem,
+        "asked": " ".join(str(question_text).split()),
+        "options": options,
+        "options_from": source,
+        "trained_on": {"dataset": str(csv_path), "calls": len(sample),
+                       "scam": n_scam, "legit": len(sample) - n_scam,
+                       "seed": seed, "max_options": max_options,
+                       "model": llm_judge.DEFAULT_MODEL,
+                       "measured": measured, "unreadable": unread,
+                       "date": time.strftime("%Y-%m-%d %H:%M")},
+        "answers": [{"label": "scam" if y else "legit", "answer": a,
+                     "option": None if c is None else LETTERS[c]}
+                    for (_, y), a, c in zip(sample, answers or
+                                            [None] * len(sample), picked)],
+    }
+
+
+def check_question(obj):
+    """Every problem with a saved question, as sentences; [] if none."""
+    if not isinstance(obj, dict) or obj.get("kind") != "question":
+        return ['not a saved question (it needs "kind": "question")']
+    probs = []
+    if not str(obj.get("prompt") or "").strip():
+        probs.append('"prompt" - the question - is missing or empty')
+    opts = obj.get("options")
+    if not isinstance(opts, list) or not 2 <= len(opts) <= MAX_OPTIONS:
+        probs.append('"options" must be a list of 2 to %d options'
+                     % MAX_OPTIONS)
+    else:
+        for i, o in enumerate(opts, 1):
+            if not isinstance(o, dict) or not str(o.get("text") or "").strip():
+                probs.append('option %d has no "text"' % i)
+    return probs
+
+
+def load_question(path):
+    """A saved question, checked, with each option's scam share worked out
+    (None when no training call landed on it). ValueError if broken."""
+    path = Path(path)
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ValueError("no saved question at %s" % path)
+    except json.JSONDecodeError as e:
+        raise ValueError("%s is not valid JSON: %s (line %d, column %d)"
+                         % (path.name, e.msg, e.lineno, e.colno))
+    probs = check_question(obj)
+    if probs:
+        raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
+    obj["prompt"] = " ".join(str(obj["prompt"]).split())
+    for i, o in enumerate(obj["options"]):
+        o["letter"] = LETTERS[i]
+        o["text"] = " ".join(str(o["text"]).split())
+        c = o.get("calls") or {}
+        s, l = int(c.get("scam") or 0), int(c.get("legit") or 0)
+        o["calls"] = {"scam": s, "legit": l}
+        o["scam_share"] = s / (s + l) if s + l else None
+    return obj
+
+
+def list_questions():
+    """Every saved question in knowledge/questions/, newest first."""
+    out = []
+    for p in QUESTIONS_DIR.glob("*.json") if QUESTIONS_DIR.is_dir() else []:
+        try:
+            q = load_question(p)
+        except ValueError:
+            continue
+        t = q.get("trained_on") or {}
+        out.append({"path": "knowledge/questions/" + p.name, "name": p.name,
+                    "prompt": q["prompt"], "options": len(q["options"]),
+                    "dataset": Path(t.get("dataset") or "").name or None,
+                    "calls": t.get("calls"), "mtime": p.stat().st_mtime})
+    out.sort(key=lambda d: -d["mtime"])
+    return out
+
+
+def ask_saved(transcript, path, timeout=300):
+    """Ask a saved question about one call: multiple choice over the options
+    in its file. Adds each option's training counts, and `scam_lean` - the
+    answer's probabilities weighted by the share of scam calls among the
+    training calls on each option (None when no option it put weight on had
+    any)."""
+    q = load_question(path)
+    res = ask_question(transcript, q["prompt"],
+                       options=[o["text"] for o in q["options"]],
+                       timeout=timeout)
+    num = den = 0.0
+    for o, a in zip(q["options"], res["options"]):
+        a["calls"], a["scam_share"] = o["calls"], o["scam_share"]
+        if o["scam_share"] is not None and res["how"] != "unreadable":
+            num += a["p"] * o["scam_share"]
+            den += a["p"]
+    res["scam_lean"] = num / den if den > 0 else None
+    res["saved"] = {"path": "knowledge/questions/" + Path(path).name,
+                    "trained_on": q.get("trained_on"),
+                    "options_from": q.get("options_from")}
+    return res
 
 
 # ----------------------------------------------------------------------- CLI
@@ -636,7 +946,12 @@ def run_ask(args):
 
 
 def run_question(args):
-    res = ask_question(args.text, args.question)
+    if args.saved:
+        res = ask_saved(args.text, args.saved)
+    elif args.question:
+        res = ask_question(args.text, args.question)
+    else:
+        raise ValueError("pass --question, or --saved with a trained question")
     print(res["question"])
     if res["mode"] == "free":
         print(res["answer"])
@@ -646,7 +961,26 @@ def run_question(args):
                                       "  <-" if o["letter"] == (
                                           res["choice"] is not None
                                           and LETTERS[res["choice"]]) else ""))
+    if res.get("scam_lean") is not None:
+        print("  calls in training that gave these answers: %.0f%% scam"
+              % (100 * res["scam_lean"]))
     return 0 if res["choice"] is not None else 1
+
+
+def run_train_question(args):
+    out = Path(args.out)
+    if out.exists() and not args.force:
+        raise SystemExit("%s already exists - pass --force to replace it" % out)
+    text = (Path(args.question_file).read_text(encoding="utf-8")
+            if args.question_file else args.question)
+    if not text:
+        raise ValueError("pass --question or --question-file")
+    print("==> train a question on %s" % args.csv)
+    q = train_question(args.csv, text, args.calls, args.options, args.seed)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(q, indent=2) + "\n", encoding="utf-8")
+    print("  ok wrote %s" % out)
+    return 0
 
 
 def run_evaluate(args):
@@ -744,10 +1078,31 @@ def build_parser():
 
     qq = sub.add_parser("question", help="your own question about one call")
     qq.add_argument("--text", required=True)
-    qq.add_argument("--question", required=True,
+    qq.add_argument("--question", default=None,
                     help='list options to make it multiple choice: '
                          '"... A) yes B) no", or "options: yes / no"')
+    qq.add_argument("--saved", default=None,
+                    help="a trained question's JSON (knowledge/questions/...): "
+                         "its options are used")
     qq.set_defaults(func=run_question)
+
+    tq = sub.add_parser("train-question",
+                        help="options for your question, from a dataset")
+    tq.add_argument("--csv", required=True)
+    tq.add_argument("--question", default=None)
+    tq.add_argument("--question-file", default=None,
+                    help="read the question from this file instead")
+    tq.add_argument("--out", required=True,
+                    help="knowledge/questions/<name>.json")
+    tq.add_argument("--calls", type=int, default=TRAIN_CALLS,
+                    help="calls to train on, half scam half not "
+                         "(default %d)" % TRAIN_CALLS)
+    tq.add_argument("--options", type=int, default=TRAIN_OPTIONS,
+                    help="at most this many options (default %d)"
+                         % TRAIN_OPTIONS)
+    tq.add_argument("--seed", type=int, default=42)
+    tq.add_argument("--force", action="store_true")
+    tq.set_defaults(func=run_train_question)
 
     ev = sub.add_parser("evaluate", help="score a whole dataset")
     ev.add_argument("--csv", required=True)

@@ -662,6 +662,32 @@ stack newest first, so you can ask several questions about one call and
 compare. The same is on the command line:
 `python scripts/mcq_ontology.py question --text "…" --question "Who is calling? A) a bank B) not said"`.
 
+**Training a question on a dataset.** Open *Train this question on a
+dataset* under the question box, pick a dataset, and press Train. Training
+takes three steps:
+1. The model answers your question in a few words for a balanced sample of
+   the dataset's calls, half scam and half not (20 by default, seed 42).
+2. The model groups those answers into a few options (at most 6 by default).
+3. Each sampled call goes back to the model as a multiple choice over those
+   options. This counts how many scam and how many legitimate calls land on
+   each option.
+
+The question, its options and the counts are saved to
+`knowledge/questions/<name>.json`, along with the answers the options were
+made from. If your question already lists its own options, training keeps
+them and only does step 3.
+
+Pick the file under *Saved question* to see its options and counts. Ask then
+reads the options from that file, so the question stays multiple choice with
+the same options every time. Each option in the answer shows its training
+counts. Under the answer, a line gives the share of training calls that were
+scams, weighted by the model's probability on each option. Editing the text
+switches back to asking the question as typed. Training runs in the
+background like any other run (2 × calls + 1 requests), and it waits while
+another run is using the model. On the command line:
+`python scripts/mcq_ontology.py train-question --csv datasets/huggingface_1600.csv --question "What does the caller ask for?" --out knowledge/questions/asks.json`,
+then `python scripts/mcq_ontology.py question --saved knowledge/questions/asks.json --text "…"`.
+
 The other tabs:
 - **Score a dataset:** the shared run below. Its card adds a table of which
   category the model put the scam and legitimate calls in.
