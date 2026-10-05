@@ -46,6 +46,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import time
 import urllib.error
@@ -489,6 +490,136 @@ def build(csv_path, column=None, describe_with_model=False, examples=3,
     }
 
 
+# ------------------------------------------------- your own question
+# Any question about one call, typed on the page. If the question lists its
+# own options - "A) ... B) ...", one per line, or "options: x / y / z" - it is
+# put as a multiple choice and answered like the ontology's question: one
+# letter, with the probability on every option read back. If it lists none,
+# the model answers in its own words, from the transcript and, where the
+# transcript does not say, from what it knows.
+MAX_ANSWER_TOKENS = 400
+
+_OPT_LINE = re.compile(r"^\s*(?:\(?([A-La-l]|\d{1,2})[).:]|[-*\u2022])\s+(\S.*?)\s*$")
+_OPT_INLINE = re.compile(r"(?:(?<=\s)|^)\(?([A-La-l])\)\s*")
+_OPT_LIST = re.compile(r"\boptions?\s*(?:are|:|-)\s*(.+)$", re.I | re.S)
+
+
+def parse_options(text):
+    """(question, [option text, ...]) - the options the question lists, if
+    it lists at least two; otherwise (the whole text, []).
+
+    Three ways of listing them are understood: one per line ("A) yes",
+    "1. yes", "- yes"), inline lettered ("... A) yes B) no"), and
+    "options: yes / no / not said" (split on / | ; or commas).
+    """
+    text = (text or "").strip()
+    lines = text.split("\n")
+    stem, opts = [], []
+    for ln in lines:
+        m = _OPT_LINE.match(ln)
+        if m:
+            opts.append(m.group(2))
+        elif opts and ln.strip():
+            opts[-1] += " " + ln.strip()      # an option's text run onto a new line
+        else:
+            stem.append(ln)
+    if len(opts) >= 2:
+        return " ".join(" ".join(stem).split()), opts
+
+    marks = list(_OPT_INLINE.finditer(text))
+    # inline letters only count as options when they run A, B, C ... in order
+    run = []
+    for m in marks:
+        if m.group(1).upper() == LETTERS[len(run)]:
+            run.append(m)
+    if len(run) >= 2:
+        opts = [text[a.end():(b.start() if b else len(text))].strip(" ,;")
+                for a, b in zip(run, run[1:] + [None])]
+        if all(opts):
+            return " ".join(text[:run[0].start()].split()), opts
+
+    m = _OPT_LIST.search(text)
+    if m:
+        body = m.group(1).strip().rstrip("?.")
+        for sep in ("/", "|", ";", ","):
+            parts = [x.strip() for x in body.split(sep) if x.strip()]
+            if len(parts) >= 2:
+                return " ".join(text[:m.start()].split()), parts
+    return " ".join(text.split()), []
+
+
+def ask_question(transcript, question_text, timeout=300):
+    """Answer one typed question about one call. One request.
+
+    Returns {"mode": "options" | "free", "question": the stem, ...}:
+      options   "options": [{"letter", "text", "p"}], "choice", "how"
+                ("logprobs" | "letter" | "unreadable"), "answered"
+      free      "answer": the model's own words, "truncated": whether it ran
+                out of room
+    """
+    stem, opts = parse_options(question_text)
+    if not stem and not opts:
+        raise ValueError("type a question")
+    if len(opts) > MAX_OPTIONS:
+        raise ValueError("at most %d options - that question lists %d"
+                         % (MAX_OPTIONS, len(opts)))
+    head = HEAD.format(transcript=transcript)
+    if opts:
+        n = len(opts)
+        prompt = head + "\n".join(
+            [stem or "Which of these is right?"]
+            + ["%s - %s" % (LETTERS[i], o) for i, o in enumerate(opts)]
+            + ["Answer with exactly one letter, A to %s." % LETTERS[n - 1],
+               "Answer:"])
+        text, steps = generate(prompt, ANSWER_TOKENS, timeout=timeout)
+        has_lp = any(alts for _, alts in steps)
+        if not has_lp:
+            _note_no_logprobs()
+        probs, how = None, "unreadable"
+        li = next((i for i, (tok, _) in enumerate(steps)
+                   if answer_letter(tok, n)), None)
+        if li is not None:
+            mass = [0.0] * n
+            for tok, lp in steps[li][1]:
+                k = answer_letter(tok, n)
+                if k:
+                    mass[LETTERS.index(k)] += math.exp(lp)
+            if has_lp and sum(mass) > 0:
+                probs, how = [x / sum(mass) for x in mass], "logprobs"
+            else:
+                probs, how = [0.0] * n, "letter"
+                probs[LETTERS.index(answer_letter(steps[li][0], n))] = 1.0
+        elif not steps:
+            k = answer_letter((text.split() or [""])[0], n)
+            if k:
+                probs, how = [0.0] * n, "letter"
+                probs[LETTERS.index(k)] = 1.0
+        probs = probs or [0.0] * n
+        choice = (max(range(n), key=lambda i: probs[i])
+                  if how != "unreadable" else None)
+        return {"mode": "options", "question": stem,
+                "options": [{"letter": LETTERS[i], "text": o, "p": probs[i]}
+                            for i, o in enumerate(opts)],
+                "choice": choice, "how": how, "answered": text,
+                "prompt_tokens_estimated": ollama_ctx.estimate_tokens(prompt)}
+
+    prompt = head + ("Question: %s\n\nAnswer the question about this call. "
+                     "Use what the transcript says; where it does not say, "
+                     "answer from your own knowledge and say that you are. "
+                     "Keep it to a few sentences.\nAnswer:" % stem)
+    num_ctx = ollama_ctx.fit_num_ctx(prompt, MAX_ANSWER_TOKENS,
+                                     where="mcq question")
+    try:
+        out = llm_judge.generate(prompt, max_tokens=MAX_ANSWER_TOKENS,
+                                 num_ctx=num_ctx, timeout=timeout)
+    except RuntimeError as e:
+        raise RuntimeError(str(e))
+    return {"mode": "free", "question": stem,
+            "answer": (out.get("response") or "").strip(),
+            "truncated": out.get("done_reason") == "length",
+            "prompt_tokens_estimated": ollama_ctx.estimate_tokens(prompt)}
+
+
 # ----------------------------------------------------------------------- CLI
 
 def run_ask(args):
@@ -502,6 +633,20 @@ def run_ask(args):
     print(explain(res, onto))
     print("verdict  %s" % (res["verdict"] or "unreadable"))
     return 0 if res["verdict"] else 1
+
+
+def run_question(args):
+    res = ask_question(args.text, args.question)
+    print(res["question"])
+    if res["mode"] == "free":
+        print(res["answer"])
+        return 0
+    for o in res["options"]:
+        print("  %s %5.1f%%  %s%s" % (o["letter"], 100 * o["p"], o["text"],
+                                      "  <-" if o["letter"] == (
+                                          res["choice"] is not None
+                                          and LETTERS[res["choice"]]) else ""))
+    return 0 if res["choice"] is not None else 1
 
 
 def run_evaluate(args):
@@ -596,6 +741,13 @@ def build_parser():
     a.add_argument("--text", required=True)
     a.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
     a.set_defaults(func=run_ask)
+
+    qq = sub.add_parser("question", help="your own question about one call")
+    qq.add_argument("--text", required=True)
+    qq.add_argument("--question", required=True,
+                    help='list options to make it multiple choice: '
+                         '"... A) yes B) no", or "options: yes / no"')
+    qq.set_defaults(func=run_question)
 
     ev = sub.add_parser("evaluate", help="score a whole dataset")
     ev.add_argument("--csv", required=True)

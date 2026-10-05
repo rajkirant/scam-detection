@@ -57,6 +57,9 @@ def fake_post(path, payload, timeout):
     prompt = payload["prompt"]
     if prompt.rstrip().endswith("Category:"):          # build --describe
         return {"response": " People calling about it\nsecond line"}
+    if "\nQuestion: " in prompt:                        # an open question
+        return {"response": " They want the person's bank details.",
+                "done_reason": "stop"}
     belief = next(v for k, v in BELIEF.items() if k in prompt)
     if belief is None:
         return {"response": "The", "logprobs": [{"token": "The", "logprob": 0.0,
@@ -170,6 +173,40 @@ check("and P(scam) is 1 for a scam letter", r2["p_scam"], 1.0)
 check("it says so, once", buf.getvalue().count("no logprobs"), 1)
 STATE["logprobs"] = True
 M._LOGPROBS_OK = None
+
+print("\nyour own question")
+for q, want in (
+        ("What does the caller want?", ("What does the caller want?", [])),
+        ("Who are they? A) a bank B) a government office C) not said",
+         ("Who are they?", ["a bank", "a government office", "not said"])),
+        ("Who are they?\nA) a bank\nB) a shop", ("Who are they?", ["a bank", "a shop"])),
+        ("Urgent?\n1. yes\n2. no", ("Urgent?", ["yes", "no"])),
+        ("How urgent? options: very / a little / not at all",
+         ("How urgent?", ["very", "a little", "not at all"])),
+        ("Did they say a) the bank?", ("Did they say a) the bank?", [])),
+        ("Is this a scam or legit?", ("Is this a scam or legit?", []))):
+    check("parse %r" % q[:34], M.parse_options(q), want)
+STATE["calls"] = 0
+r = M.ask_question("SSNCALL transcript",
+                   "Which is it? A) social security B) delivery C) refund D) wrong")
+check("options in the question: one request, multiple choice",
+      (STATE["calls"], r["mode"], r["how"]), (1, "options", "logprobs"))
+check("the probabilities come back per option, the pick is the top one",
+      (r["choice"], [round(o["p"], 2) for o in r["options"]]),
+      (0, [0.85, 0.05, 0.08, 0.02]))
+check("the options are put to the model lettered A-D",
+      "\nA - social security\nB - delivery\n" in STATE["payloads"][-1]["prompt"])
+r = M.ask_question("SSNCALL transcript", "What does the caller want?")
+check("no options: the model answers in its own words",
+      (r["mode"], r["answer"]), ("free", "They want the person's bank details."))
+check("the open question invites its own knowledge",
+      "your own knowledge" in STATE["payloads"][-1]["prompt"])
+try:
+    M.ask_question("x", "Which?\n" + "\n".join("%d. option %d" % (i, i)
+                                                for i in range(1, 14)))
+    check("13 options are refused", False)
+except ValueError as e:
+    check("13 options are refused", "at most 12" in str(e))
 
 print("\noptions from a dataset's categories")
 ds = os.path.join(tmp, "ds.csv")

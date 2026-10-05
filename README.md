@@ -648,6 +648,20 @@ So a call the model splits between two scam categories is still clearly a
 scam, and one split between a scam and a legitimate category shows up as
 uncertain.
 
+**Your own question about this call** sits under it, in the Ask tab. Type
+any question about the loaded transcript:
+- **With options:** list them in the question, as `A) … B) …`, one per line
+  (`1.` and `-` work too), or `options: very / a little / not at all`. The
+  model picks one, and you see its probability on each option, as with the
+  category question.
+- **Without options:** the model answers in its own words, from the
+  transcript and, where the transcript does not say, from what it knows.
+
+A hint under the box says which of the two the question will be. Answers
+stack newest first, so you can ask several questions about one call and
+compare. The same is on the command line:
+`python scripts/mcq_ontology.py question --text "…" --question "Who is calling? A) a bank B) not said"`.
+
 The other tabs:
 - **Score a dataset:** the shared run below. Its card adds a table of which
   category the model put the scam and legitimate calls in.
