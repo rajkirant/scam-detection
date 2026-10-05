@@ -2135,6 +2135,8 @@ class Handler(BaseHTTPRequestHandler):
             # ---- the MCQ ontology page
             if u.path == "/api/mcq/ask":
                 return self._send(200, mcq_ask(form))
+            if u.path == "/api/mcq/question":
+                return self._send(200, mcq_question(form))
             if u.path == "/api/mcq/save":
                 out = mcq_save(form)
                 sys.stderr.write("saved ontology %s\n" % out["path"])
@@ -2600,6 +2602,33 @@ def mcq_ask(form):
         "model": llm_judge.DEFAULT_MODEL, "words": len(text.split()),
         "prompt_tokens_estimated": ollama_ctx.estimate_tokens(prompt),
         "elapsed_ms": int(1000 * (time.time() - t0))})
+    return res
+
+
+def mcq_question(form):
+    """Your own question about one call: multiple choice if the question
+    lists options, the model's own words if it does not."""
+    text = (form.get("transcript") or "").strip()
+    if not text:
+        raise ValueError("load or paste a transcript first - the question is "
+                         "about that call")
+    question = str(form.get("question") or "").strip()
+    if not question:
+        raise ValueError("type a question")
+    if len(question) > 4000:
+        raise ValueError("keep the question under 4,000 characters")
+    if not LLM_LOCK.acquire(blocking=False):
+        raise ValueError("the model is already answering something - one call "
+                         "at a time, or they fight for the VRAM")
+    t0 = time.time()
+    try:
+        res = mcq_ontology.ask_question(text, question)
+    except RuntimeError as e:
+        raise ValueError(str(e))
+    finally:
+        LLM_LOCK.release()
+    res.update({"model": llm_judge.DEFAULT_MODEL,
+                "elapsed_ms": int(1000 * (time.time() - t0))})
     return res
 
 
@@ -4148,6 +4177,23 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <div class="hint" id="mcqasker" style="color:var(--bad)"></div>
     </div>
     <div id="mcqanswer"></div>
+
+    <div class="card">
+      <div class="qp">Your own question about this call</div>
+      <div class="hint" style="margin-top:0">Any question about the transcript
+        above. To make it multiple choice, list the options in the question
+        &mdash; <code>A) &hellip; B) &hellip;</code>, one per line, or
+        <code>options: yes / no / not said</code> &mdash; and the model picks
+        one, with its probability on each. With no options it answers in its
+        own words, from the transcript and, where that does not say, from what
+        it knows.</div>
+      <textarea id="mcqquestion" style="min-height:76px; margin-top:10px"
+        placeholder="What does the caller want the person to do?&#10;&#10;Who does the caller say they are? A) a bank B) a government office C) a company D) not said"></textarea>
+      <div class="askrow"><span class="hint" id="mcqqkind"></span></div>
+      <button class="go" id="mcqqgo">Ask my question</button>
+      <div class="hint" id="mcqqerr" style="color:var(--bad)"></div>
+    </div>
+    <div id="mcqqanswers"></div>
     </div>
 
     <div id="q-eval" hidden>
@@ -6969,6 +7015,8 @@ async function mcqBoot() {
   forgetRowOnEdit('mcqtranscript', 'mcqinfo');
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
+  $('mcqqgo').onclick = mcqQuestion;
+  $('mcqquestion').addEventListener('input', mcqQuestionKind);
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value});
   $('mcqsave').onclick = mcqSave;
@@ -7140,6 +7188,68 @@ function mcqPaintAnswer(r) {
   <div class="card hint">${r.words} words · about ${r.prompt_tokens_estimated}
     prompt tokens · answered <code>${esc(r.answered || '')}</code>
     · ${r.elapsed_ms} ms · <code>${esc(r.ontology)}</code></div>`;
+}
+
+// Say, as it is typed, which kind of question this will be. A rough mirror
+// of mcq_ontology.parse_options - the server decides; this is only a hint.
+function mcqQuestionKind() {
+  const q = $('mcqquestion').value;
+  const lines = q.split('\n').filter(l => /^\s*(\(?([A-La-l]|\d{1,2})[).:]|[-*\u2022])\s+\S/.test(l));
+  const inline = /(^|\s)\(?[Aa]\)\s*\S.*\s\(?[Bb]\)\s*\S/.test(q);
+  const listed = /\boptions?\s*(are|:|-)\s*\S+\s*[\/|;,]\s*\S/i.test(q);
+  $('mcqqkind').textContent = !q.trim() ? ''
+    : (lines.length >= 2 || inline || listed)
+      ? 'multiple choice - the model picks one of your options'
+      : 'open question - the model answers in its own words';
+}
+
+async function mcqQuestion() {
+  $('mcqqerr').textContent = '';
+  const text = $('mcqtranscript').value.trim();
+  const q = $('mcqquestion').value.trim();
+  if (!text) { $('mcqqerr').textContent = 'load or paste a transcript above '
+                                        + 'first - the question is about that call'; return; }
+  if (!q) { $('mcqqerr').textContent = 'type a question'; return; }
+  $('mcqqgo').disabled = true;
+  $('mcqqgo').textContent = 'Asking…';
+  const r = await api('/api/mcq/question', {transcript: text, question: q});
+  $('mcqqgo').disabled = false;
+  $('mcqqgo').textContent = 'Ask my question';
+  if (r.error) { $('mcqqerr').textContent = r.error; return; }
+  // newest first, so a run of questions about one call reads down the page
+  $('mcqqanswers').insertAdjacentHTML('afterbegin', mcqQuestionCard(r));
+  const cards = $('mcqqanswers').querySelectorAll(':scope > .card');
+  for (let i = 10; i < cards.length; i++) cards[i].remove();
+}
+
+function mcqQuestionCard(r) {
+  const foot = `<div class="hint" style="margin-top:10px">${esc(r.model)} · about
+    ${r.prompt_tokens_estimated} prompt tokens · ${r.elapsed_ms} ms</div>`;
+  if (r.mode === 'free') {
+    return `<div class="card">
+      <div class="cap">Your question</div>
+      <div class="qp">${esc(r.question)}</div>
+      <div class="cap" style="margin-top:12px">The model's answer</div>
+      <div style="white-space:pre-wrap">${esc(r.answer || '(no answer)')}</div>
+      ${r.truncated ? '<div class="hint">The answer ran out of room and was cut off.</div>' : ''}
+      ${foot}</div>`;
+  }
+  const rows = r.options.map((o, i) => `<tr class="${i === r.choice ? 'chosen' : ''}">
+      <td>${o.letter}</td><td class="optname">${esc(o.text)}</td>
+      <td class="optbar"><div class="bar"><i style="width:${(100 * o.p).toFixed(1)}%"></i></div></td>
+      <td>${(100 * o.p).toFixed(1)}%</td></tr>`).join('');
+  const pick = r.choice === null || r.choice === undefined ? null : r.options[r.choice];
+  return `<div class="card">
+    <div class="cap">Your question</div>
+    <div class="qp">${esc(r.question || 'Which of these is right?')}</div>
+    <div class="cap" style="margin-top:12px">The model's answer</div>
+    <div style="font-weight:600">${pick ? esc(pick.letter + ' — ' + pick.text)
+      + ` <span class="muted" style="font-weight:400">(${(100 * pick.p).toFixed(1)}%)</span>`
+      : 'no readable answer (' + esc(r.answered || 'nothing') + ')'}</div>
+    <div class="scroll" style="margin-top:10px"><table class="opts">${rows}</table></div>
+    ${r.how === 'letter' ? '<div class="hint">This Ollama returned no probabilities, '
+      + 'so only the letter it answered is known.</div>' : ''}
+    ${foot}</div>`;
 }
 
 // which category the scored calls were put in, against their label
