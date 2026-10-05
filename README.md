@@ -632,10 +632,13 @@ The classifier after the LLM judge, and the `mcq` baseline from the Benchmark
 page asked one call at a time. It starts from a JSON file in `knowledge/`
 (picked under *Ontology* on the left; `mcq_ontology.json` by default) that
 holds **one question, the call's category**, and a few options. Each option is
-a category of call with a verdict, scam or legit. The default file's eight
-options are the categories `huggingface_1600`'s transcripts are filed under:
-Social Security, refund, computer support and prize calls are scam; delivery,
-insurance, sales and wrong-number calls are legitimate.
+a category of call with a verdict, scam or legit. The options come from
+reading transcripts (see *Build* below). The shipped default file predates
+that: its eight options are the categories `huggingface_1600`'s `type` column
+files calls under (Social Security, refund, computer support and prize calls
+are scam; delivery, insurance, sales and wrong-number calls are legitimate).
+To replace it with one read from the transcripts, build on
+`huggingface_1600.csv`, save as `mcq_ontology.json`, and tick replace.
 
 **Ask** puts the transcript, the question and the lettered options to the
 model, with no retrieval. The model answers one letter, and the probability it
@@ -696,21 +699,35 @@ The other tabs:
   least one of each verdict), and never over `scam_ontology.json` or
   `scam_patterns.json`. Save edits under your own name: the shipped file is
   tracked by git.
-- **Build options from a dataset** (left): makes a new file from the
-  categories in a dataset's transcripts. Only datasets with a category column
-  qualify: `huggingface_1600` (`type`), `everything_7013` (`scam_type`) and the
-  fold files. Each category gets the verdict most of its calls carry, scam
-  and legitimate options are interleaved so a preference for early letters
-  cannot line up with one verdict, and with *describe* ticked the model reads
-  three calls of each category and writes the option text.
+- **Build options from a dataset** (left): makes a new file by reading a
+  dataset's transcripts. No column of the dataset is used, so any dataset
+  works. Build takes three steps:
+  1. The model reads a balanced sample of calls (40 by default, half scam
+     and half not, seed 42). It names each call's category in a few words,
+     and is told not to say whether the call is a scam.
+  2. The model groups those names into a few categories (at most 8 by
+     default).
+  3. Each sampled call is asked the category question over those categories.
 
-**Read the score with its source in mind.** Options built from a dataset's
-own categories only ask the model to recognise the topic. On
-`huggingface_1600`, the topic alone decides the label, and the score card says
-so when the options came from the dataset being scored. Other datasets and
-the content-deletion test are the fairer reads. `scambait_synthetic_196`'s
-topics hold one scam and one legitimate call each, so Build refuses them: the
-category says nothing there.
+  Each category gets the verdict most of the calls put in it carry. A
+  category split exactly evenly leans scam, and is marked `mixed`. A category
+  no call landed on is dropped. Scam and legitimate options are interleaved,
+  so a preference for early letters cannot line up with one verdict. The file
+  keeps the calls it read and the category each one got.
+
+  Build refuses when the categories do not separate scam from legitimate
+  calls: every one holds as many of each, or every one leans the same way.
+  That is what happens on a dataset like `scambait_synthetic_196`, where each
+  scam call has a legitimate call on the same topic. There, train a question
+  the calls differ on instead.
+
+  Building takes 2 × calls + 1 requests to the model, runs in the background,
+  and waits while another run is using the model.
+
+**Read the score with its source in mind.** When the options were built from
+the dataset being scored, some of the scored calls set the verdicts, and the
+score card says so. Other datasets and the content-deletion test are the
+fairer reads.
 
 ### Scoring a whole dataset
 
@@ -902,7 +919,7 @@ python scripts/evaluate_mcq_ontology.py \
 
 python scripts/mcq_ontology.py ask --text "Hello, this is the Social Security office..."
 python scripts/mcq_ontology.py build --csv datasets/huggingface_1600.csv \
-  --out knowledge/mcq_huggingface.json --describe   # options from its categories
+  --out knowledge/mcq_huggingface.json --calls 40   # categories read from its transcripts
 python scripts/test_mcq_ontology.py      # offline: a fake Ollama
 ```
 

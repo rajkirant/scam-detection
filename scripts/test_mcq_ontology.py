@@ -55,8 +55,6 @@ def fake_post(path, payload, timeout):
     STATE["calls"] += 1
     STATE["payloads"].append(payload)
     prompt = payload["prompt"]
-    if prompt.rstrip().endswith("Category:"):          # build --describe
-        return {"response": " People calling about it\nsecond line"}
     if prompt.rstrip().endswith("Short answer:"):       # training, step 1
         tr = prompt.split("Transcript:\n", 1)[1]
         return {"response": " Their SSN.\nmore" if "SSNCALL" in tr
@@ -217,85 +215,88 @@ try:
 except ValueError as e:
     check("13 options are refused", "at most 12" in str(e))
 
-print("\noptions from a dataset's categories")
-ds = os.path.join(tmp, "ds.csv")
-with open(ds, "w", newline="") as f:
-    w = csv.writer(f)
-    w.writerow(["id", "label", "type", "text"])
-    n = 0
-    for cat, lab, k in (("ssn", "scam", 5), ("delivery", "nonscam", 4),
-                        ("refund", "scam", 3), ("wrong", "nonscam", 2),
-                        ("mixed_topic", "scam", 1), ("mixed_topic", "nonscam", 1)):
-        for _ in range(k):
-            n += 1
-            w.writerow([n, lab, cat, "a %s call number %d" % (cat, n)])
-    w.writerow([n + 1, "scam", "", "a call with no category"])
-b = M.build(ds)
-ids = [o["id"] for o in b["options"]]
-check("one option per category", sorted(ids),
-      sorted(["ssn", "delivery", "refund", "wrong", "mixed_topic"]))
-check("verdict = the label most of its calls carry",
-      {o["id"]: o["verdict"] for o in b["options"]}["delivery"], "legit")
-check("an evenly split category is marked mixed and leans scam",
-      [(o["verdict"], o.get("mixed")) for o in b["options"]
-       if o["id"] == "mixed_topic"], [("scam", True)])
-check("scam and legitimate options alternate",
-      [o["verdict"] for o in b["options"]][:4], ["scam", "legit", "scam", "legit"])
-check("the calls with no category are counted, not used",
-      b["built_from"]["no_category"], 1)
+print("\noptions read from a dataset's transcripts")
+
+
+def write_ds(name, rows):
+    """rows of (label, transcript); a `type` column that says nothing true,
+    to show the build never reads it"""
+    path = os.path.join(tmp, name)
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["id", "label", "type", "text"])
+        for i, (lab, text) in enumerate(rows):
+            w.writerow([i, lab, "misleading_column", "%s number %d" % (text, i)])
+    return path
+
+
+ds = write_ds("ds.csv", [("scam", "SSNCALL")] * 3 + [("nonscam", "PARCEL")] * 3)
+STATE["calls"] = 0
+STATE["payloads"] = []
+b = M.build(ds, calls=6, max_options=5, log=lambda *_: None)
+check("2n+1 requests: a category per call, a grouping, the question per call",
+      STATE["calls"], 13)
+check("the model names each call's category, without judging it",
+      all("Name the category of this call" in x["prompt"]
+          and "Do not say whether it is a scam" in x["prompt"]
+          for x in STATE["payloads"][:6]))
+check("each call is then asked the category question",
+      all(x["prompt"].count(M.CATEGORY_QUESTION) == 1
+          and "\nA - SSN\n" in x["prompt"] for x in STATE["payloads"][7:]))
+check("options are the categories the model found, with verdicts",
+      [(o["text"], o["verdict"], o["calls"]) for o in b["options"]],
+      [("SSN", "scam", {"scam": 3, "legit": 0}),
+       ("A delivery time", "legit", {"scam": 0, "legit": 3})])
+check("a category no call landed on is dropped, and recorded",
+      b["built_from"]["dropped"], ["not said"])
+check("no column is read: nothing from the type column",
+      ("column" in b["built_from"], b["built_from"]["read_from"],
+       any("misleading" in o["text"].lower() for o in b["options"])),
+      (False, "transcripts", False))
+check("ids from the option text", [o["id"] for o in b["options"]],
+      ["ssn", "a_delivery_time"])
 check("what it builds is a valid ontology", M.check_ontology(b), [])
-small = M.build(ds, max_options=3)
-check("past max_options the smallest merge into 'Something else'",
-      ([o["id"] for o in small["options"]].count("other"),
-       next(o["text"] for o in small["options"] if o["id"] == "other")),
-      (1, "Something else"))
-buf = io.StringIO()
-with contextlib.redirect_stdout(buf):
-    d = M.build(ds, describe_with_model=True)
-check("--describe has the model write each option's text",
-      next(o["text"] for o in d["options"] if o["id"] == "ssn"),
-      "SSN: People calling about it")
-nocat = os.path.join(tmp, "nocat.csv")
-with open(nocat, "w", newline="") as f:
-    csv.writer(f).writerows([["id", "label", "text"], [1, "scam", "x"]])
+check("the calls it read are kept with their category",
+      sorted((a["label"], a["option"]) for a in b["answers"])[:1],
+      [("legit", "B")])
+
+ds2 = write_ds("ds2.csv", [("scam", "SSNCALL")] * 2 + [("scam", "PARCEL")] * 2
+               + [("nonscam", "PARCEL")] * 4)
+b2 = M.build(ds2, calls=8, log=lambda *_: None)
+check("verdict = the label most of a category's calls carry; legit and "
+      "scam alternate", [(o["text"], o["verdict"]) for o in b2["options"]],
+      [("SSN", "scam"), ("A delivery time", "legit")])
+even = write_ds("even.csv", [("scam", "SSNCALL"), ("nonscam", "SSNCALL"),
+                             ("scam", "PARCEL"), ("nonscam", "PARCEL")])
 try:
-    M.build(nocat)
-    check("a dataset without a category column is refused", False)
-except ValueError as e:
-    check("a dataset without a category column is refused",
-          "no category column" in str(e))
-even = os.path.join(tmp, "even.csv")
-with open(even, "w", newline="") as f:
-    w = csv.writer(f)
-    w.writerow(["id", "label", "topic", "text"])
-    for i, (t, lab) in enumerate((("a", "scam"), ("a", "nonscam"),
-                                  ("b", "scam"), ("b", "nonscam"))):
-        w.writerow([i, lab, t, "call %d" % i])
-try:
-    M.build(even)
+    M.build(even, calls=4, log=lambda *_: None)
     check("categories that say nothing about the label are refused", False)
 except ValueError as e:
-    check("categories that say nothing about the label are refused",
-          "exactly as many scam calls as legitimate" in str(e)
-          and "paired with one legitimate call on the same topic" in str(e))
-# Paired-196's shape: many topics of one scam + one legitimate call, and a
-# couple left unpaired. Too many topics, so the smallest would be merged into
-# "other" - the refusal has to come before that, and point to training
-paired = os.path.join(tmp, "paired.csv")
-with open(paired, "w", newline="") as f:
-    w = csv.writer(f)
-    w.writerow(["id", "label", "topic", "text"])
-    for i in range(20):
-        w.writerow([2 * i, "scam", "t%02d" % i, "call"])
-        w.writerow([2 * i + 1, "nonscam", "t%02d" % i, "call"])
-    w.writerow([99, "scam", "lone", "call"])
+    check("categories that say nothing about the label are refused, "
+          "pointing to training", ("as many scam calls as legitimate" in str(e),
+                                   "train it on this dataset" in str(e)),
+          (True, True))
+one = write_ds("one.csv", [("scam", "SSNCALL"), ("scam", "SSNCALL"),
+                           ("nonscam", "SSNCALL"), ("scam", "PARCEL"),
+                           ("scam", "PARCEL"), ("nonscam", "PARCEL")])
 try:
-    M.build(paired)
-    check("a topic-paired dataset is refused before merging", False)
+    M.build(one, calls=6, log=lambda *_: None)
+    check("categories that all lean one way are refused", False)
 except ValueError as e:
-    check("a topic-paired dataset is refused before merging, pointing to "
-          "training", ("20 of the 21 values" in str(e),
-                       "train it on this dataset" in str(e)), (True, True))
+    check("categories that all lean one way are refused",
+          "mostly scam calls" in str(e))
+try:
+    M.build(ds, calls=1)
+    check("fewer than 2 calls is refused", False)
+except ValueError as e:
+    check("fewer than 2 calls is refused", "between 2 and 500" in str(e))
+path_b = os.path.join(tmp, "built.json")
+with contextlib.redirect_stdout(io.StringIO()):
+    rc = M.main(["build", "--csv", ds, "--out", path_b, "--calls", "6"])
+onto_b = M.load_ontology(path_b)
+check("build writes a file the classifier loads",
+      (rc, [o["id"] for o in onto_b["options"]]), (0, ["ssn", "a_delivery_time"]))
+check("and judges with it", M.judge("SSNCALL again", onto_b)["verdict"], "Fraud")
 
 print("\nscoring a dataset (the page's Score a dataset)")
 out = os.path.join(tmp, "run.metrics.json")
