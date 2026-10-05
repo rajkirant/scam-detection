@@ -57,6 +57,15 @@ def fake_post(path, payload, timeout):
     prompt = payload["prompt"]
     if prompt.rstrip().endswith("Category:"):          # build --describe
         return {"response": " People calling about it\nsecond line"}
+    if prompt.rstrip().endswith("Short answer:"):       # training, step 1
+        tr = prompt.split("Transcript:\n", 1)[1]
+        return {"response": " Their SSN.\nmore" if "SSNCALL" in tr
+                else " A delivery time" if "PARCEL" in tr else " not said"}
+    if prompt.rstrip().endswith("Options:"):            # training, step 2
+        if STATE.get("group_bad"):
+            return {"response": " I cannot group these."}
+        return {"response": " - SSN (3)\n- A delivery time\n- not said\n"
+                            "- a delivery time"}
     if "\nQuestion: " in prompt:                        # an open question
         return {"response": " They want the person's bank details.",
                 "done_reason": "stop"}
@@ -314,6 +323,111 @@ check("per-call CSV columns for the Scores and Per-call tabs",
        "mcq_ontology__stripped_why"])
 check("the order is the benchmark's shuffled order (seed 42)",
       [r["text"] for r in rows], [t for t, _ in E.load(ev)])
+
+print("\na question trained on a dataset")
+tds = os.path.join(tmp, "train.csv")
+with open(tds, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["id", "label", "text"])
+    for i in range(4):
+        w.writerow([i, "scam", "SSNCALL number %d" % i])
+        w.writerow([10 + i, "nonscam", "PARCEL number %d" % i])
+check("the sample is balanced", sorted(y for _, y in M.sample_calls(tds, 6)),
+      [False] * 3 + [True] * 3)
+check("the sample is the same each time (seeded)",
+      M.sample_calls(tds, 6), M.sample_calls(tds, 6))
+STATE["calls"] = 0
+STATE["payloads"] = []
+logged = []
+q = M.train_question(tds, "What does the caller ask for?", calls=6,
+                     max_options=4, log=logged.append)
+check("2n+1 requests: an answer per call, a grouping, a choice per call",
+      STATE["calls"], 13)
+check("short answers are asked for in a few words",
+      "at most 12" in STATE["payloads"][0]["prompt"]
+      and STATE["payloads"][0]["options"]["num_predict"] == M.SHORT_ANSWER_TOKENS)
+check("the grouping prompt sees every answer and the option limit",
+      "6. " in STATE["payloads"][6]["prompt"]
+      and "at most 4 options" in STATE["payloads"][6]["prompt"])
+check("options: counts stripped, duplicates dropped",
+      [o["text"] for o in q["options"]], ["SSN", "A delivery time", "not said"])
+check("scam and legitimate calls counted on each option",
+      [o["calls"] for o in q["options"]],
+      [{"scam": 3, "legit": 0}, {"scam": 0, "legit": 3},
+       {"scam": 0, "legit": 0}])
+check("what it saves is a valid saved question", M.check_question(q), [])
+check("the answers it grouped are kept, with the label and pick",
+      sorted((a["label"], a["answer"], a["option"]) for a in q["answers"])[0],
+      ("legit", "A delivery time", "B"))
+check("where it came from is recorded",
+      (q["trained_on"]["dataset"], q["trained_on"]["calls"],
+       q["trained_on"]["scam"], q["options_from"]),
+      (tds, 6, 3, "grouped by the model"))
+
+STATE["calls"] = 0
+q2 = M.train_question(tds, "Who is it? A) a government office B) a courier",
+                      calls=6, log=lambda *_: None)
+check("a question with its own options keeps them: n requests",
+      (STATE["calls"], [o["text"] for o in q2["options"]], q2["answers"][0]["answer"]),
+      (6, ["a government office", "a courier"], None))
+STATE["group_bad"] = True
+q3 = M.train_question(tds, "What does the caller ask for?", calls=6,
+                      log=lambda *_: None)
+STATE["group_bad"] = False
+check("an unusable grouping falls back to the most common answers",
+      (sorted(o["text"] for o in q3["options"]), q3["options_from"][:15]),
+      (["A delivery time", "Their SSN"], "the most common"))
+same = os.path.join(tmp, "same.csv")
+with open(same, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["id", "label", "text"])
+    for i in range(4):
+        w.writerow([i, "scam" if i % 2 else "nonscam", "SSNCALL %d" % i])
+STATE["group_bad"] = True
+try:
+    M.train_question(same, "What?", calls=4, log=lambda *_: None)
+    check("one answer for every call is refused", False)
+except ValueError as e:
+    check("one answer for every call is refused", "same answer" in str(e))
+STATE["group_bad"] = False
+
+M.QUESTIONS_DIR = type(M.QUESTIONS_DIR)(tmp) / "questions"
+out = M.QUESTIONS_DIR / "asks.json"
+argv, sys.argv = sys.argv, ["x"]
+with contextlib.redirect_stdout(io.StringIO()):
+    rc = M.main(["train-question", "--csv", tds, "--question",
+                 "What does the caller ask for?", "--calls", "6",
+                 "--out", str(out)])
+sys.argv = argv
+check("train-question writes the file", (rc, out.exists()), (0, True))
+lst = M.list_questions()
+check("it is listed as a saved question",
+      [(d["name"], d["options"], d["calls"]) for d in lst], [("asks.json", 3, 6)])
+saved = M.load_question(out)
+check("loading works out each option's scam share",
+      [o["scam_share"] for o in saved["options"]], [1.0, 0.0, None])
+STATE["calls"] = 0
+r = M.ask_saved("SSNCALL transcript", out)
+check("asking it: one request, multiple choice over the file's options",
+      (STATE["calls"], r["mode"], [o["text"] for o in r["options"]]),
+      (1, "options", ["SSN", "A delivery time", "not said"]))
+check("the saved question's own text is asked, the options lettered",
+      "What does the caller ask for?\nA - SSN\nB - A delivery time\nC - not said\n"
+      in STATE["payloads"][-1]["prompt"])
+check("the pick, with the training counts alongside",
+      (r["choice"], r["options"][0]["calls"]), (0, {"scam": 3, "legit": 0}))
+check("scam lean: the answer weighted by each option's scam share",
+      round(r["scam_lean"], 3), round(0.85 / 0.90, 3))
+for bad, why in (({"prompt": "x", "options": []}, "kind"),
+                 ({"kind": "question", "prompt": "x", "options": [{"text": "a"}]},
+                  "2 to 12"),
+                 ({"kind": "question", "prompt": "", "options": [{"text": "a"},
+                                                                 {"text": "b"}]},
+                  "prompt")):
+    check("a broken saved question is refused (%s)" % why,
+          any(why in p for p in M.check_question(bad)))
+check("an ontology is not mistaken for a saved question",
+      bool(M.check_question(ONTO)))
 
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n" + ("all good - one question, the category, measured"

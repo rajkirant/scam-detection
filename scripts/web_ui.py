@@ -2021,6 +2021,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, mcq_config())
             if u.path == "/api/mcq/ontology":
                 return self._send(200, mcq_read(q.get("path", [""])[0]))
+            if u.path == "/api/mcq/questions":
+                return self._send(200,
+                                  {"questions": mcq_ontology.list_questions()})
+            if u.path == "/api/mcq/saved":
+                return self._send(200,
+                                  mcq_saved_question(q.get("path", [""])[0]))
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -2141,6 +2147,12 @@ class Handler(BaseHTTPRequestHandler):
                 out = mcq_save(form)
                 sys.stderr.write("saved ontology %s\n" % out["path"])
                 return self._send(200, out)
+            if u.path == "/api/mcq/train_question":
+                meta = start_mcq_train_run(form)
+                sys.stderr.write("started %s  train %s on %s\n"
+                                 % (meta["id"], meta["model_name"],
+                                    meta["dataset"]))
+                return self._send(200, meta)
             if u.path == "/api/mcq/build":
                 meta = start_mcq_build_run(form)
                 sys.stderr.write("started %s  build %s from %s\n"
@@ -2528,7 +2540,10 @@ def mcq_config():
            "default": MCQ_DEFAULT,
            "model": llm_judge.DEFAULT_MODEL, "host": llm_judge.OLLAMA_HOST,
            "letters": mcq_ontology.LETTERS,
-           "max_options": mcq_ontology.MAX_OPTIONS}
+           "max_options": mcq_ontology.MAX_OPTIONS,
+           "questions": mcq_ontology.list_questions(),
+           "train_calls": mcq_ontology.TRAIN_CALLS,
+           "train_options": mcq_ontology.TRAIN_OPTIONS}
     # ollama being down is a normal state for this page to be in
     try:
         if not any(m.get("name") == llm_judge.DEFAULT_MODEL
@@ -2612,17 +2627,21 @@ def mcq_question(form):
     if not text:
         raise ValueError("load or paste a transcript first - the question is "
                          "about that call")
+    saved = mcq_qpath(form["saved"]) if form.get("saved") else None
     question = str(form.get("question") or "").strip()
-    if not question:
+    if not question and not saved:
         raise ValueError("type a question")
     if len(question) > 4000:
         raise ValueError("keep the question under 4,000 characters")
+    if saved:
+        mcq_ontology.load_question(saved)        # refuse a broken file now
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     t0 = time.time()
     try:
-        res = mcq_ontology.ask_question(text, question)
+        res = (mcq_ontology.ask_saved(text, saved) if saved
+               else mcq_ontology.ask_question(text, question))
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -2630,6 +2649,109 @@ def mcq_question(form):
     res.update({"model": llm_judge.DEFAULT_MODEL,
                 "elapsed_ms": int(1000 * (time.time() - t0))})
     return res
+
+
+def mcq_qpath(rel):
+    """knowledge/questions/<name>.json from the page, checked - or a
+    ValueError. Saved questions are read and written nowhere else."""
+    rel = str(rel or "").strip()
+    pre = "knowledge/questions/"
+    name = rel[len(pre):] if rel.startswith(pre) else rel
+    if not name.endswith(".json"):
+        name += ".json"
+    if not MCQ_FILE_RE.match(name):
+        raise ValueError("a saved question is a .json file in "
+                         "knowledge/questions/, named with letters, digits, "
+                         "dash or underscore")
+    return mcq_ontology.QUESTIONS_DIR / name
+
+
+def mcq_saved_question(rel):
+    """One saved question, as the page shows it."""
+    path = mcq_qpath(rel)
+    q = mcq_ontology.load_question(path)
+    q["path"] = "knowledge/questions/" + path.name
+    return q
+
+
+def start_mcq_train_run(form):
+    """Train a typed question on a dataset: the model answers it about a
+    sample of calls, groups the answers into options, and counts the scam and
+    legitimate calls on each. Detached and logged like every other run; the
+    result is knowledge/questions/<name>.json."""
+    question = str(form.get("question") or "").strip()
+    if not question:
+        raise ValueError("type the question to train first")
+    if len(question) > 4000:
+        raise ValueError("keep the question under 4,000 characters")
+    stem, listed = mcq_ontology.parse_options(question)
+    if not stem:
+        raise ValueError("type a question, not only options")
+    if len(listed) > mcq_ontology.MAX_OPTIONS:
+        raise ValueError("at most %d options - that question lists %d"
+                         % (mcq_ontology.MAX_OPTIONS, len(listed)))
+    ds = form.get("dataset", "")
+    if ds not in {d["path"] for d in datasets()}:
+        raise ValueError("unknown dataset")
+    try:
+        calls = int(form.get("calls") or mcq_ontology.TRAIN_CALLS)
+        nopt = int(form.get("options") or mcq_ontology.TRAIN_OPTIONS)
+    except (TypeError, ValueError):
+        raise ValueError("calls and options must be whole numbers")
+    if not 2 <= calls <= 500:
+        raise ValueError("train on between 2 and 500 calls")
+    if not 2 <= nopt <= mcq_ontology.MAX_OPTIONS:
+        raise ValueError("options must be between 2 and %d"
+                         % mcq_ontology.MAX_OPTIONS)
+    path = mcq_qpath(form.get("name"))
+    if path.exists() and not form.get("overwrite"):
+        raise ValueError("knowledge/questions/%s already exists - pick another "
+                         "name, or tick replace" % path.name)
+    running = [r for r in all_runs() if r["status"] == "running"]
+    if running:
+        raise ValueError("a run is already going (%s) - training wants the "
+                         "model it is using. Stop it first, or wait."
+                         % running[0]["id"])
+
+    out_rel = "knowledge/questions/" + path.name
+    flags = ["train-question", "--csv", ds, "--question", question,
+             "--out", out_rel, "--calls", str(calls), "--options", str(nopt),
+             "--force"]
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_mcqtrain_" + path.stem
+    log = run_path(run_id, "log")
+    quoted = " ".join(shlex.quote(f) for f in flags)
+    body = [
+        "train() {",
+        '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
+        '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
+        '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
+        '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
+        '  "$PY" -u scripts/mcq_ontology.py ' + quoted
+        + ' || { printf "  fail training\\n"; return 1; }',
+        "}", "train",
+        'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
+    ]
+    env = dict(os.environ)
+    env["TERM"] = "dumb"
+    with open(log, "wb") as out:
+        out.write(("$ python scripts/mcq_ontology.py " + quoted + "\n\n")
+                  .encode())
+        out.flush()
+        proc = subprocess.Popen(
+            [BASH, "-c", "\n".join(body)], cwd=str(PROJECT_DIR), stdout=out,
+            stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
+            **DETACHED)
+    LIVE[run_id] = proc
+    meta = {"id": run_id, "pid": proc.pid, "kind": "mcq_train",
+            "model_name": path.name, "label": "train question · " + path.name,
+            "dataset": ds, "baseline": "mcq_train:" + path.stem,
+            "limit": str(calls), "model": llm_judge.DEFAULT_MODEL,
+            "started": time.time(), "question_file": out_rel,
+            "question": stem}
+    with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
 
 
 def start_mcq_build_run(form):
@@ -4187,11 +4309,49 @@ per held-out call, so it takes minutes, not seconds.</pre>
         one, with its probability on each. With no options it answers in its
         own words, from the transcript and, where that does not say, from what
         it knows.</div>
+      <div class="askrow" style="margin-top:10px">
+        <label for="mcqqsaved" style="margin:0">Saved question</label>
+        <select id="mcqqsaved" style="width:auto; flex:1"></select>
+      </div>
+      <div id="mcqqsavedinfo"></div>
       <textarea id="mcqquestion" style="min-height:76px; margin-top:10px"
         placeholder="What does the caller want the person to do?&#10;&#10;Who does the caller say they are? A) a bank B) a government office C) a company D) not said"></textarea>
       <div class="askrow"><span class="hint" id="mcqqkind"></span></div>
       <button class="go" id="mcqqgo">Ask my question</button>
       <div class="hint" id="mcqqerr" style="color:var(--bad)"></div>
+
+      <details class="kb" id="mcqtrain" style="margin-top:14px">
+        <summary>Train this question on a dataset</summary>
+        <div class="kbbody">
+        <div class="hint" style="margin-top:0">The model answers the question above in a few words
+          about a sample of the dataset's calls, half scam and half not, then
+          groups those answers into a few options. Each sampled call is put
+          back as a multiple choice over them, which counts how many scam and
+          legitimate calls land on each option. The question and its options
+          are saved in <code>knowledge/questions/</code>; pick it as a saved
+          question and asking it uses the options from that file. A question
+          that lists its own options keeps them and is only counted.</div>
+        <label for="mcqtds">Dataset</label>
+        <select id="mcqtds"></select>
+        <div class="askrow" style="margin-top:8px">
+          <label for="mcqtcalls" style="margin:0">Calls</label>
+          <input type="text" id="mcqtcalls" class="num" spellcheck="false">
+          <label for="mcqtopts" style="margin:0">at most</label>
+          <input type="text" id="mcqtopts" class="num" spellcheck="false">
+          <span class="hint">options</span>
+        </div>
+        <label for="mcqtname">Save as knowledge/questions/</label>
+        <input type="text" id="mcqtname" spellcheck="false">
+        <label class="inline">
+          <input type="checkbox" id="mcqtover">
+          <span><span class="name">Replace a saved question of that name</span></span>
+        </label>
+        <button class="go" id="mcqtgo">Train</button>
+        <div class="hint" id="mcqterr" style="color:var(--bad)"></div>
+        <div class="hint" id="mcqtcost"></div>
+        <pre class="log" id="mcqtlog" hidden></pre>
+        </div>
+      </details>
     </div>
     <div id="mcqqanswers"></div>
     </div>
@@ -6984,6 +7144,8 @@ function paintVerdict(r) {
 // a P(scam). Its own state, like every other page.
 let MCQ = null, mcqFile = null, mcqOnto = null;
 let mcqBuildRun = null, mcqBuildTimer = null;
+// the saved question picked for "Your own question", and a training run
+let mcqSaved = null, mcqTrainRun = null, mcqTrainTimer = null;
 
 async function mcqBoot() {
   const cfg = await api('/api/mcq/config');
@@ -7016,7 +7178,18 @@ async function mcqBoot() {
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
   $('mcqqgo').onclick = mcqQuestion;
-  $('mcqquestion').addEventListener('input', mcqQuestionKind);
+  $('mcqquestion').addEventListener('input', mcqQuestionEdited);
+  $('mcqqsaved').onchange = () => mcqSavedPick($('mcqqsaved').value);
+  $('mcqtds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)} — ${d.rows === null ? '?' : d.rows} rows</option>`
+  ).join('');
+  $('mcqtcalls').value = cfg.train_calls;
+  $('mcqtopts').value = cfg.train_options;
+  for (const id of ['mcqtcalls', 'mcqquestion'])
+    $(id).addEventListener('input', mcqTrainCost);
+  $('mcqtname').addEventListener('input', () => { $('mcqtname').dataset.typed = '1'; });
+  $('mcqtgo').onclick = mcqTrain;
+  mcqSavedList(cfg.questions, null);
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value});
   $('mcqsave').onclick = mcqSave;
@@ -7192,7 +7365,133 @@ function mcqPaintAnswer(r) {
 
 // Say, as it is typed, which kind of question this will be. A rough mirror
 // of mcq_ontology.parse_options - the server decides; this is only a hint.
+// ---- saved (trained) questions: the options come from their JSON file
+function mcqSavedList(list, pick) {
+  $('mcqqsaved').innerHTML = '<option value="">none - ask the question as typed</option>'
+    + list.map(q => `<option value="${esc(q.path)}">${esc(q.name)} — `
+      + `${q.options} options${q.dataset ? ', trained on ' + esc(q.dataset) : ''}</option>`).join('');
+  $('mcqqsaved').value = pick && list.some(q => q.path === pick) ? pick : '';
+  return mcqSavedPick($('mcqqsaved').value);
+}
+
+async function mcqSavedPick(path) {
+  $('mcqqerr').textContent = '';
+  if (!path) { mcqSaved = null; $('mcqqsavedinfo').innerHTML = ''; mcqQuestionKind(); return; }
+  const q = await api('/api/mcq/saved?path=' + encodeURIComponent(path));
+  if (q.error) { mcqSaved = null; $('mcqqerr').textContent = q.error; return; }
+  mcqSaved = q;
+  $('mcqquestion').value = q.prompt;
+  $('mcqqsavedinfo').innerHTML = mcqSavedInfo(q);
+  mcqQuestionKind();
+  mcqTrainCost();
+}
+
+function mcqSavedInfo(q) {
+  const t = q.trained_on || {};
+  const rows = q.options.map(o => `<tr><td>${o.letter}</td>`
+    + `<td class="optname">${esc(o.text)}</td>`
+    + `<td>${o.calls.scam}</td><td>${o.calls.legit}</td></tr>`).join('');
+  return `<div class="hint">Options from <code>${esc(q.path)}</code>`
+    + (t.dataset ? ` &mdash; trained on ${esc(t.dataset)}, ${t.calls} calls `
+       + `(${t.scam} scam, ${t.legit} not)${t.date ? ', ' + esc(t.date) : ''}` : '')
+    + (q.options_from ? `; ${esc(q.options_from)}` : '') + '.</div>'
+    + `<div class="scroll"><table class="opts"><tr><th></th><th>option</th>`
+    + `<th>scam calls</th><th>legit calls</th></tr>${rows}</table></div>`;
+}
+
+// typing over a saved question's text asks the typed one instead
+function mcqQuestionEdited() {
+  if (mcqSaved && $('mcqquestion').value.trim() !== mcqSaved.prompt) {
+    mcqSaved = null;
+    $('mcqqsaved').value = '';
+    $('mcqqsavedinfo').innerHTML = '';
+  }
+  mcqQuestionKind();
+}
+
+function mcqTrainName() {
+  const words = $('mcqquestion').value.split('\n')[0].toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ').trim().split(' ')
+    .filter(w => w && !['what', 'does', 'do', 'is', 'the', 'a', 'an', 'of', 'to',
+                       'which', 'who', 'how', 'did', 'are'].includes(w));
+  return (words.slice(0, 5).join('_') || 'question').slice(0, 50);
+}
+
+function mcqTrainCost() {
+  const q = $('mcqquestion').value;
+  const n = parseInt($('mcqtcalls').value, 10) || 0;
+  // named after the question until the name is typed over
+  if (!$('mcqtname').dataset.typed && !mcqTrainRun)
+    $('mcqtname').value = mcqTrainName() + '.json';
+  const listed = /multiple choice/.test($('mcqqkind').textContent) && !mcqSaved;
+  $('mcqtcost').textContent = !q.trim() || !n ? ''
+    : listed ? `${n} requests: your options are kept, each call is only counted`
+    : `${2 * n + 1} requests: a short answer per call, one to group them, `
+      + 'and one multiple choice per call';
+}
+
+async function mcqTrain() {
+  $('mcqterr').textContent = '';
+  const q = $('mcqquestion').value.trim();
+  if (!q) { $('mcqterr').textContent = 'type the question above first'; return; }
+  const name = $('mcqtname').value.trim();
+  const res = await api('/api/mcq/train_question', {
+    question: q, dataset: $('mcqtds').value, calls: $('mcqtcalls').value,
+    options: $('mcqtopts').value, name: 'knowledge/questions/' + name,
+    overwrite: $('mcqtover').checked});
+  if (res.error) { $('mcqterr').textContent = res.error; return; }
+  mcqTrainRun = {id: res.id, path: res.question_file};
+  $('mcqtgo').disabled = true;
+  $('mcqtgo').textContent = 'Training…';
+  $('mcqtlog').hidden = false;
+  $('mcqtlog').textContent = 'starting…';
+  mcqTrainPoll();
+}
+
+async function mcqTrainPoll() {
+  if (!mcqTrainRun) return;
+  const r = await runLog(mcqTrainRun.id);
+  clearTimeout(mcqTrainTimer);
+  if (r.error) {
+    if ((POLL_FAILS['mcqTrainPoll'] = (POLL_FAILS['mcqTrainPoll'] || 0) + 1) < 5) {
+      mcqTrainTimer = setTimeout(mcqTrainPoll, 2000);
+    } else {
+      $('mcqtlog').textContent = 'lost contact with the run: ' + r.error;
+      mcqTrainDone();
+    }
+    return;
+  }
+  POLL_FAILS['mcqTrainPoll'] = 0;
+  const log = $('mcqtlog');
+  const atEnd = log.scrollTop + log.clientHeight >= log.scrollHeight - 20;
+  log.textContent = r.text || '(no output yet)';
+  if (atEnd) log.scrollTop = log.scrollHeight;
+  if (runOver(r)) {
+    const path = mcqTrainRun.path;
+    mcqTrainDone();
+    const l = await api('/api/mcq/questions');
+    if (!l.error) {
+      const ok = l.questions.some(q => q.path === path) && r.status === 'done';
+      await mcqSavedList(l.questions, ok ? path : null);
+      if (!ok) $('mcqterr').textContent = 'training did not finish - see the log';
+    }
+    return;
+  }
+  mcqTrainTimer = setTimeout(mcqTrainPoll, 1200);
+}
+
+function mcqTrainDone() {
+  mcqTrainRun = null;
+  $('mcqtgo').disabled = false;
+  $('mcqtgo').textContent = 'Train';
+}
+
 function mcqQuestionKind() {
+  if (mcqSaved) {
+    $('mcqqkind').textContent = `saved question - multiple choice over the `
+      + `${mcqSaved.options.length} options in its file`;
+    return;
+  }
   const q = $('mcqquestion').value;
   const lines = q.split('\n').filter(l => /^\s*(\(?([A-La-l]|\d{1,2})[).:]|[-*\u2022])\s+\S/.test(l));
   const inline = /(^|\s)\(?[Aa]\)\s*\S.*\s\(?[Bb]\)\s*\S/.test(q);
@@ -7212,7 +7511,9 @@ async function mcqQuestion() {
   if (!q) { $('mcqqerr').textContent = 'type a question'; return; }
   $('mcqqgo').disabled = true;
   $('mcqqgo').textContent = 'Asking…';
-  const r = await api('/api/mcq/question', {transcript: text, question: q});
+  const r = await api('/api/mcq/question', mcqSaved
+    ? {transcript: text, saved: mcqSaved.path}
+    : {transcript: text, question: q});
   $('mcqqgo').disabled = false;
   $('mcqqgo').textContent = 'Ask my question';
   if (r.error) { $('mcqqerr').textContent = r.error; return; }
@@ -7234,10 +7535,13 @@ function mcqQuestionCard(r) {
       ${r.truncated ? '<div class="hint">The answer ran out of room and was cut off.</div>' : ''}
       ${foot}</div>`;
   }
+  const sv = r.saved;
   const rows = r.options.map((o, i) => `<tr class="${i === r.choice ? 'chosen' : ''}">
       <td>${o.letter}</td><td class="optname">${esc(o.text)}</td>
       <td class="optbar"><div class="bar"><i style="width:${(100 * o.p).toFixed(1)}%"></i></div></td>
-      <td>${(100 * o.p).toFixed(1)}%</td></tr>`).join('');
+      <td>${(100 * o.p).toFixed(1)}%</td>
+      ${sv ? `<td class="muted" title="training calls that landed on this option">`
+        + `${o.calls.scam} scam / ${o.calls.legit} legit</td>` : ''}</tr>`).join('');
   const pick = r.choice === null || r.choice === undefined ? null : r.options[r.choice];
   return `<div class="card">
     <div class="cap">Your question</div>
@@ -7249,6 +7553,11 @@ function mcqQuestionCard(r) {
     <div class="scroll" style="margin-top:10px"><table class="opts">${rows}</table></div>
     ${r.how === 'letter' ? '<div class="hint">This Ollama returned no probabilities, '
       + 'so only the letter it answered is known.</div>' : ''}
+    ${sv ? `<div class="hint">Options from the saved question <code>${esc(sv.path)}</code>`
+      + (sv.trained_on && sv.trained_on.dataset ? `, trained on ${esc(sv.trained_on.dataset)}` : '')
+      + (r.scam_lean === null || r.scam_lean === undefined ? '.'
+         : `. Weighted by this answer, ${(100 * r.scam_lean).toFixed(0)}% of the training `
+           + 'calls that gave it were scams.') + '</div>' : ''}
     ${foot}</div>`;
 }
 
