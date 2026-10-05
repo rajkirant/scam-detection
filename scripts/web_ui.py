@@ -2517,20 +2517,9 @@ def mcq_path(rel):
 
 
 def mcq_datasets():
-    """The datasets, each with the columns it keeps a category in - the ones
-    Build can make options from."""
-    import csv
-    out = []
-    for d in datasets():
-        cols = []
-        try:
-            with open(PROJECT_DIR / d["path"], newline="",
-                      encoding="utf-8-sig", errors="replace") as f:
-                cols = mcq_ontology.category_columns(next(csv.reader(f), []))
-        except OSError:
-            pass
-        out.append(dict(d, category_columns=cols))
-    return out
+    """The datasets. Any of them can be built from: the categories are read
+    from the transcripts, not from a column."""
+    return datasets()
 
 
 def mcq_config():
@@ -2543,6 +2532,8 @@ def mcq_config():
            "max_options": mcq_ontology.MAX_OPTIONS,
            "questions": mcq_ontology.list_questions(),
            "train_calls": mcq_ontology.TRAIN_CALLS,
+           "build_calls": mcq_ontology.BUILD_CALLS,
+           "build_options": mcq_ontology.BUILD_OPTIONS,
            "train_options": mcq_ontology.TRAIN_OPTIONS}
     # ollama being down is a normal state for this page to be in
     try:
@@ -2755,20 +2746,23 @@ def start_mcq_train_run(form):
 
 
 def start_mcq_build_run(form):
-    """Build an ontology from a dataset's categories. Detached and logged like
-    every other run: without --describe it is instant, with it the model reads
-    a few calls of every category and that takes a minute or two."""
+    """Build the category question from a dataset's transcripts: the model
+    reads a sample of calls, names and groups their categories, and puts
+    each call back as the multiple choice to give every category a verdict.
+    Detached and logged like every other run."""
     ds = form.get("dataset", "")
-    known = {d["path"]: d for d in mcq_datasets()}
-    if ds not in known:
+    if ds not in {d["path"] for d in mcq_datasets()}:
         raise ValueError("unknown dataset")
-    cols = known[ds]["category_columns"]
-    if not cols:
-        raise ValueError("%s has no category column, so there is nothing in "
-                         "it to build options from" % known[ds]["name"])
-    column = str(form.get("column") or cols[0])
-    if column not in cols:
-        raise ValueError("pick one of: " + ", ".join(cols))
+    try:
+        calls = int(form.get("calls") or mcq_ontology.BUILD_CALLS)
+        nopt = int(form.get("options") or mcq_ontology.BUILD_OPTIONS)
+    except (TypeError, ValueError):
+        raise ValueError("calls and options must be whole numbers")
+    if not 2 <= calls <= 500:
+        raise ValueError("read between 2 and 500 calls")
+    if not 2 <= nopt <= mcq_ontology.MAX_OPTIONS:
+        raise ValueError("options must be between 2 and %d"
+                         % mcq_ontology.MAX_OPTIONS)
     path = mcq_path(form.get("name"))
     if path.exists():
         if not mcq_ontology.is_mcq_ontology(path):
@@ -2777,22 +2771,14 @@ def start_mcq_build_run(form):
         if not form.get("overwrite"):
             raise ValueError("knowledge/%s already exists - pick another "
                              "name, or tick replace" % path.name)
-    # the options without the model's descriptions: no model, a second at
-    # most - so a column that cannot give a verdict is refused here, with the
-    # reason, rather than in the log of a run that has already started
-    mcq_ontology.build(ds, column)
-    describe = bool(form.get("describe"))
-    if describe:
-        running = [r for r in all_runs() if r["status"] == "running"]
-        if running:
-            raise ValueError("a run is already going (%s). Stop it first, or "
-                             "untick the model descriptions - they want the "
-                             "model it is using." % running[0]["id"])
+    running = [r for r in all_runs() if r["status"] == "running"]
+    if running:
+        raise ValueError("a run is already going (%s) - building wants the "
+                         "model it is using. Stop it first, or wait."
+                         % running[0]["id"])
 
     flags = ["build", "--csv", ds, "--out", "knowledge/" + path.name,
-             "--column", column, "--force"]
-    if describe:
-        flags.append("--describe")
+             "--calls", str(calls), "--options", str(nopt), "--force"]
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime("%Y%m%d_%H%M%S") + "_mcqbuild_" + path.stem
@@ -2821,8 +2807,8 @@ def start_mcq_build_run(form):
     LIVE[run_id] = proc
     meta = {"id": run_id, "pid": proc.pid, "kind": "mcq_build",
             "model_name": path.name, "label": "build options · " + path.name,
-            "dataset": ds, "baseline": "mcq_build:" + path.stem, "limit": "-",
-            "model": llm_judge.DEFAULT_MODEL if describe else "",
+            "dataset": ds, "baseline": "mcq_build:" + path.stem,
+            "limit": str(calls), "model": llm_judge.DEFAULT_MODEL,
             "started": time.time(), "ontology": "knowledge/" + path.name}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
@@ -4233,24 +4219,26 @@ per held-out call, so it takes minutes, not seconds.</pre>
 
     <div class="sect">
       <div class="secthead">Build options from a dataset</div>
-      <div class="hint" style="margin-top:0">One option per category the
-        dataset's transcripts are filed under, its verdict the label most of
-        those calls carry. Only datasets that record a category can be used.</div>
+      <div class="hint" style="margin-top:0">The model reads a sample of the
+        dataset's calls, half scam and half not, names each one's category,
+        and groups those into a few categories. Each call is then asked the
+        category question, and each category's verdict is the label most of
+        its calls carry. No column of the dataset is used.</div>
 
       <label for="mcqbds">Dataset</label>
       <select id="mcqbds"></select>
-      <label for="mcqbcol">Category column</label>
-      <select id="mcqbcol"></select>
+      <div class="askrow" style="margin-top:8px">
+        <label for="mcqbcalls" style="margin:0">Calls</label>
+        <input type="text" id="mcqbcalls" class="num" spellcheck="false">
+        <label for="mcqbopts" style="margin:0">at most</label>
+        <input type="text" id="mcqbopts" class="num" spellcheck="false">
+        <span class="hint">options</span>
+      </div>
+      <div class="hint" id="mcqbcost"></div>
       <label for="mcqbname">Save as</label>
       <input type="text" id="mcqbname" spellcheck="false">
 
       <label class="inline" style="margin-top:14px">
-        <input type="checkbox" id="mcqbdesc" checked>
-        <span><span class="name">Have the model describe each category</span>
-        <span class="note">it reads three calls of each and writes the option
-          text; otherwise the option is just the category's name</span></span>
-      </label>
-      <label class="inline">
         <input type="checkbox" id="mcqbover">
         <span><span class="name">Replace a file of that name</span>
         <span class="note">the old one is overwritten, not kept</span></span>
@@ -4399,9 +4387,9 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <pre class="log" id="mcqbuildlog">No build run yet.
 
 Pick a dataset under "Build options from a dataset" on the left and press
-Build. The options come from the categories its transcripts are filed under;
-with the model descriptions ticked it also reads three calls of each category
-and writes the option text, which takes a minute or two.</pre>
+Build. The model reads a sample of its calls, names each one's category,
+groups those into a few categories, then asks each call the category
+question to give every category a verdict. Each call takes a few seconds.</pre>
     </div>
 
     <div id="q-about" hidden>
@@ -4423,20 +4411,21 @@ and writes the option text, which takes a minute or two.</pre>
         return probabilities, the category is the letter it answered and
         P(scam) is 100% or 0%.</p>
 
-        <p><strong>The options come from the transcripts.</strong> Build makes
-        one option per category in a dataset's category column, with the verdict
-        that category's calls carry, and can have the model describe each
-        category from a few of its calls. Scam and legitimate options are
+        <p><strong>The options come from reading the transcripts.</strong>
+        Build has the model read a sample of a dataset's calls and name each
+        one's category in a few words, then group those names into a few
+        categories. Each sampled call is then asked the category question, and
+        each category gets the verdict most of the calls put in it carry. No
+        column of the dataset is used. Scam and legitimate options are
         interleaved so that a preference for early letters cannot line up with
-        one verdict. Edit the file by hand afterwards if a description needs
+        one verdict. Edit the file by hand afterwards if an option's text needs
         it.</p>
 
-        <p><strong>Read the score with its source in mind.</strong> Scoring a
-        dataset with options built from that same dataset's categories only asks
-        the model to recognise the topic &mdash; on
-        <code>huggingface_1600</code> the topic alone decides the label. The
-        content-deletion test on the Benchmark page, and datasets the options
-        were not built from, are the fairer reads.</p>
+        <p><strong>Read the score with its source in mind.</strong> When the
+        options were built from the dataset being scored, some of the scored
+        calls set the verdicts. The content-deletion test on the Benchmark
+        page, and datasets the options were not built from, are the fairer
+        reads.</p>
       </div>
     </div>
   </div>
@@ -6469,10 +6458,9 @@ function evalCard(d) {
       + esc(d.question || '') + '</em> P(scam) was measured from the model\'s '
       + 'probabilities on ' + (d.measured ?? '?') + ' of ' + d.calls + ' calls.');
     if (d.built_from && d.built_from.split('/').pop() === d.dataset.split('/').pop())
-      notes.push('<strong>These options were built from this dataset\'s own '
-        + 'categories.</strong> The model only has to recognise the topic, and '
-        + 'here the topic was what the label followed. Score a dataset the '
-        + 'options were not built from for the number worth quoting.');
+      notes.push('<strong>These options were built from this dataset.</strong> '
+        + 'Some of the calls scored here set the options\' verdicts. Score a '
+        + 'dataset the options were not built from for the number worth quoting.');
   } else if (d.kind === 'llm') {
     notes.push(d.profile
       ? 'Scored under the fitted prompt <code>models/' + esc(d.profile)
@@ -7167,13 +7155,12 @@ async function mcqBoot() {
   $('mcqeds').innerHTML = cfg.datasets.map(d =>
     `<option value="${esc(d.path)}">${esc(d.name)} — ${d.rows === null ? '?' : d.rows} rows</option>`
   ).join('');
-  // Build can only use a dataset that files its calls under a category
-  $('mcqbds').innerHTML = cfg.datasets.map(d => `<option value="${esc(d.path)}"`
-    + `${d.category_columns.length ? '' : ' disabled'}>${esc(d.name)}${
-      d.category_columns.length ? '' : ' (no category column)'}</option>`).join('');
-  const firstOk = cfg.datasets.find(d => d.category_columns.length);
-  if (firstOk) $('mcqbds').value = firstOk.path;
+  $('mcqbds').innerHTML = cfg.datasets.map(d =>
+    `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
+  $('mcqbcalls').value = cfg.build_calls;
+  $('mcqbopts').value = cfg.build_options;
   $('mcqbds').onchange = mcqBuildForm;
+  $('mcqbcalls').addEventListener('input', mcqBuildForm);
   mcqBuildForm();
 
   $('mcqfile').onchange = () => mcqLoad($('mcqfile').value);
@@ -7267,7 +7254,8 @@ function mcqPaint(r) {
   const b = o.built_from;
   $('mcqbuilt').innerHTML = b && b.dataset
     ? `built from <code>${esc(b.dataset)}</code>${b.column ? ', column <code>'
-      + esc(b.column) + '</code>' : ''}` : '';
+      + esc(b.column) + '</code>' : b.read_from === 'transcripts'
+      ? `, read from ${b.calls} of its transcripts` : ''}` : '';
 }
 
 function mcqSize() {
@@ -7611,19 +7599,19 @@ async function mcqSave() {
 
 function mcqBuildForm() {
   const d = MCQ.datasets.find(x => x.path === $('mcqbds').value);
-  const cols = d ? d.category_columns : [];
-  $('mcqbcol').innerHTML = cols.map(c => `<option>${esc(c)}</option>`).join('');
-  $('mcqbgo').disabled = !cols.length;
   if (d) $('mcqbname').value = 'mcq_' + d.name.replace(/\.csv$/i, '')
     .replace(/[^A-Za-z0-9_-]+/g, '_') + '.json';
+  const n = parseInt($('mcqbcalls').value, 10) || 0;
+  $('mcqbcost').textContent = n ? `${2 * n + 1} requests: a category per call, `
+    + 'one to group them, and the question per call' : '';
 }
 
 async function mcqBuild() {
   $('mcqberr').textContent = '';
   const name = $('mcqbname').value.trim();
   const res = await api('/api/mcq/build', {
-    dataset: $('mcqbds').value, column: $('mcqbcol').value,
-    name: 'knowledge/' + name, describe: $('mcqbdesc').checked,
+    dataset: $('mcqbds').value, calls: $('mcqbcalls').value,
+    options: $('mcqbopts').value, name: 'knowledge/' + name,
     overwrite: $('mcqbover').checked});
   if (res.error) { $('mcqberr').textContent = res.error; return; }
   mcqBuildRun = {id: res.id, path: res.ontology};

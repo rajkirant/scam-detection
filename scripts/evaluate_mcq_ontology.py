@@ -116,9 +116,9 @@ def main():
     print("  model   : %s" % ollama_ctx.MODEL)
     built = (onto.get("built_from") or {}).get("dataset")
     if built and Path(built).name == Path(args.csv).name:
-        print("  NOTE the options were built from this dataset's own "
-              "categories: the model only has\n       to recognise the topic, "
-              "so read the score with that in mind.")
+        print("  NOTE the options were built from this dataset: some of the "
+              "calls scored here\n       set the options' verdicts - a "
+              "dataset they were not built from is the fairer read.")
     print("  context window %s for the run"
           % MCQ.presize([t for t, _ in data], onto))
     print("=" * 74)

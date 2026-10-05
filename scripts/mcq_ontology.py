@@ -22,12 +22,12 @@ answer is a distribution over the categories rather than a single pick:
 
 One request per call, generating a token or two.
 
-The options come from the transcripts. `build` makes them from a dataset's
-category column (type, scam_type, topic, ...): one option per category, its
-verdict the label most of that category's calls carry, and - with --describe -
-a one-line description the model writes after reading a few of those calls.
-Edit the JSON by hand afterwards if a description needs it; nothing else
-reads the descriptions.
+The options come from reading the transcripts, never from a column of the
+dataset. `build` has the model read a balanced sample of a dataset's calls:
+it names each call's category in a few words, groups those names into a few
+categories, and then puts each call back as this multiple choice. Each
+category's verdict is the label most of the calls it got carry. Edit the JSON
+by hand afterwards if an option's text needs it.
 
 An Ollama too old to return logprobs still answers the letter: the category
 is then that letter, P(scam) 1 or 0, and the run says so.
@@ -35,7 +35,7 @@ is then that letter, P(scam) 1 or 0, and the run says so.
     python scripts/mcq_ontology.py ask --text "Hello, this is your bank ..."
     python scripts/mcq_ontology.py evaluate --csv datasets/zhi_english_646.csv --limit 40
     python scripts/mcq_ontology.py build --csv datasets/huggingface_1600.csv \\
-        --out knowledge/mcq_huggingface.json --describe
+        --out knowledge/mcq_huggingface.json --calls 40
 
 Your own question can be trained on a dataset too: the model answers it in a
 few words about a sample of calls, groups the answers into a few options, and
@@ -77,10 +77,6 @@ MAX_OPTIONS = 12                 # letters A-L: past that it stops being "a few"
 LETTERS = "ABCDEFGHIJKL"
 ANSWER_TOKENS = 3                # the letter, and room for a space before it
 TOP_LOGPROBS = 20
-
-# columns a dataset may keep each call's category in, most specific first
-CATEGORY_COLS = ("category", "type", "scam_type", "topic", "call_type",
-                 "subtype", "class_name")
 
 HEAD = """You are a scam detection analyst. Read this phone call transcript.
 
@@ -355,173 +351,6 @@ def judge_all(transcripts, onto, parallel=None):
             yield res
 
 
-# ----------------------------------------------- options from the transcripts
-
-def category_columns(header):
-    """The columns of a dataset that may hold each call's category."""
-    by = {(h or "").lstrip("\ufeff").strip().lower(): h for h in header}
-    return [by[c] for c in CATEGORY_COLS if c in by]
-
-
-def _name(cat):
-    words = cat.replace("_", " ").replace("-", " ").strip()
-    return words.upper() if len(words) <= 3 else words[:1].upper() + words[1:]
-
-
-def describe(texts, timeout=300):
-    """What a category of call is about, in one line, written by the model
-    after reading a few of its calls. None when it gave nothing usable."""
-    calls = "\n\n".join("Call %d:\n%s" % (i, " ".join(t.split()[:220]))
-                        for i, t in enumerate(texts, 1))
-    prompt = ("Here are %d phone call transcripts that all belong to the same "
-              "category of call.\n\n%s\n\nIn one short line of at most 15 "
-              "words, say what this category of call is about: who is calling "
-              "and what they want. Do not say whether the calls are scams or "
-              "legitimate.\nCategory:" % (len(texts), calls))
-    num_ctx = ollama_ctx.fit_num_ctx(prompt, 60, where="mcq describe")
-    try:
-        out = llm_judge.generate(prompt, max_tokens=60, num_ctx=num_ctx,
-                                 timeout=timeout)
-    except RuntimeError as e:
-        print("    could not describe it: %s" % e)
-        return None
-    line = (out.get("response") or "").strip().split("\n")[0]
-    line = line.strip().strip('"').strip()
-    return line or None
-
-
-def build(csv_path, column=None, describe_with_model=False, examples=3,
-          max_options=MAX_OPTIONS, seed=42):
-    """An ontology whose options are the categories in a dataset's transcripts.
-
-    One option per category, biggest first; past max_options the smallest are
-    merged into one "other" option. Each verdict is the label most of that
-    category's calls carry; a category split exactly evenly is marked
-    "mixed" and given scam, the cautious side, and a column in which every
-    category is split that way is refused - it does not separate scam from
-    legitimate at all. Scam and legitimate options are interleaved so that a
-    preference for early letters cannot line up with one verdict.
-    """
-    rows = dataset_io.read_rows(Path(csv_path))
-    tcol, lcol, _ = dataset_io.columns(rows, csv_path)
-    cols = category_columns(rows[0].keys())
-    if column:
-        col = next((h for h in rows[0].keys()
-                    if h.lstrip("\ufeff").strip().lower() == column.lower()), None)
-        if col is None:
-            raise ValueError("%s has no column %r (it has: %s)"
-                             % (csv_path, column, ", ".join(rows[0].keys())))
-    elif cols:
-        col = cols[0]
-    else:
-        raise ValueError(
-            "%s has no category column (looked for: %s), so there is nothing "
-            "in it to build options from" % (csv_path, ", ".join(CATEGORY_COLS)))
-
-    groups = {}
-    blank = 0
-    for r in rows:
-        text = (r[tcol] or "").strip()
-        cat = (r[col] or "").strip()
-        if not text:
-            continue
-        if not cat:
-            blank += 1
-            continue
-        groups.setdefault(cat, []).append((text, dataset_io.is_scam(r[lcol])))
-    if len(groups) < 2:
-        raise ValueError("column %r has %d categor%s - a question needs at "
-                         "least two options" % (col, len(groups),
-                                                "y" if len(groups) == 1 else "ies"))
-
-    # A column whose values each hold as many scam calls as legitimate ones
-    # cannot give a verdict, however its values are grouped. Paired-196 is
-    # built that way on purpose: every scam call has a legitimate call
-    # written on the same topic. Caught here, before small values are merged
-    # into "other", where it would only show up as a misleading verdict.
-    even = [c for c, v in groups.items()
-            if sum(1 for _, y in v if y) * 2 == len(v)]
-    in_even = sum(len(groups[c]) for c in even)
-    total = sum(len(v) for v in groups.values())
-    if in_even >= 0.9 * total:
-        pairs = sum(1 for c in even if len(groups[c]) == 2)
-        raise ValueError(
-            "%d of the %d values in %r have exactly as many scam calls as "
-            "legitimate ones (%d of %d calls)%s, so the category says nothing "
-            "about the label and this column cannot be turned into a verdict. "
-            "Ask the calls a question they differ on instead: type it under "
-            "\"Your own question\" on the Ask tab and train it on this dataset"
-            % (len(even), len(groups), col, in_even, total,
-               " - %d of them are one scam call paired with one legitimate "
-               "call on the same %s" % (pairs, col) if pairs >= len(even) / 2
-               else ""))
-
-    cats = sorted(groups, key=lambda c: (-len(groups[c]), c))
-    merged = None
-    if len(cats) > max_options:
-        keep, rest = cats[:max_options - 1], cats[max_options - 1:]
-        merged = "other" if "other" not in keep else "other_merged"
-        pooled = [x for c in rest for x in groups.pop(c)]
-        groups[merged] = pooled
-        cats = keep + [merged]
-
-    options = []
-    for cat in cats:
-        calls = groups[cat]
-        s = sum(1 for _, y in calls if y)
-        l = len(calls) - s
-        o = {"id": cat, "text": _name(cat),
-             "verdict": "scam" if s >= l else "legit",
-             "calls": {"scam": s, "legit": l}}
-        if s == l:
-            o["mixed"] = True
-        if cat == merged:
-            o["text"] = "Something else"
-            o["merged"] = sorted(rest)
-        options.append(o)
-    if all(o.get("mixed") for o in options):
-        raise ValueError(
-            "every category in %r is split evenly between scam and legitimate "
-            "calls, so the category says nothing about the label - this "
-            "column cannot be turned into a verdict" % col)
-    if not {"scam", "legit"} <= {o["verdict"] for o in options}:
-        raise ValueError(
-            "every category in %r is mostly %s, so every call would get the "
-            "same verdict" % (col, options[0]["verdict"]))
-
-    if describe_with_model:
-        rng = random.Random(seed)
-        for o in options:
-            texts = [t for t, _ in groups[o["id"]]]
-            pick = rng.sample(texts, min(examples, len(texts)))
-            print("  describing %-24s from %d of its %d calls ..."
-                  % (o["id"][:24], len(pick), len(texts)), flush=True)
-            d = describe(pick)
-            if d:
-                o["text"] = "%s: %s" % (_name(o["id"]), d)
-                print("    %s" % o["text"])
-
-    scam = [o for o in options if o["verdict"] == "scam"]
-    legit = [o for o in options if o["verdict"] == "legit"]
-    mixed = []
-    for i in range(max(len(scam), len(legit))):
-        mixed += scam[i:i + 1] + legit[i:i + 1]
-
-    return {
-        "id": "call_category",
-        "prompt": "Which category does this call belong to?",
-        "about": ("One question: the category of the call. The options are "
-                  "the categories in the %r column of %s; each verdict is the "
-                  "label most of that category's calls carry. Scam and "
-                  "legitimate options alternate." % (col, csv_path)),
-        "built_from": {"dataset": str(csv_path), "column": col,
-                       "calls": sum(len(v) for v in groups.values()),
-                       "no_category": blank,
-                       "described_by_model": bool(describe_with_model)},
-        "options": mixed,
-    }
-
-
 # ------------------------------------------------- your own question
 # Any question about one call, typed on the page. If the question lists its
 # own options - "A) ... B) ...", one per line, or "options: x / y / z" - it is
@@ -689,12 +518,13 @@ GROUP_TOKENS = 300
 NOT_SAID = "not said"
 
 
-def short_answer(transcript, stem, timeout=300):
+def short_answer(transcript, stem, instruction=None, timeout=300):
     """The model's answer to the question about one call, in a few words."""
     prompt = HEAD.format(transcript=transcript) + (
-        "Question: %s\n\nAnswer in a few words - at most 12 - from what the "
-        "transcript says. If the transcript does not say, answer \"%s\".\n"
-        "Short answer:" % (stem, NOT_SAID))
+        "Question: %s\n\n%s\nShort answer:"
+        % (stem, instruction or ("Answer in a few words - at most 12 - from "
+                                 "what the transcript says. If the transcript "
+                                 "does not say, answer \"%s\"." % NOT_SAID)))
     num_ctx = ollama_ctx.fit_num_ctx(prompt, SHORT_ANSWER_TOKENS,
                                      where="question training")
     out = llm_judge.generate(prompt, max_tokens=SHORT_ANSWER_TOKENS,
@@ -777,40 +607,37 @@ def sample_calls(csv_path, calls=TRAIN_CALLS, seed=42):
     return pick
 
 
-def train_question(csv_path, question_text, calls=TRAIN_CALLS,
-                   max_options=TRAIN_OPTIONS, seed=42, log=print):
-    """Train a question on a dataset; returns what goes in its JSON file."""
-    stem, listed = parse_options(question_text)
-    if not stem:
-        raise ValueError("type a question")
-    if len(listed) > MAX_OPTIONS:
-        raise ValueError("at most %d options - that question lists %d"
-                         % (MAX_OPTIONS, len(listed)))
-    if not 2 <= max_options <= MAX_OPTIONS:
-        raise ValueError("options must be between 2 and %d" % MAX_OPTIONS)
-    if not 2 <= calls <= 500:
-        raise ValueError("train on between 2 and 500 calls")
-    sample = sample_calls(csv_path, calls, seed)
-    n_scam = sum(1 for _, y in sample if y)
-    log("  question: %s" % stem)
-    log("  %d calls from %s (%d scam, %d not), seed %d"
-        % (len(sample), csv_path, n_scam, len(sample) - n_scam, seed))
-    longest = max((t for t, _ in sample), key=len)
-    t0 = time.time()
+def learn_options(sample, stem, listed=None, max_options=TRAIN_OPTIONS,
+                  instruction=None, log=print):
+    """The three steps shared by training a question and building an
+    ontology, over a sample of [(transcript, is_scam)]:
 
-    answers = []
+      1. the model answers `stem` about each call in a few words
+      2. it groups those answers into at most max_options options
+      3. each call is put back as a multiple choice over the options, which
+         counts the scam and legitimate calls that land on each
+
+    `listed` options skip steps 1 and 2. Returns {"options": texts,
+    "source": where they came from, "counts": [{"scam", "legit"}],
+    "answers": step 1's answers (None each when skipped), "picked": the
+    letter index each call landed on (None: unreadable), "measured",
+    "unreadable"}.
+    """
+    answers = [None] * len(sample)
+    steps = 1 if listed else 3
     if listed:
-        opts, source = listed, "listed in the question"
+        opts, source = list(listed), "listed in the question"
         log("  the question lists its own %d options, so they are kept: "
             "training only counts\n  which calls land on each" % len(opts))
     else:
-        log("\n  step 1 of 3: the model answers the question about each call "
-            "in a few words")
+        log("\n  step 1 of 3: the model %s in a few words"
+            % ("names each call's category" if stem == CATEGORY_QUESTION
+               else "answers the question about each call"))
         for i, (text, y) in enumerate(sample, 1):
-            a = short_answer(text, stem)
-            answers.append(a)
+            answers[i - 1] = short_answer(text, stem, instruction)
             log("    %2d/%d  %-5s  %s" % (i, len(sample),
-                                          "scam" if y else "legit", a[:90]))
+                                          "scam" if y else "legit",
+                                          answers[i - 1][:90]))
         log("\n  step 2 of 3: the model groups the %d answers into at most %d "
             "options" % (len(answers), max_options))
         opts, source = group_answers(stem, answers, max_options)
@@ -819,8 +646,9 @@ def train_question(csv_path, question_text, calls=TRAIN_CALLS,
         if source != "grouped by the model":
             log("    (%s)" % source)
 
-    log("\n  step %s: each call is put back as a multiple choice over the "
-        "options" % ("3 of 3" if not listed else "1 of 1"))
+    log("\n  step %d of %d: each call is put back as a multiple choice over "
+        "the options" % (steps, steps))
+    longest = max((t for t, _ in sample), key=len)
     ollama_ctx.fit_num_ctx(_mcq_prompt(longest, stem, opts), ANSWER_TOKENS + 2,
                            where="question training")
     counts = [{"scam": 0, "legit": 0} for _ in opts]
@@ -838,34 +666,180 @@ def train_question(csv_path, question_text, calls=TRAIN_CALLS,
         log("    %2d/%d  %-5s  %s %5.1f%%  %s"
             % (i, len(sample), "scam" if y else "legit", LETTERS[choice],
                100 * probs[choice], opts[choice][:70]))
+    if unread:
+        log("  %d call%s gave no readable letter"
+            % (unread, "" if unread == 1 else "s"))
+    return {"options": opts, "source": source, "counts": counts,
+            "answers": answers, "picked": picked, "measured": measured,
+            "unreadable": unread}
 
-    options = []
-    for i, (o, c) in enumerate(zip(opts, counts)):
-        options.append({"letter": LETTERS[i], "text": o, "calls": c})
+
+def _check_training(calls, max_options):
+    if not 2 <= max_options <= MAX_OPTIONS:
+        raise ValueError("options must be between 2 and %d" % MAX_OPTIONS)
+    if not 2 <= calls <= 500:
+        raise ValueError("train on between 2 and 500 calls")
+
+
+def _trained_on(csv_path, sample, seed, max_options, learned):
+    n_scam = sum(1 for _, y in sample if y)
+    return {"dataset": str(csv_path), "calls": len(sample), "scam": n_scam,
+            "legit": len(sample) - n_scam, "seed": seed,
+            "max_options": max_options, "model": llm_judge.DEFAULT_MODEL,
+            "measured": learned["measured"],
+            "unreadable": learned["unreadable"],
+            "date": time.strftime("%Y-%m-%d %H:%M")}
+
+
+def _answers(sample, learned):
+    return [{"label": "scam" if y else "legit", "answer": a,
+             "option": None if c is None else LETTERS[c]}
+            for (_, y), a, c in zip(sample, learned["answers"],
+                                    learned["picked"])]
+
+
+def train_question(csv_path, question_text, calls=TRAIN_CALLS,
+                   max_options=TRAIN_OPTIONS, seed=42, log=print):
+    """Train a question on a dataset; returns what goes in its JSON file."""
+    stem, listed = parse_options(question_text)
+    if not stem:
+        raise ValueError("type a question")
+    if len(listed) > MAX_OPTIONS:
+        raise ValueError("at most %d options - that question lists %d"
+                         % (MAX_OPTIONS, len(listed)))
+    _check_training(calls, max_options)
+    sample = sample_calls(csv_path, calls, seed)
+    n_scam = sum(1 for _, y in sample if y)
+    log("  question: %s" % stem)
+    log("  %d calls from %s (%d scam, %d not), seed %d"
+        % (len(sample), csv_path, n_scam, len(sample) - n_scam, seed))
+    t0 = time.time()
+    learned = learn_options(sample, stem, listed, max_options, log=log)
+    options = [{"letter": LETTERS[i], "text": o, "calls": c}
+               for i, (o, c) in enumerate(zip(learned["options"],
+                                              learned["counts"]))]
     log("\n  %-3s %-50s %5s %5s" % ("", "option", "scam", "legit"))
     for o in options:
         log("  %-3s %-50s %5d %5d" % (o["letter"], o["text"][:50],
                                       o["calls"]["scam"], o["calls"]["legit"]))
-    if unread:
-        log("  %d call%s gave no readable letter" % (unread,
-                                                    "" if unread == 1 else "s"))
     log("  %.0fs" % (time.time() - t0))
     return {
         "kind": "question",
         "prompt": stem,
         "asked": " ".join(str(question_text).split()),
         "options": options,
-        "options_from": source,
-        "trained_on": {"dataset": str(csv_path), "calls": len(sample),
-                       "scam": n_scam, "legit": len(sample) - n_scam,
-                       "seed": seed, "max_options": max_options,
-                       "model": llm_judge.DEFAULT_MODEL,
-                       "measured": measured, "unreadable": unread,
-                       "date": time.strftime("%Y-%m-%d %H:%M")},
-        "answers": [{"label": "scam" if y else "legit", "answer": a,
-                     "option": None if c is None else LETTERS[c]}
-                    for (_, y), a, c in zip(sample, answers or
-                                            [None] * len(sample), picked)],
+        "options_from": learned["source"],
+        "trained_on": _trained_on(csv_path, sample, seed, max_options, learned),
+        "answers": _answers(sample, learned),
+    }
+
+
+# ------------------------------------- the ontology, built from transcripts
+# The ontology's options are the categories the model finds when it reads a
+# dataset's calls - never a column of the dataset. It is the same three steps
+# as training a question: the model names each sampled call's category, groups
+# those names into a few categories, and puts each call back as a multiple
+# choice over them. Each category's verdict is then the label most of the
+# calls that landed on it carry.
+BUILD_CALLS = 40
+BUILD_OPTIONS = 8
+CATEGORY_QUESTION = "Which category does this call belong to?"
+CATEGORY_INSTRUCTION = (
+    "Name the category of this call in a few words - at most 8: what kind of "
+    "call it is, who is calling and what they want. Do not say whether it is "
+    "a scam or legitimate.")
+
+
+def _slug(text, taken):
+    base = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:30] or "option"
+    sid, k = base, 2
+    while sid in taken:
+        sid, k = "%s_%d" % (base, k), k + 1
+    taken.add(sid)
+    return sid
+
+
+def build(csv_path, calls=BUILD_CALLS, max_options=BUILD_OPTIONS, seed=42,
+          log=print):
+    """An ontology whose options are the categories the model reads in a
+    sample of a dataset's transcripts.
+
+    Each category's verdict is the label most of the sampled calls the model
+    put in it carry; one split exactly evenly is marked "mixed" and given
+    scam, the cautious side. A category no sampled call landed on has no
+    verdict to give and is dropped. Refused when what is left does not hold
+    at least one category of each verdict - then the categories the model
+    sees do not separate scam from legitimate calls in this dataset. Scam and
+    legitimate options are interleaved so that a preference for early
+    letters cannot line up with one verdict.
+    """
+    _check_training(calls, max_options)
+    sample = sample_calls(csv_path, calls, seed)
+    n_scam = sum(1 for _, y in sample if y)
+    log("  %d calls from %s (%d scam, %d not), seed %d; the model reads each "
+        "one" % (len(sample), csv_path, n_scam, len(sample) - n_scam, seed))
+    t0 = time.time()
+    learned = learn_options(sample, CATEGORY_QUESTION, None, max_options,
+                            CATEGORY_INSTRUCTION, log)
+
+    options, dropped, taken = [], [], set()
+    for text, c in zip(learned["options"], learned["counts"]):
+        if not c["scam"] + c["legit"]:
+            dropped.append(text)
+            continue
+        o = {"id": _slug(text, taken), "text": text,
+             "verdict": "scam" if c["scam"] >= c["legit"] else "legit",
+             "calls": dict(c)}
+        if c["scam"] == c["legit"]:
+            o["mixed"] = True
+        options.append(o)
+    log("\n  %-30s %-6s %5s %5s" % ("category", "verdict", "scam", "legit"))
+    for o in options:
+        log("  %-30s %-6s %5d %5d%s"
+            % (o["text"][:30], o["verdict"], o["calls"]["scam"],
+               o["calls"]["legit"], "  (split evenly)" if o.get("mixed")
+               else ""))
+    for d in dropped:
+        log("  %-30s dropped: no sampled call landed on it" % d[:30])
+    log("  %.0fs" % (time.time() - t0))
+
+    if len(options) < 2:
+        raise ValueError("the sampled calls landed on %d categor%s - a "
+                         "question needs at least two options. Try more calls"
+                         % (len(options), "y" if len(options) == 1 else "ies"))
+    if all(o.get("mixed") for o in options):
+        raise ValueError(
+            "every category the model found holds as many scam calls as "
+            "legitimate ones, so the category says nothing about the label "
+            "in this dataset. Ask the calls a question they differ on instead: "
+            "type it under \"Your own question\" and train it on this dataset")
+    if not {"scam", "legit"} <= {o["verdict"] for o in options}:
+        raise ValueError(
+            "every category the model found holds mostly %s calls, so every "
+            "call would get the same verdict - the categories do not separate "
+            "scam from legitimate calls in this dataset. Try more calls or "
+            "more options" % ("scam" if options[0]["verdict"] == "scam"
+                              else "legitimate"))
+
+    scam = [o for o in options if o["verdict"] == "scam"]
+    legit = [o for o in options if o["verdict"] == "legit"]
+    mixed = []
+    for i in range(max(len(scam), len(legit))):
+        mixed += scam[i:i + 1] + legit[i:i + 1]
+    built = _trained_on(csv_path, sample, seed, max_options, learned)
+    built.update({"read_from": "transcripts", "options_from": learned["source"],
+                  "dropped": dropped})
+    return {
+        "id": "call_category",
+        "prompt": CATEGORY_QUESTION,
+        "about": ("One question: the category of the call. The options are "
+                  "the categories the model found reading %d calls of %s; "
+                  "each verdict is the label most of the calls it put in that "
+                  "category carry. Scam and legitimate options alternate."
+                  % (len(sample), csv_path)),
+        "built_from": built,
+        "options": mixed,
+        "answers": _answers(sample, learned),
     }
 
 
@@ -1016,9 +990,9 @@ def run_evaluate(args):
     print("==> score  %s over %d calls" % (args.ontology, len(rows)))
     print("  %s  (%d options)" % (onto["prompt"], len(onto["options"])))
     if built and Path(built).name == Path(args.csv).name:
-        print("  NOTE these options were built from this dataset's own "
-              "categories, so the model\n       only has to recognise the "
-              "topic - read the score with that in mind.")
+        print("  NOTE these options were built from this dataset: some of "
+              "the calls scored here\n       set the options' verdicts - a "
+              "dataset they were not built from is the fairer read.")
     ctx = presize([r["text"] for r in rows], onto)
     print("  one request per call, context window %s" % ctx)
 
@@ -1072,19 +1046,15 @@ def run_build(args):
     out = Path(args.out)
     if out.exists() and not args.force:
         raise SystemExit("%s already exists - pass --force to replace it" % out)
-    print("==> build options from %s" % args.csv)
-    onto = build(args.csv, args.column, args.describe, args.examples,
-                 args.max_options)
+    print("==> build the category question from the transcripts of %s"
+          % args.csv)
+    onto = build(args.csv, args.calls, args.options, args.seed)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(onto, indent=2) + "\n", encoding="utf-8")
-    print("  column %r, %d calls, %d options:"
-          % (onto["built_from"]["column"], onto["built_from"]["calls"],
-             len(onto["options"])))
+    print("\n  %d options, scam and legitimate interleaved:"
+          % len(onto["options"]))
     for i, o in enumerate(onto["options"]):
-        print("    %s  %-5s  %-30s %5d scam %5d legit%s"
-              % (LETTERS[i], o["verdict"], o["text"][:30], o["calls"]["scam"],
-                 o["calls"]["legit"], "  (split evenly)" if o.get("mixed")
-                 else ""))
+        print("    %s  %-5s  %s" % (LETTERS[i], o["verdict"], o["text"][:70]))
     print("  ok wrote %s" % out)
     return 0
 
@@ -1137,17 +1107,17 @@ def build_parser():
                     help="write <out>.json and a per-call CSV in results/")
     ev.set_defaults(func=run_evaluate)
 
-    b = sub.add_parser("build", help="options from a dataset's categories")
+    b = sub.add_parser("build", help="the category options, read from a "
+                                     "dataset's transcripts")
     b.add_argument("--csv", required=True)
     b.add_argument("--out", required=True)
-    b.add_argument("--column", default=None,
-                   help="the category column (default: the first of %s)"
-                        % ", ".join(CATEGORY_COLS))
-    b.add_argument("--describe", action="store_true",
-                   help="have the model describe each category from a few of "
-                        "its calls")
-    b.add_argument("--examples", type=int, default=3)
-    b.add_argument("--max-options", type=int, default=MAX_OPTIONS)
+    b.add_argument("--calls", type=int, default=BUILD_CALLS,
+                   help="calls the model reads, half scam half not "
+                        "(default %d)" % BUILD_CALLS)
+    b.add_argument("--options", type=int, default=BUILD_OPTIONS,
+                   help="at most this many categories (default %d)"
+                        % BUILD_OPTIONS)
+    b.add_argument("--seed", type=int, default=42)
     b.add_argument("--force", action="store_true")
     b.set_defaults(func=run_build)
     return ap
