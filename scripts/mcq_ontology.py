@@ -434,6 +434,28 @@ def build(csv_path, column=None, describe_with_model=False, examples=3,
                          "least two options" % (col, len(groups),
                                                 "y" if len(groups) == 1 else "ies"))
 
+    # A column whose values each hold as many scam calls as legitimate ones
+    # cannot give a verdict, however its values are grouped. Paired-196 is
+    # built that way on purpose: every scam call has a legitimate call
+    # written on the same topic. Caught here, before small values are merged
+    # into "other", where it would only show up as a misleading verdict.
+    even = [c for c, v in groups.items()
+            if sum(1 for _, y in v if y) * 2 == len(v)]
+    in_even = sum(len(groups[c]) for c in even)
+    total = sum(len(v) for v in groups.values())
+    if in_even >= 0.9 * total:
+        pairs = sum(1 for c in even if len(groups[c]) == 2)
+        raise ValueError(
+            "%d of the %d values in %r have exactly as many scam calls as "
+            "legitimate ones (%d of %d calls)%s, so the category says nothing "
+            "about the label and this column cannot be turned into a verdict. "
+            "Ask the calls a question they differ on instead: type it under "
+            "\"Your own question\" on the Ask tab and train it on this dataset"
+            % (len(even), len(groups), col, in_even, total,
+               " - %d of them are one scam call paired with one legitimate "
+               "call on the same %s" % (pairs, col) if pairs >= len(even) / 2
+               else ""))
+
     cats = sorted(groups, key=lambda c: (-len(groups[c]), c))
     merged = None
     if len(cats) > max_options:

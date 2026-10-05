@@ -276,7 +276,26 @@ try:
     check("categories that say nothing about the label are refused", False)
 except ValueError as e:
     check("categories that say nothing about the label are refused",
-          "split evenly" in str(e))
+          "exactly as many scam calls as legitimate" in str(e)
+          and "paired with one legitimate call on the same topic" in str(e))
+# Paired-196's shape: many topics of one scam + one legitimate call, and a
+# couple left unpaired. Too many topics, so the smallest would be merged into
+# "other" - the refusal has to come before that, and point to training
+paired = os.path.join(tmp, "paired.csv")
+with open(paired, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["id", "label", "topic", "text"])
+    for i in range(20):
+        w.writerow([2 * i, "scam", "t%02d" % i, "call"])
+        w.writerow([2 * i + 1, "nonscam", "t%02d" % i, "call"])
+    w.writerow([99, "scam", "lone", "call"])
+try:
+    M.build(paired)
+    check("a topic-paired dataset is refused before merging", False)
+except ValueError as e:
+    check("a topic-paired dataset is refused before merging, pointing to "
+          "training", ("20 of the 21 values" in str(e),
+                       "train it on this dataset" in str(e)), (True, True))
 
 print("\nscoring a dataset (the page's Score a dataset)")
 out = os.path.join(tmp, "run.metrics.json")

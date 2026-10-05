@@ -2777,6 +2777,10 @@ def start_mcq_build_run(form):
         if not form.get("overwrite"):
             raise ValueError("knowledge/%s already exists - pick another "
                              "name, or tick replace" % path.name)
+    # the options without the model's descriptions: no model, a second at
+    # most - so a column that cannot give a verdict is refused here, with the
+    # reason, rather than in the log of a run that has already started
+    mcq_ontology.build(ds, column)
     describe = bool(form.get("describe"))
     if describe:
         running = [r for r in all_runs() if r["status"] == "running"]
