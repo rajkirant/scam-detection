@@ -1,0 +1,402 @@
+[
+  {
+    "id": "f1_qwen_training_0001",
+    "category": "Pressure and Urgency",
+    "support": 3,
+    "behaviours": "Scammers create a sense of urgency by suggesting time-sensitive offers or pressing for immediate decisions. Scammers create urgency by suggesting immediate action is needed to avoid penalties or take advantage of time-limited offers. Scammers create urgency to push the agent into making quick decisions without proper consideration.",
+    "signals": "The caller may imply that the agent has already taken some action (like filling out an application) without remembering it, or suggest that there's limited availability on certain offers. The caller emphasizes the need for quick resolution, often mentioning declined transactions or impending deadlines. The caller uses phrases like 'just a few minutes' or implies that an opportunity will be missed if not acted upon immediately.",
+    "text": "Scam category: Pressure and Urgency\n\nTypical behaviours: Scammers create a sense of urgency by suggesting time-sensitive offers or pressing for immediate decisions. Scammers create urgency by suggesting immediate action is needed to avoid penalties or take advantage of time-limited offers. Scammers create urgency to push the agent into making quick decisions without proper consideration.\n\nDistinguishing signals: The caller may imply that the agent has already taken some action (like filling out an application) without remembering it, or suggest that there's limited availability on certain offers. The caller emphasizes the need for quick resolution, often mentioning declined transactions or impending deadlines. The caller uses phrases like 'just a few minutes' or implies that an opportunity will be missed if not acted upon immediately.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0002",
+    "category": "Confusion and Misdirection",
+    "support": 2,
+    "behaviours": "Scammers use vague or confusing language to mislead the target about the purpose of the call, often by referencing non-specific inquiries or applications. Scammers create confusion by repeatedly asking if they are speaking with the correct person, then shifting focus to debt-related services. They often use phrases like 'debt consolidation' or 'loan application' without clear context.",
+    "signals": "The caller may mention a previous interaction that didn't actually occur or refer to documents that were never sent. The agent is left unsure and curious. The scammer starts by confirming identity and then quickly moves into discussing debt relief options, causing the recipient to feel confused about how they are involved in these discussions.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers use vague or confusing language to mislead the target about the purpose of the call, often by referencing non-specific inquiries or applications. Scammers create confusion by repeatedly asking if they are speaking with the correct person, then shifting focus to debt-related services. They often use phrases like 'debt consolidation' or 'loan application' without clear context.\n\nDistinguishing signals: The caller may mention a previous interaction that didn't actually occur or refer to documents that were never sent. The agent is left unsure and curious. The scammer starts by confirming identity and then quickly moves into discussing debt relief options, causing the recipient to feel confused about how they are involved in these discussions.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0003",
+    "category": "Information Gathering",
+    "support": 2,
+    "behaviours": "Scammers gather personal information by posing as representatives of legitimate organizations and asking for sensitive details. Scammers gather personal information under the guise of providing services, often asking for sensitive details to proceed.",
+    "signals": "The caller may ask about financial situations, insurance plans, property ownership, or other private matters under the guise of offering assistance or services. The caller asks detailed questions about financial status, health conditions, and personal identifiers like date of birth or account numbers.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: Scammers gather personal information by posing as representatives of legitimate organizations and asking for sensitive details. Scammers gather personal information under the guise of providing services, often asking for sensitive details to proceed.\n\nDistinguishing signals: The caller may ask about financial situations, insurance plans, property ownership, or other private matters under the guise of offering assistance or services. The caller asks detailed questions about financial status, health conditions, and personal identifiers like date of birth or account numbers.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0004",
+    "category": "Debt Relief",
+    "support": 2,
+    "behaviours": "Scammers initiate contact claiming to be from a debt relief organization and ask about the caller's financial situation. Scammers initiate contact pretending to be from a reputable financial institution, claiming they have received a request for debt assistance. They ask about the caller's current debt situation and offer various debt relief services.",
+    "signals": "The conversation quickly shifts towards gathering personal information such as credit card details or monthly payments, often under the guise of offering help with debt. The call starts with the scammer asking if the recipient has requested help with their debts or is looking into funding options. The conversation quickly shifts to discussing debt consolidation or other financial solutions without clear context of how they obtained the contact information.",
+    "text": "Scam category: Debt Relief\n\nTypical behaviours: Scammers initiate contact claiming to be from a debt relief organization and ask about the caller's financial situation. Scammers initiate contact pretending to be from a reputable financial institution, claiming they have received a request for debt assistance. They ask about the caller's current debt situation and offer various debt relief services.\n\nDistinguishing signals: The conversation quickly shifts towards gathering personal information such as credit card details or monthly payments, often under the guise of offering help with debt. The call starts with the scammer asking if the recipient has requested help with their debts or is looking into funding options. The conversation quickly shifts to discussing debt consolidation or other financial solutions without clear context of how they obtained the contact information.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0005",
+    "category": "Debt Assistance",
+    "support": 1,
+    "behaviours": "Scammers pose as representatives of financial assistance organizations, claiming to have received an inquiry or form submission from the victim.",
+    "signals": "The caller asks vague questions about how the agent heard about their organization and tries to confirm personal details like address and date of birth under the guise of verifying identity.",
+    "text": "Scam category: Debt Assistance\n\nTypical behaviours: Scammers pose as representatives of financial assistance organizations, claiming to have received an inquiry or form submission from the victim.\n\nDistinguishing signals: The caller asks vague questions about how the agent heard about their organization and tries to confirm personal details like address and date of birth under the guise of verifying identity.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0006",
+    "category": "Tax Fraud",
+    "support": 1,
+    "behaviours": "Scammers pretend to be tax authorities or related entities, contacting victims regarding supposed issues with their tax returns.",
+    "signals": "The caller mentions discrepancies in tax documents and asks about previous communications that never occurred, aiming to confuse the victim.",
+    "text": "Scam category: Tax Fraud\n\nTypical behaviours: Scammers pretend to be tax authorities or related entities, contacting victims regarding supposed issues with their tax returns.\n\nDistinguishing signals: The caller mentions discrepancies in tax documents and asks about previous communications that never occurred, aiming to confuse the victim.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0007",
+    "category": "Payment Verification",
+    "support": 1,
+    "behaviours": "Scammers claim to be from a company or service provider where the victim supposedly made an order or payment.",
+    "signals": "The caller requests sensitive information such as credit card numbers and repeatedly asks for confirmation of personal details, often stating that previous attempts have failed.",
+    "text": "Scam category: Payment Verification\n\nTypical behaviours: Scammers claim to be from a company or service provider where the victim supposedly made an order or payment.\n\nDistinguishing signals: The caller requests sensitive information such as credit card numbers and repeatedly asks for confirmation of personal details, often stating that previous attempts have failed.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0008",
+    "category": "Religious Manipulation",
+    "support": 1,
+    "behaviours": "Scammers use religious phrases or references to manipulate the victim into repeating certain statements.",
+    "signals": "The caller insists on hearing a specific phrase repeated multiple times and becomes impatient if the agent does not comply immediately, often using aggressive language.",
+    "text": "Scam category: Religious Manipulation\n\nTypical behaviours: Scammers use religious phrases or references to manipulate the victim into repeating certain statements.\n\nDistinguishing signals: The caller insists on hearing a specific phrase repeated multiple times and becomes impatient if the agent does not comply immediately, often using aggressive language.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f2_qwen_training_0001",
+    "category": "Pressure Tactics",
+    "support": 2,
+    "behaviours": "Scammers create urgency by suggesting limited-time offers or opportunities, pressuring the victim into quick decisions without proper consideration. Scammers use urgency to pressure agents into making quick decisions by suggesting time-sensitive offers or deadlines.",
+    "signals": "The scammer will emphasize time-sensitive benefits or suggest that the offer is available only for a short period. The caller emphasizes the need for immediate action, such as completing a transaction before a deadline or taking advantage of a limited-time offer.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: Scammers create urgency by suggesting limited-time offers or opportunities, pressuring the victim into quick decisions without proper consideration. Scammers use urgency to pressure agents into making quick decisions by suggesting time-sensitive offers or deadlines.\n\nDistinguishing signals: The scammer will emphasize time-sensitive benefits or suggest that the offer is available only for a short period. The caller emphasizes the need for immediate action, such as completing a transaction before a deadline or taking advantage of a limited-time offer.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0002",
+    "category": "Debt Consolidation",
+    "support": 2,
+    "behaviours": "Scammers initiate calls claiming to have received an inquiry or form submission for debt consolidation services. They often ask vague questions about the caller's financial situation and offer a free assessment. Scammers initiate contact pretending to be from a financial institution or service provider, claiming they have received an inquiry about debt consolidation services.",
+    "signals": "The call starts with confusion from the agent, followed by the scammer providing a generic service offering without clear context of prior interaction. The caller asks for personal information such as address and date of birth under the guise of performing a 'free analysis' or 'soft check'. They often express interest in reviewing credit reports and discussing debt relief options.",
+    "text": "Scam category: Debt Consolidation\n\nTypical behaviours: Scammers initiate calls claiming to have received an inquiry or form submission for debt consolidation services. They often ask vague questions about the caller's financial situation and offer a free assessment. Scammers initiate contact pretending to be from a financial institution or service provider, claiming they have received an inquiry about debt consolidation services.\n\nDistinguishing signals: The call starts with confusion from the agent, followed by the scammer providing a generic service offering without clear context of prior interaction. The caller asks for personal information such as address and date of birth under the guise of performing a 'free analysis' or 'soft check'. They often express interest in reviewing credit reports and discussing debt relief options.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0003",
+    "category": "Confusion and Misdirection",
+    "support": 2,
+    "behaviours": "Scammers attempt to confuse the agent by referencing vague or non-existent prior interactions, often mentioning specific individuals (like family members) who are no longer involved. The caller attempts to confuse the agent by using vague or misleading information, often about appointments or applications that the agent does not recall.",
+    "signals": "The caller references past conversations that the agent does not recall, introduces unexpected topics like debt relief or medical services out of context, and frequently mentions deceased relatives or former caretakers. The agent expresses confusion or uncertainty multiple times during the call.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers attempt to confuse the agent by referencing vague or non-existent prior interactions, often mentioning specific individuals (like family members) who are no longer involved. The caller attempts to confuse the agent by using vague or misleading information, often about appointments or applications that the agent does not recall.\n\nDistinguishing signals: The caller references past conversations that the agent does not recall, introduces unexpected topics like debt relief or medical services out of context, and frequently mentions deceased relatives or former caretakers. The agent expresses confusion or uncertainty multiple times during the call.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0004",
+    "category": "Confusion and Uncertainty",
+    "support": 1,
+    "behaviours": "Scammers attempt to confuse the recipient by using vague language or referencing non-existent interactions, such as forms filled out online that the victim does not recall.",
+    "signals": "The scammer will often ask if the recipient remembers filling out a form or making an inquiry they do not remember.",
+    "text": "Scam category: Confusion and Uncertainty\n\nTypical behaviours: Scammers attempt to confuse the recipient by using vague language or referencing non-existent interactions, such as forms filled out online that the victim does not recall.\n\nDistinguishing signals: The scammer will often ask if the recipient remembers filling out a form or making an inquiry they do not remember.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0005",
+    "category": "Appeal to Financial Gain",
+    "support": 1,
+    "behaviours": "Scammers offer financial benefits such as subsidies, debt relief, or home equity loans that sound too good to be true.",
+    "signals": "The scammer will mention significant financial gains without clear explanations of the terms and conditions.",
+    "text": "Scam category: Appeal to Financial Gain\n\nTypical behaviours: Scammers offer financial benefits such as subsidies, debt relief, or home equity loans that sound too good to be true.\n\nDistinguishing signals: The scammer will mention significant financial gains without clear explanations of the terms and conditions.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0006",
+    "category": "Emotional Manipulation",
+    "support": 1,
+    "behaviours": "Scammers exploit emotions like nostalgia for a deceased family member or concern about home security to gain trust and compliance.",
+    "signals": "The scammer references personal details or emotional triggers that are likely to resonate with the recipient.",
+    "text": "Scam category: Emotional Manipulation\n\nTypical behaviours: Scammers exploit emotions like nostalgia for a deceased family member or concern about home security to gain trust and compliance.\n\nDistinguishing signals: The scammer references personal details or emotional triggers that are likely to resonate with the recipient.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0007",
+    "category": "Loan Offers",
+    "support": 1,
+    "behaviours": "Scammers contact individuals claiming they have shown interest in loans or financing on their website. They offer various types of loans and ask for personal information to proceed.",
+    "signals": "The scammer mentions a specific loan type (e.g., title, personal) early in the conversation and asks about the agent's current financial situation.",
+    "text": "Scam category: Loan Offers\n\nTypical behaviours: Scammers contact individuals claiming they have shown interest in loans or financing on their website. They offer various types of loans and ask for personal information to proceed.\n\nDistinguishing signals: The scammer mentions a specific loan type (e.g., title, personal) early in the conversation and asks about the agent's current financial situation.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0008",
+    "category": "Grant Applications",
+    "support": 1,
+    "behaviours": "Scammers claim that the recipient has submitted an application for a grant on their website. They offer to help write and submit the grant proposal for a fee.",
+    "signals": "The call starts with the scammer mentioning a specific amount of money (e.g., $50,000) and asking about the type of grant before discussing fees.",
+    "text": "Scam category: Grant Applications\n\nTypical behaviours: Scammers claim that the recipient has submitted an application for a grant on their website. They offer to help write and submit the grant proposal for a fee.\n\nDistinguishing signals: The call starts with the scammer mentioning a specific amount of money (e.g., $50,000) and asking about the type of grant before discussing fees.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f3_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 3,
+    "behaviours": "Scammers start by confusing the agent about their identity or recent actions, often pretending to be familiar with the agent's personal information. Scammers create confusion by mentioning incorrect details or previous interactions that did not occur, leading the target to question their own memory. Scammers use vague references to previous interactions or applications that the target may not recall, often mentioning organizations or services that sound official but are actually scams.",
+    "signals": "The call begins with the scammer addressing the agent by name or referencing a loan application or other financial inquiry that the agent does not recall initiating. The caller references vague past communications or applications made by the target which they do not recall. The caller seems confused about details, asks leading questions to confirm information without providing clear context, and uses phrases like 'application' or 'information kit'.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers start by confusing the agent about their identity or recent actions, often pretending to be familiar with the agent's personal information. Scammers create confusion by mentioning incorrect details or previous interactions that did not occur, leading the target to question their own memory. Scammers use vague references to previous interactions or applications that the target may not recall, often mentioning organizations or services that sound official but are actually scams.\n\nDistinguishing signals: The call begins with the scammer addressing the agent by name or referencing a loan application or other financial inquiry that the agent does not recall initiating. The caller references vague past communications or applications made by the target which they do not recall. The caller seems confused about details, asks leading questions to confirm information without providing clear context, and uses phrases like 'application' or 'information kit'.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0002",
+    "category": "Debt Relief Inquiry",
+    "support": 2,
+    "behaviours": "Scammers initiate contact claiming to follow up on an inquiry for debt relief or financial assistance, often asking for personal information like name and address. Scammers contact individuals claiming they have an existing debt relief inquiry and offer assistance in unlocking credit reports.",
+    "signals": "The call starts with a vague reference to a previous interaction that the agent does not recall. Scammers may ask for sensitive details under the guise of performing a soft credit pull. The call involves discussions about credit locks, debt relief services, and requests for personal information to proceed with the supposed service.",
+    "text": "Scam category: Debt Relief Inquiry\n\nTypical behaviours: Scammers initiate contact claiming to follow up on an inquiry for debt relief or financial assistance, often asking for personal information like name and address. Scammers contact individuals claiming they have an existing debt relief inquiry and offer assistance in unlocking credit reports.\n\nDistinguishing signals: The call starts with a vague reference to a previous interaction that the agent does not recall. Scammers may ask for sensitive details under the guise of performing a soft credit pull. The call involves discussions about credit locks, debt relief services, and requests for personal information to proceed with the supposed service.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0003",
+    "category": "Emotional Manipulation",
+    "support": 2,
+    "behaviours": "Scammers use emotional tactics such as pretending to deliver bad news (e.g., a family member's death) to gain trust or divert attention. Scammers exploit emotions such as nostalgia (mentioning a deceased spouse) or concern for health/dental issues to gain trust and compliance.",
+    "signals": "The call starts with an unexpected and emotionally charged announcement, often followed by irrelevant questions about pets or personal life. The caller references personal details like the loss of a loved one, uses sympathetic language, and offers services that seem urgent or beneficial.",
+    "text": "Scam category: Emotional Manipulation\n\nTypical behaviours: Scammers use emotional tactics such as pretending to deliver bad news (e.g., a family member's death) to gain trust or divert attention. Scammers exploit emotions such as nostalgia (mentioning a deceased spouse) or concern for health/dental issues to gain trust and compliance.\n\nDistinguishing signals: The call starts with an unexpected and emotionally charged announcement, often followed by irrelevant questions about pets or personal life. The caller references personal details like the loss of a loved one, uses sympathetic language, and offers services that seem urgent or beneficial.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0004",
+    "category": "Information Gathering",
+    "support": 1,
+    "behaviours": "Scammers attempt to gather detailed personal and financial information from the agent under the guise of providing assistance.",
+    "signals": "The scammer asks for sensitive details such as current address, phone number, or recent changes in residence, often redirecting the conversation if the agent provides incorrect information.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: Scammers attempt to gather detailed personal and financial information from the agent under the guise of providing assistance.\n\nDistinguishing signals: The scammer asks for sensitive details such as current address, phone number, or recent changes in residence, often redirecting the conversation if the agent provides incorrect information.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0005",
+    "category": "Creating Urgency",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by suggesting that there is an immediate opportunity or deadline for financial assistance.",
+    "signals": "The scammer mentions specific dates or times when the agent supposedly inquired about services, and emphasizes the need to act quickly.",
+    "text": "Scam category: Creating Urgency\n\nTypical behaviours: Scammers create a sense of urgency by suggesting that there is an immediate opportunity or deadline for financial assistance.\n\nDistinguishing signals: The scammer mentions specific dates or times when the agent supposedly inquired about services, and emphasizes the need to act quickly.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0006",
+    "category": "Misleading Context",
+    "support": 1,
+    "behaviours": "Scammers mislead the agent by changing the context of the call mid-conversation, often switching from one type of service to another.",
+    "signals": "The conversation shifts unexpectedly from discussing one topic (e.g., auto insurance) to a different but related topic (e.g., health insurance), confusing the agent about the original purpose of the call.",
+    "text": "Scam category: Misleading Context\n\nTypical behaviours: Scammers mislead the agent by changing the context of the call mid-conversation, often switching from one type of service to another.\n\nDistinguishing signals: The conversation shifts unexpectedly from discussing one topic (e.g., auto insurance) to a different but related topic (e.g., health insurance), confusing the agent about the original purpose of the call.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0007",
+    "category": "Debt Relief",
+    "support": 1,
+    "behaviours": "Scammers initiate contact pretending to be from a debt relief organization, often referencing previous conversations or inquiries.",
+    "signals": "The caller requests personal information such as SSN and credit report authorization under the guise of verifying identity for debt relief services.",
+    "text": "Scam category: Debt Relief\n\nTypical behaviours: Scammers initiate contact pretending to be from a debt relief organization, often referencing previous conversations or inquiries.\n\nDistinguishing signals: The caller requests personal information such as SSN and credit report authorization under the guise of verifying identity for debt relief services.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0008",
+    "category": "Insurance Sales",
+    "support": 1,
+    "behaviours": "Scammers pose as insurance company representatives to offer final expense or life insurance policies, often exaggerating coverage benefits.",
+    "signals": "The caller provides vague details about insurance products and requests personal information like date of birth and SSN over the phone.",
+    "text": "Scam category: Insurance Sales\n\nTypical behaviours: Scammers pose as insurance company representatives to offer final expense or life insurance policies, often exaggerating coverage benefits.\n\nDistinguishing signals: The caller provides vague details about insurance products and requests personal information like date of birth and SSN over the phone.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f4_qwen_training_0001",
+    "category": "Information Gathering",
+    "support": 4,
+    "behaviours": "Scammers attempt to gather personal information by asking for details like address, SSN, bank account numbers, and other sensitive data under various pretexts such as validating information or assessing eligibility. Scammers attempt to gather personal information such as full name, address, and date of birth under the guise of offering services like debt relief or insurance. Scammers attempt to gather personal information under the guise of providing a service or resolving an issue.",
+    "signals": "The caller asks detailed questions about personal financial information without clear context. The scammer may claim they need this information to proceed with an offer or service. The caller asks for sensitive details early in the conversation and offers vague promises about what they can do with this information. The caller asks for detailed personal and financial information, such as card numbers or account details, often claiming it's necessary to proceed.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: Scammers attempt to gather personal information by asking for details like address, SSN, bank account numbers, and other sensitive data under various pretexts such as validating information or assessing eligibility. Scammers attempt to gather personal information such as full name, address, and date of birth under the guise of offering services like debt relief or insurance. Scammers attempt to gather personal information under the guise of providing a service or resolving an issue.\n\nDistinguishing signals: The caller asks detailed questions about personal financial information without clear context. The scammer may claim they need this information to proceed with an offer or service. The caller asks for sensitive details early in the conversation and offers vague promises about what they can do with this information. The caller asks for detailed personal and financial information, such as card numbers or account details, often claiming it's necessary to proceed.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0002",
+    "category": "Pressure and Urgency",
+    "support": 2,
+    "behaviours": "Scammers create a sense of urgency by suggesting that the agent needs to act quickly on offers like debt relief, loan consolidation, or tax assistance. They may also imply that there is limited time for certain benefits. Scammers create a sense of urgency by suggesting immediate action is needed for financial relief or product delivery.",
+    "signals": "The scammer uses phrases indicating urgency such as 'act now' or 'limited time offer'. The caller tries to push the conversation towards immediate action without clear explanation. The caller emphasizes that there's an urgent need to act quickly, often related to declined transactions or missed deadlines.",
+    "text": "Scam category: Pressure and Urgency\n\nTypical behaviours: Scammers create a sense of urgency by suggesting that the agent needs to act quickly on offers like debt relief, loan consolidation, or tax assistance. They may also imply that there is limited time for certain benefits. Scammers create a sense of urgency by suggesting immediate action is needed for financial relief or product delivery.\n\nDistinguishing signals: The scammer uses phrases indicating urgency such as 'act now' or 'limited time offer'. The caller tries to push the conversation towards immediate action without clear explanation. The caller emphasizes that there's an urgent need to act quickly, often related to declined transactions or missed deadlines.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0003",
+    "category": "Confusion and Misdirection",
+    "support": 2,
+    "behaviours": "Scammers use confusing or irrelevant questions to throw off the agent, often asking about unrelated topics like bicycle taste. Scammers use vague references to previous interactions or requests that the target may not recall, creating confusion.",
+    "signals": "The caller asks nonsensical or unrelated questions that do not pertain to any legitimate service. They may also ask for personal information under false pretenses. The caller mentions past communications or agreements without clear context, leading the agent to question their own memory.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers use confusing or irrelevant questions to throw off the agent, often asking about unrelated topics like bicycle taste. Scammers use vague references to previous interactions or requests that the target may not recall, creating confusion.\n\nDistinguishing signals: The caller asks nonsensical or unrelated questions that do not pertain to any legitimate service. They may also ask for personal information under false pretenses. The caller mentions past communications or agreements without clear context, leading the agent to question their own memory.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0004",
+    "category": "Impersonation and Confusion",
+    "support": 2,
+    "behaviours": "Scammers use short, familiar-sounding names or titles to confuse the recipient about their identity and legitimacy. The caller pretends to be someone familiar or associated with an organization the agent trusts, often referencing vague past interactions.",
+    "signals": "The caller uses vague references to previous interactions or requests that the target does not recall, often leading to confusion. The scammer uses phrases like 'we spoke before' or mentions a website interaction without clear details. The agent feels confused about the context of the call.",
+    "text": "Scam category: Impersonation and Confusion\n\nTypical behaviours: Scammers use short, familiar-sounding names or titles to confuse the recipient about their identity and legitimacy. The caller pretends to be someone familiar or associated with an organization the agent trusts, often referencing vague past interactions.\n\nDistinguishing signals: The caller uses vague references to previous interactions or requests that the target does not recall, often leading to confusion. The scammer uses phrases like 'we spoke before' or mentions a website interaction without clear details. The agent feels confused about the context of the call.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0005",
+    "category": "Confusion and Uncertainty",
+    "support": 1,
+    "behaviours": "Scammers create confusion by referencing vague inquiries or services that the agent did not initiate, often using terms like 'debt relief' or 'loan consolidation'. They may also ask for personal information under the guise of validating details.",
+    "signals": "The call starts with a reference to an unknown inquiry or service. The scammer uses confusing language and tries to validate personal information such as address, SSN, or bank details.",
+    "text": "Scam category: Confusion and Uncertainty\n\nTypical behaviours: Scammers create confusion by referencing vague inquiries or services that the agent did not initiate, often using terms like 'debt relief' or 'loan consolidation'. They may also ask for personal information under the guise of validating details.\n\nDistinguishing signals: The call starts with a reference to an unknown inquiry or service. The scammer uses confusing language and tries to validate personal information such as address, SSN, or bank details.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0006",
+    "category": "Impersonation",
+    "support": 1,
+    "behaviours": "Scammers impersonate known organizations or individuals by using names of companies or people the agent might recognize but with slight variations in pronunciation or spelling. They often claim to be following up on a previous interaction.",
+    "signals": "The caller uses familiar company or person names but may mispronounce them or provide incorrect details. The scammer claims they are contacting about an existing inquiry or service.",
+    "text": "Scam category: Impersonation\n\nTypical behaviours: Scammers impersonate known organizations or individuals by using names of companies or people the agent might recognize but with slight variations in pronunciation or spelling. They often claim to be following up on a previous interaction.\n\nDistinguishing signals: The caller uses familiar company or person names but may mispronounce them or provide incorrect details. The scammer claims they are contacting about an existing inquiry or service.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0007",
+    "category": "Debt Forgiveness",
+    "support": 1,
+    "behaviours": "Scammers initiate calls claiming to offer government-backed tax forgiveness or debt relief programs, often citing recent changes in administration or new legislation.",
+    "signals": "The caller aggressively pushes the agent to stay on the line and connects them with a 'specialist' without verifying the agent's interest or eligibility. The scammer may also claim that the call is being recorded for quality assurance.",
+    "text": "Scam category: Debt Forgiveness\n\nTypical behaviours: Scammers initiate calls claiming to offer government-backed tax forgiveness or debt relief programs, often citing recent changes in administration or new legislation.\n\nDistinguishing signals: The caller aggressively pushes the agent to stay on the line and connects them with a 'specialist' without verifying the agent's interest or eligibility. The scammer may also claim that the call is being recorded for quality assurance.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0008",
+    "category": "Insurance Enrollment",
+    "support": 1,
+    "behaviours": "Scammers pose as representatives from insurance companies, offering low-cost final expense insurance plans to older individuals.",
+    "signals": "The caller asks detailed personal questions such as age and address to confirm eligibility. They quickly declare the agent eligible for a plan without thorough verification.",
+    "text": "Scam category: Insurance Enrollment\n\nTypical behaviours: Scammers pose as representatives from insurance companies, offering low-cost final expense insurance plans to older individuals.\n\nDistinguishing signals: The caller asks detailed personal questions such as age and address to confirm eligibility. They quickly declare the agent eligible for a plan without thorough verification.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f5_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 2,
+    "behaviours": "Scammers use vague references to organizations or services, often mentioning terms like 'subsidy', 'free money', or 'debt consolidation' without clear context. Scammers use vague or confusing language to mislead the agent, often by referencing non-specific services or products that sound official but are unclear.",
+    "signals": "The caller seems confused about the exact nature of the service being offered and frequently asks for clarification. The agent is left unsure but intrigued by the possibility of financial benefits. The call involves repeated references to unfamiliar terms or concepts without clear explanation, leading to confusion on the part of the recipient.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers use vague references to organizations or services, often mentioning terms like 'subsidy', 'free money', or 'debt consolidation' without clear context. Scammers use vague or confusing language to mislead the agent, often by referencing non-specific services or products that sound official but are unclear.\n\nDistinguishing signals: The caller seems confused about the exact nature of the service being offered and frequently asks for clarification. The agent is left unsure but intrigued by the possibility of financial benefits. The call involves repeated references to unfamiliar terms or concepts without clear explanation, leading to confusion on the part of the recipient.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0002",
+    "category": "Emotional Manipulation",
+    "support": 2,
+    "behaviours": "Scammers exploit emotional vulnerabilities by referencing deceased family members or significant life events, like losing money in scams. The caller attempts to create confusion and emotional distress by making false claims about personal relationships or legal issues.",
+    "signals": "The caller mentions the agent's late husband or financial losses from scams to gain sympathy and trust. The conversation often includes offers of help that seem too good to be true. Caller makes statements that are out of context and unrelated to financial services, such as claiming a romantic relationship or legal disputes.",
+    "text": "Scam category: Emotional Manipulation\n\nTypical behaviours: Scammers exploit emotional vulnerabilities by referencing deceased family members or significant life events, like losing money in scams. The caller attempts to create confusion and emotional distress by making false claims about personal relationships or legal issues.\n\nDistinguishing signals: The caller mentions the agent's late husband or financial losses from scams to gain sympathy and trust. The conversation often includes offers of help that seem too good to be true. Caller makes statements that are out of context and unrelated to financial services, such as claiming a romantic relationship or legal disputes.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0003",
+    "category": "Confusion and Uncertainty",
+    "support": 2,
+    "behaviours": "Scammers create confusion by referencing vague or non-existent interactions, such as previous calls or website inquiries that the agent does not recall. Scammers create confusion by referencing vague or non-existent interactions, such as previous inquiries or applications that the target does not recall.",
+    "signals": "The agent expresses uncertainty or confusion about the context of the call, often asking for clarification multiple times. The agent expresses uncertainty about the call's purpose or their involvement in a supposed interaction with the caller.",
+    "text": "Scam category: Confusion and Uncertainty\n\nTypical behaviours: Scammers create confusion by referencing vague or non-existent interactions, such as previous calls or website inquiries that the agent does not recall. Scammers create confusion by referencing vague or non-existent interactions, such as previous inquiries or applications that the target does not recall.\n\nDistinguishing signals: The agent expresses uncertainty or confusion about the context of the call, often asking for clarification multiple times. The agent expresses uncertainty about the call's purpose or their involvement in a supposed interaction with the caller.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0004",
+    "category": "False Pretenses",
+    "support": 1,
+    "behaviours": "Scammers pretend to be calling in response to an application or complaint that the victim never made, often referencing vague details about debt or financial recovery.",
+    "signals": "The caller references specific actions (like sending a complaint) that the agent does not recall initiating. The conversation revolves around gathering information for non-existent applications.",
+    "text": "Scam category: False Pretenses\n\nTypical behaviours: Scammers pretend to be calling in response to an application or complaint that the victim never made, often referencing vague details about debt or financial recovery.\n\nDistinguishing signals: The caller references specific actions (like sending a complaint) that the agent does not recall initiating. The conversation revolves around gathering information for non-existent applications.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0005",
+    "category": "Technical Missteps",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by mentioning technical issues like missed calls or scheduling errors, prompting the agent to provide personal information.",
+    "signals": "The caller apologizes for technical difficulties and asks the agent to confirm details that were supposedly discussed in previous non-existent conversations.",
+    "text": "Scam category: Technical Missteps\n\nTypical behaviours: Scammers create a sense of urgency by mentioning technical issues like missed calls or scheduling errors, prompting the agent to provide personal information.\n\nDistinguishing signals: The caller apologizes for technical difficulties and asks the agent to confirm details that were supposedly discussed in previous non-existent conversations.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0006",
+    "category": "Debt Relief",
+    "support": 1,
+    "behaviours": "Scammers initiate contact pretending to be from a reputable organization offering debt relief services. They often start by asking if the agent has filled out an online inquiry or submitted information regarding their financial situation.",
+    "signals": "The caller claims to have initiated contact based on previous interaction (e.g., an online form) that the recipient does not recall, and they may ask for personal details like location to confirm identity.",
+    "text": "Scam category: Debt Relief\n\nTypical behaviours: Scammers initiate contact pretending to be from a reputable organization offering debt relief services. They often start by asking if the agent has filled out an online inquiry or submitted information regarding their financial situation.\n\nDistinguishing signals: The caller claims to have initiated contact based on previous interaction (e.g., an online form) that the recipient does not recall, and they may ask for personal details like location to confirm identity.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0007",
+    "category": "Tax Debt Resolution",
+    "support": 1,
+    "behaviours": "Scammers pose as representatives from government agencies or financial institutions claiming there is a tax debt issue. They often mention specific amounts due and suggest programs that can eliminate the need to pay back taxes.",
+    "signals": "The caller references specific debts (e.g., tax debts) and suggests solutions like 'full federal resolution' which sound too good to be true, requiring personal information or payments.",
+    "text": "Scam category: Tax Debt Resolution\n\nTypical behaviours: Scammers pose as representatives from government agencies or financial institutions claiming there is a tax debt issue. They often mention specific amounts due and suggest programs that can eliminate the need to pay back taxes.\n\nDistinguishing signals: The caller references specific debts (e.g., tax debts) and suggests solutions like 'full federal resolution' which sound too good to be true, requiring personal information or payments.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0008",
+    "category": "Insurance Offer",
+    "support": 1,
+    "behaviours": "Scammers contact individuals claiming they are interested in providing insurance options. They often ask if the individual has recently lost health care coverage and offer various types of insurance plans.",
+    "signals": "The caller asks about recent changes to health insurance status and offers a range of insurance products, including dental or critical illness insurance, which may seem overly broad or irrelevant.",
+    "text": "Scam category: Insurance Offer\n\nTypical behaviours: Scammers contact individuals claiming they are interested in providing insurance options. They often ask if the individual has recently lost health care coverage and offer various types of insurance plans.\n\nDistinguishing signals: The caller asks about recent changes to health insurance status and offers a range of insurance products, including dental or critical illness insurance, which may seem overly broad or irrelevant.",
+    "source": "dataset training split",
+    "fold": 5
+  }
+]

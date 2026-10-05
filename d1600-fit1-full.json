@@ -1,0 +1,99 @@
+{
+  "model": "d1600-fit1",
+  "dataset": "datasets/huggingface_1600_test1.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.9875,
+    "precision": 0.975609756097561,
+    "recall": 1.0,
+    "specificity": 0.975,
+    "f1": 0.9876543209876543,
+    "balanced_acc": 0.9875,
+    "tp": 160,
+    "fp": 4,
+    "fn": 0,
+    "tn": 156,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 315.05,
+  "per_call_csv": "results/eval_d1600-fit1-full.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 210,
+        "id": "sd1069",
+        "words": 244,
+        "excerpt": "caller: Hello, is this Mr. Johnson? receiver: Yes, that's me. Who's calling? caller: My name is David and I'm calling from SafeGuard Insurance. We're offering a new policy that can save you up to 30% on your current insu",
+        "verdict": "Fraud",
+        "reason": "The caller immediately requested sensitive personal information without providing clear context for why such details were necessary and used pressure tactics by suggesting eligibility for a better rate based on unknown criteria."
+      },
+      {
+        "idx": 264,
+        "id": "sd1332",
+        "words": 233,
+        "excerpt": "caller: Hello, my name is John and I'm calling from XYZ Company. We're offering a special deal on our premium insurance plans. receiver: Oh, really? What makes you think I need insurance? caller: Well, we've been going t",
+        "verdict": "Fraud",
+        "reason": "The caller avoided explaining how they obtained the recipient's information and used a generic script to offer an unsolicited service."
+      },
+      {
+        "idx": 268,
+        "id": "sd1356",
+        "words": 281,
+        "excerpt": "caller: Hello, my name is John and I'm calling from XYZ Company. We're offering a special deal on our new product, it's a state-of-the-art vacuum cleaner that's getting rave reviews. receiver: Oh yeah? How much does it c",
+        "verdict": "Fraud",
+        "reason": "The caller uses urgency and pressure tactics to push for an immediate decision while offering a deal that seems too good to be true."
+      },
+      {
+        "idx": 270,
+        "id": "sd1364",
+        "words": 213,
+        "excerpt": "caller: Hello, my name is Karen and I'm calling from XYZ Insurance Company. We're offering a special deal on health insurance for seniors. Are you or anyone in your household over 65? receiver: Oh, yeah! My grandma's 102",
+        "verdict": "Fraud",
+        "reason": "The caller offers an unexpected reward (discounted insurance) and immediately requests personal information without providing clear context or verification of their legitimacy."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T00:11:17+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit1",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}

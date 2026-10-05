@@ -1,0 +1,21 @@
+idx,true,pred,confidence,node,node_score,novel_flag,reason
+0,Normal,Fraud,85,,0.0,True,The caller is attempting to manipulate the agent into believing they have a legitimate insurance inquiry despite clear inconsistencies and the caller's inability to provide services in Florida where the agent resides.
+1,Fraud,Fraud,95,,0.0,True,"The caller is asking for sensitive personal information such as SSN and email address under the pretense of providing a quote, which is indicative of a scam attempt."
+2,Fraud,Fraud,95,,0.2,True,The caller attempts to gather sensitive information and manipulate the agent into providing personal details for a payment plan.
+3,Normal,Fraud,85,,0.0,True,The caller is gathering sensitive personal information and attempting to sell insurance without a clear context of prior arrangement or request from the agent.
+4,Normal,Fraud,95,,0.0,True,The caller is attempting to manipulate the agent into believing they submitted an inquiry on a reverse mortgage website and is trying to gather sensitive information without clear intent or context.
+5,Normal,Fraud,95,,0.0,True,"The caller is attempting to manipulate the agent into sending a picture of their insurance card, which could contain sensitive information."
+6,Normal,Fraud,85,,0.0,True,"The caller is attempting to gather personal information and manipulate the agent into believing they need additional insurance plans, which is a common tactic in scam calls."
+7,Fraud,Normal,85,,0.0,True,The call appears to be a legitimate follow-up regarding life insurance without any attempts to manipulate the agent into sending money or revealing sensitive information beyond what is typical for such an inquiry.
+8,Normal,Fraud,95,,0.0,True,The caller is attempting to gather personal information and potentially manipulate the agent into agreeing to a service that seems unnecessary and suspicious.
+9,Normal,Fraud,85,,0.0,True,"The caller is attempting to manipulate the agent into believing they requested a quote and then pushing them towards purchasing an insurance plan, which seems unnecessary given their current [ORG] coverage."
+10,Fraud,Fraud,85,,0.0,True,"The caller is gathering personal and financial information under the guise of offering health insurance services, which is a common scam tactic to manipulate individuals into revealing sensitive data or committing to fraudulent plans."
+11,Fraud,Fraud,95,,0.0,True,"The caller is attempting to gather sensitive personal information and offering unrealistic debt relief services, which are common tactics in scam calls."
+12,Fraud,Fraud,95,,0.0,True,"The caller manipulates the agent into believing there is an issue with their ORG number and SSN, leading to potential identity theft or further manipulation."
+13,Normal,Fraud,85,,0.0,True,"The caller is attempting to gather personal information and consent for unsolicited contact, which are common tactics in insurance-related scams."
+14,Normal,Fraud,85,,0.0,True,The caller's behavior and the lack of clear context for the interaction suggest manipulation tactics to obtain sensitive information or consent.
+15,Fraud,Fraud,85,,0.0,True,The caller is attempting to gather personal information and manipulate the agent into considering a specific insurance plan that may be overpriced or unnecessary.
+16,Normal,Fraud,85,,0.0,True,The caller is attempting to gather personal information and manipulate the agent into purchasing life insurance by exploiting their confusion and emotional state.
+17,Fraud,Fraud,95,,0.0,True,The caller's inappropriate and irrelevant questions about the agent's personal life and health indicate potential fraud or malicious intent.
+18,Fraud,Fraud,85,,0.0,True,"The caller is attempting to gather personal information and manipulate the agent into purchasing an insurance policy without a medical exam, which is a common scam tactic."
+19,Fraud,Fraud,85,,0.0,True,"The caller is gathering sensitive personal information under the guise of a consultation, which is indicative of potential fraud or identity theft."

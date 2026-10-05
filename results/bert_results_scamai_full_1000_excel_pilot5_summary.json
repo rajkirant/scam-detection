@@ -1,0 +1,57 @@
+{
+  "mode": "cv",
+  "folds": 3,
+  "per_fold": [
+    {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 1,
+      "tn": 1
+    },
+    {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 1,
+      "tn": 1
+    },
+    {
+      "acc": 1.0,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 0,
+      "tn": 1
+    }
+  ],
+  "pooled": {
+    "acc": 0.6,
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "tp": 0,
+    "fp": 0,
+    "fn": 2,
+    "tn": 3
+  },
+  "mean_acc": 0.6666666666666666,
+  "sd_acc": 0.23570226039551584,
+  "mean_f1": 0.0,
+  "sd_f1": 0.0,
+  "elapsed_s": 41,
+  "model": "bert-base-uncased",
+  "seed": 42,
+  "epochs": 2,
+  "max_length": 256,
+  "batch_size": 8,
+  "lr": 2e-05
+}

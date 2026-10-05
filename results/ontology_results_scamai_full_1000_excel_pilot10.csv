@@ -1,0 +1,11 @@
+idx,true,pred,confidence,node,node_score,novel_flag,reason
+0,Normal,Fraud,85,,0.0,True,"The caller is pushing the agent towards purchasing life insurance despite the agent's confusion and lack of recollection about filling out a form, indicating potential manipulation tactics."
+1,Fraud,Fraud,85,,0.0,True,"The caller is asking for personal information and appears to be misleading the agent about their location and organization, which are signs of a potential scam."
+2,Fraud,Fraud,85,,0.0,True,The caller is pressuring the agent to provide personal information and seems to be setting up a situation where the agent will likely send money or reveal more sensitive details.
+3,Normal,Fraud,85,,0.0,True,The caller is attempting to gather personal information and schedule a home visit under false pretenses.
+4,Fraud,Fraud,85,,0.0,True,The caller appears to be manipulating the agent into discussing personal financial information and loans without a clear context or prior interaction with the organization.
+5,Fraud,Fraud,85,,0.0,True,The caller is attempting to manipulate the agent into discussing tax debt and personal financial information without clear verification of their legitimacy.
+6,Fraud,Fraud,85,,0.0,True,"The caller is attempting to gather sensitive personal information such as SSN and full address for a supposed debt relief program, which is indicative of a scam."
+7,Normal,Fraud,85,,0.2,True,"The caller is pressuring the agent to sign up for a warranty service with significant discounts and immediate payment, which are common tactics in scam calls."
+8,Normal,Fraud,85,,0.0,True,"The caller is attempting to schedule a home visit under the guise of providing free estimates, which is a common scam tactic to gain entry and manipulate homeowners into expensive contracts."
+9,Normal,Fraud,85,,0.0,True,"The caller is gathering personal information and attempting to get the agent's email address despite her reluctance, which is a common tactic in insurance scams."

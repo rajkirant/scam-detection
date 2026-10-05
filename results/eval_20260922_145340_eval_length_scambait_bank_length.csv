@@ -1,0 +1,2 @@
+idx,id,true,predicted,correct,words,words_counted,text
+0,3,legitimate,legitimate,1,27,27,"[Greetings], this is [Name]. I heard your [Product] has finally launched. Congratulations on the milestone! Let us schedule a call so I can hear all about it."

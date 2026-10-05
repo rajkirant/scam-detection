@@ -1,0 +1,202 @@
+[
+  {
+    "id": "f1_qwen_training_0001",
+    "category": "Service Interruption",
+    "support": 1,
+    "behaviours": "The caller pretends to be an official from a service provider and claims that there is an urgent issue with the recipient's account.",
+    "signals": "Immediate action required, such as pressing a number to avoid service interruption or suspension.",
+    "text": "Scam category: Service Interruption\n\nTypical behaviours: The caller pretends to be an official from a service provider and claims that there is an urgent issue with the recipient's account.\n\nDistinguishing signals: Immediate action required, such as pressing a number to avoid service interruption or suspension.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0002",
+    "category": "Fraudulent Transaction",
+    "support": 1,
+    "behaviours": "The caller impersonates law enforcement or legal authorities to inform about fraudulent activities linked to the victim\u2019s personal information.",
+    "signals": "Suspension of services due to suspicious activity, requiring immediate verification by pressing a number.",
+    "text": "Scam category: Fraudulent Transaction\n\nTypical behaviours: The caller impersonates law enforcement or legal authorities to inform about fraudulent activities linked to the victim\u2019s personal information.\n\nDistinguishing signals: Suspension of services due to suspicious activity, requiring immediate verification by pressing a number.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0003",
+    "category": "Investment Scam",
+    "support": 1,
+    "behaviours": "The scammer creates urgency around an investment opportunity or financial recovery process involving large sums of money.",
+    "signals": "Promises of recovering lost funds or accessing significant amounts of money through cooperation with authorities.",
+    "text": "Scam category: Investment Scam\n\nTypical behaviours: The scammer creates urgency around an investment opportunity or financial recovery process involving large sums of money.\n\nDistinguishing signals: Promises of recovering lost funds or accessing significant amounts of money through cooperation with authorities.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0004",
+    "category": "Online Marketplace Fraud",
+    "support": 1,
+    "behaviours": "Claims to be a victim of online marketplace fraud and seeks the recipient's assistance in resolving the issue, often involving financial transactions.",
+    "signals": "References to specific websites or regions where fraudulent activities have occurred, seeking personal information or involvement.",
+    "text": "Scam category: Online Marketplace Fraud\n\nTypical behaviours: Claims to be a victim of online marketplace fraud and seeks the recipient's assistance in resolving the issue, often involving financial transactions.\n\nDistinguishing signals: References to specific websites or regions where fraudulent activities have occurred, seeking personal information or involvement.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f2_qwen_training_0001",
+    "category": "Service Interruption",
+    "support": 1,
+    "behaviours": "The caller pretends to be an official from a service provider, such as a phone company or utility.",
+    "signals": "Immediate threat of service interruption unless action is taken. Caller offers quick resolution by pressing a number.",
+    "text": "Scam category: Service Interruption\n\nTypical behaviours: The caller pretends to be an official from a service provider, such as a phone company or utility.\n\nDistinguishing signals: Immediate threat of service interruption unless action is taken. Caller offers quick resolution by pressing a number.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0002",
+    "category": "Fraudulent Transaction",
+    "support": 1,
+    "behaviours": "The caller impersonates someone involved in an online transaction or marketplace, often claiming to be from law enforcement or legal authorities.",
+    "signals": "References to specific websites and transactions gone wrong. Caller may claim involvement of police or legal action against the scammer.",
+    "text": "Scam category: Fraudulent Transaction\n\nTypical behaviours: The caller impersonates someone involved in an online transaction or marketplace, often claiming to be from law enforcement or legal authorities.\n\nDistinguishing signals: References to specific websites and transactions gone wrong. Caller may claim involvement of police or legal action against the scammer.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0003",
+    "category": "Government Impersonation",
+    "support": 1,
+    "behaviours": "The caller pretends to represent a government agency, such as Social Security Administration, IRS, or similar.",
+    "signals": "Claims that there is an issue with your social security number or tax status. Caller demands immediate action to resolve the problem.",
+    "text": "Scam category: Government Impersonation\n\nTypical behaviours: The caller pretends to represent a government agency, such as Social Security Administration, IRS, or similar.\n\nDistinguishing signals: Claims that there is an issue with your social security number or tax status. Caller demands immediate action to resolve the problem.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0004",
+    "category": "Confusion and Misdirection",
+    "support": 1,
+    "behaviours": "The caller attempts to confuse the recipient by using a mix of correct and incorrect information, often related to personal details or recent transactions.",
+    "signals": "Uses a combination of accurate and inaccurate personal information. Caller may ask for confirmation of identity multiple times.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: The caller attempts to confuse the recipient by using a mix of correct and incorrect information, often related to personal details or recent transactions.\n\nDistinguishing signals: Uses a combination of accurate and inaccurate personal information. Caller may ask for confirmation of identity multiple times.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f3_qwen_training_0001",
+    "category": "Service Interruption",
+    "support": 1,
+    "behaviours": "The caller pretends to be from a service provider and claims that there is an urgent issue with the recipient's account, such as an automatic disconnection due to non-payment.",
+    "signals": "The call starts with a warning about immediate service interruption unless action is taken. The scammer offers quick resolution by pressing a number to connect to a department.",
+    "text": "Scam category: Service Interruption\n\nTypical behaviours: The caller pretends to be from a service provider and claims that there is an urgent issue with the recipient's account, such as an automatic disconnection due to non-payment.\n\nDistinguishing signals: The call starts with a warning about immediate service interruption unless action is taken. The scammer offers quick resolution by pressing a number to connect to a department.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0002",
+    "category": "Fraudulent Transaction",
+    "support": 1,
+    "behaviours": "The caller impersonates law enforcement or financial institutions and claims that the recipient's account has been compromised in a fraudulent transaction.",
+    "signals": "The scammer mentions legal actions, arrests, or financial seizures related to the recipient\u2019s accounts. They often refer to specific amounts of money involved.",
+    "text": "Scam category: Fraudulent Transaction\n\nTypical behaviours: The caller impersonates law enforcement or financial institutions and claims that the recipient's account has been compromised in a fraudulent transaction.\n\nDistinguishing signals: The scammer mentions legal actions, arrests, or financial seizures related to the recipient\u2019s accounts. They often refer to specific amounts of money involved.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0003",
+    "category": "Online Marketplace Scam",
+    "support": 1,
+    "behaviours": "The caller pretends to be from an online marketplace and claims that a transaction involving the recipient has gone wrong.",
+    "signals": "The scammer discusses items listed for sale or purchase on platforms, mentioning issues like non-delivery of goods or overpayment. They often ask for personal information or financial details.",
+    "text": "Scam category: Online Marketplace Scam\n\nTypical behaviours: The caller pretends to be from an online marketplace and claims that a transaction involving the recipient has gone wrong.\n\nDistinguishing signals: The scammer discusses items listed for sale or purchase on platforms, mentioning issues like non-delivery of goods or overpayment. They often ask for personal information or financial details.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0004",
+    "category": "Impersonation",
+    "support": 1,
+    "behaviours": "The caller pretends to be a known contact (like a family member or friend) and tries to gain trust by using familiar names.",
+    "signals": "The call starts with confusion about the name being called, followed by attempts to clarify identity. The scammer then shifts to discussing sensitive topics like loans or financial transactions.",
+    "text": "Scam category: Impersonation\n\nTypical behaviours: The caller pretends to be a known contact (like a family member or friend) and tries to gain trust by using familiar names.\n\nDistinguishing signals: The call starts with confusion about the name being called, followed by attempts to clarify identity. The scammer then shifts to discussing sensitive topics like loans or financial transactions.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f4_qwen_training_0001",
+    "category": "Suspension Threat",
+    "support": 1,
+    "behaviours": "The caller pretends to be an authority figure and informs the recipient that their account or service has been suspended due to suspicious activities.",
+    "signals": "Immediate pressure on the recipient to take action, often threatening permanent suspension if no response is given.",
+    "text": "Scam category: Suspension Threat\n\nTypical behaviours: The caller pretends to be an authority figure and informs the recipient that their account or service has been suspended due to suspicious activities.\n\nDistinguishing signals: Immediate pressure on the recipient to take action, often threatening permanent suspension if no response is given.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0002",
+    "category": "False Pretense of Sale",
+    "support": 1,
+    "behaviours": "The scammer claims to be selling goods at a discount through online platforms and requests payment into specific bank accounts.",
+    "signals": "Requests for immediate financial transactions via unverified methods, often followed by non-delivery of promised items.",
+    "text": "Scam category: False Pretense of Sale\n\nTypical behaviours: The scammer claims to be selling goods at a discount through online platforms and requests payment into specific bank accounts.\n\nDistinguishing signals: Requests for immediate financial transactions via unverified methods, often followed by non-delivery of promised items.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0003",
+    "category": "Impersonation",
+    "support": 1,
+    "behaviours": "The scammer impersonates an individual or organization to gain trust and manipulate the recipient into providing personal information.",
+    "signals": "Confusion about identity details during conversation, seeking verification through sensitive questions or requests for personal data.",
+    "text": "Scam category: Impersonation\n\nTypical behaviours: The scammer impersonates an individual or organization to gain trust and manipulate the recipient into providing personal information.\n\nDistinguishing signals: Confusion about identity details during conversation, seeking verification through sensitive questions or requests for personal data.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0004",
+    "category": "Social Engineering",
+    "support": 1,
+    "behaviours": "Scammers use social engineering tactics to trick individuals into believing they are dealing with a legitimate service provider and provide financial information.",
+    "signals": "Complex narratives involving legal departments, applications, and detailed scenarios that seem plausible but require immediate action or personal data.",
+    "text": "Scam category: Social Engineering\n\nTypical behaviours: Scammers use social engineering tactics to trick individuals into believing they are dealing with a legitimate service provider and provide financial information.\n\nDistinguishing signals: Complex narratives involving legal departments, applications, and detailed scenarios that seem plausible but require immediate action or personal data.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f5_qwen_training_0001",
+    "category": "Service Interruption",
+    "support": 1,
+    "behaviours": "The caller pretends to be an official representative of a service provider and informs the recipient that their service will be interrupted due to non-payment or other issues.",
+    "signals": "The call starts with immediate threats of service interruption unless action is taken, often offering quick resolution by pressing a number.",
+    "text": "Scam category: Service Interruption\n\nTypical behaviours: The caller pretends to be an official representative of a service provider and informs the recipient that their service will be interrupted due to non-payment or other issues.\n\nDistinguishing signals: The call starts with immediate threats of service interruption unless action is taken, often offering quick resolution by pressing a number.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0002",
+    "category": "Confusion Technique",
+    "support": 1,
+    "behaviours": "The scammer deliberately confuses the recipient by mimicking their name or using similar-sounding words to create uncertainty and gain trust.",
+    "signals": "The caller starts with a confusing greeting, often asking for confirmation of identity in a way that sounds like they might have the wrong person.",
+    "text": "Scam category: Confusion Technique\n\nTypical behaviours: The scammer deliberately confuses the recipient by mimicking their name or using similar-sounding words to create uncertainty and gain trust.\n\nDistinguishing signals: The caller starts with a confusing greeting, often asking for confirmation of identity in a way that sounds like they might have the wrong person.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0003",
+    "category": "Fraudulent Financial Alert",
+    "support": 1,
+    "behaviours": "The scammer claims to be from law enforcement or financial institutions and warns about fraudulent activities linked to the recipient's accounts.",
+    "signals": "The call involves detailed descriptions of suspicious transactions, often mentioning specific amounts and bank details that seem official but are fabricated.",
+    "text": "Scam category: Fraudulent Financial Alert\n\nTypical behaviours: The scammer claims to be from law enforcement or financial institutions and warns about fraudulent activities linked to the recipient's accounts.\n\nDistinguishing signals: The call involves detailed descriptions of suspicious transactions, often mentioning specific amounts and bank details that seem official but are fabricated.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0004",
+    "category": "Immediate Action Required",
+    "support": 1,
+    "behaviours": "The caller creates a sense of urgency by claiming an immediate threat to the recipient's financial or legal status unless they take action.",
+    "signals": "The call includes threats of permanent consequences if no action is taken, often directing the recipient to press a number for further instructions.",
+    "text": "Scam category: Immediate Action Required\n\nTypical behaviours: The caller creates a sense of urgency by claiming an immediate threat to the recipient's financial or legal status unless they take action.\n\nDistinguishing signals: The call includes threats of permanent consequences if no action is taken, often directing the recipient to press a number for further instructions.",
+    "source": "dataset training split",
+    "fold": 5
+  }
+]

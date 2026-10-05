@@ -1,0 +1,382 @@
+[
+  {
+    "id": "f1_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 2,
+    "behaviours": "Scammers attempt to confuse the agent by pretending they have previously communicated or that the agent has requested information, often referencing deceased family members or past interactions. The caller confuses the recipient about their identity or previous interactions.",
+    "signals": "The caller shows a clear understanding of personal details but introduces confusion about recent communications or requests. The scammer may claim to be an agent for a company with which the recipient does not have an established relationship, leading to confusion and making it harder for the recipient to verify the call's legitimacy.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers attempt to confuse the agent by pretending they have previously communicated or that the agent has requested information, often referencing deceased family members or past interactions. The caller confuses the recipient about their identity or previous interactions.\n\nDistinguishing signals: The caller shows a clear understanding of personal details but introduces confusion about recent communications or requests. The scammer may claim to be an agent for a company with which the recipient does not have an established relationship, leading to confusion and making it harder for the recipient to verify the call's legitimacy.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0002",
+    "category": "Verification and Payment",
+    "support": 1,
+    "behaviours": "Scammers request sensitive information such as payment details or verification codes under the guise of completing an existing service enrollment process.",
+    "signals": "The caller claims to be following up on a previous interaction and seeks personal financial data for 'verification'.",
+    "text": "Scam category: Verification and Payment\n\nTypical behaviours: Scammers request sensitive information such as payment details or verification codes under the guise of completing an existing service enrollment process.\n\nDistinguishing signals: The caller claims to be following up on a previous interaction and seeks personal financial data for 'verification'.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0003",
+    "category": "False Pretenses",
+    "support": 1,
+    "behaviours": "Scammers pose as representatives from well-known organizations or services, often using generic titles like 'enrollment specialist' or 'insurance agent', to gain trust.",
+    "signals": "The caller identifies themselves with a professional title and claims affiliation with a reputable organization without clear verification.",
+    "text": "Scam category: False Pretenses\n\nTypical behaviours: Scammers pose as representatives from well-known organizations or services, often using generic titles like 'enrollment specialist' or 'insurance agent', to gain trust.\n\nDistinguishing signals: The caller identifies themselves with a professional title and claims affiliation with a reputable organization without clear verification.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0004",
+    "category": "Immediate Follow-Up",
+    "support": 1,
+    "behaviours": "Scammers call immediately after a supposed initial contact, often claiming that the previous call was cut off or incomplete.",
+    "signals": "The caller states they are following up on an earlier interaction and seeks to continue where it left off.",
+    "text": "Scam category: Immediate Follow-Up\n\nTypical behaviours: Scammers call immediately after a supposed initial contact, often claiming that the previous call was cut off or incomplete.\n\nDistinguishing signals: The caller states they are following up on an earlier interaction and seeks to continue where it left off.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0005",
+    "category": "Impersonation",
+    "support": 1,
+    "behaviours": "The caller pretends to be an agent or representative of a known organization.",
+    "signals": "The scammer uses the name of a well-known company and claims to have prior contact with the recipient, often asking for personal information under the guise of providing services.",
+    "text": "Scam category: Impersonation\n\nTypical behaviours: The caller pretends to be an agent or representative of a known organization.\n\nDistinguishing signals: The scammer uses the name of a well-known company and claims to have prior contact with the recipient, often asking for personal information under the guise of providing services.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0006",
+    "category": "Creating Urgency",
+    "support": 1,
+    "behaviours": "The caller creates a sense of urgency by suggesting that there are documents or actions pending.",
+    "signals": "The scammer mentions uncompleted paperwork or urgent follow-ups, prompting the recipient to feel anxious and more likely to provide information.",
+    "text": "Scam category: Creating Urgency\n\nTypical behaviours: The caller creates a sense of urgency by suggesting that there are documents or actions pending.\n\nDistinguishing signals: The scammer mentions uncompleted paperwork or urgent follow-ups, prompting the recipient to feel anxious and more likely to provide information.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0007",
+    "category": "Requesting Personal Information",
+    "support": 1,
+    "behaviours": "The caller requests sensitive personal details such as identification numbers or cards.",
+    "signals": "After establishing a rapport, the scammer asks for specific pieces of information that are typically not shared over the phone without prior arrangement.",
+    "text": "Scam category: Requesting Personal Information\n\nTypical behaviours: The caller requests sensitive personal details such as identification numbers or cards.\n\nDistinguishing signals: After establishing a rapport, the scammer asks for specific pieces of information that are typically not shared over the phone without prior arrangement.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f2_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 1,
+    "behaviours": "Scammers attempt to confuse the agent by mixing up or creating ambiguity around specific products, plans, or services. They often refer to vague terms like 'supplement' or 'advantage plan', which can be similar but different from actual offerings.",
+    "signals": "The caller uses complex and confusing language about benefits or insurance plans without clear definitions or distinctions between them.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers attempt to confuse the agent by mixing up or creating ambiguity around specific products, plans, or services. They often refer to vague terms like 'supplement' or 'advantage plan', which can be similar but different from actual offerings.\n\nDistinguishing signals: The caller uses complex and confusing language about benefits or insurance plans without clear definitions or distinctions between them.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0002",
+    "category": "False Pretenses",
+    "support": 1,
+    "behaviours": "Scammers claim to have received a request for information or services from the agent, often referencing specific actions like filling out forms or sending cards that the agent does not recall.",
+    "signals": "The caller references past interactions or requests that the recipient did not initiate.",
+    "text": "Scam category: False Pretenses\n\nTypical behaviours: Scammers claim to have received a request for information or services from the agent, often referencing specific actions like filling out forms or sending cards that the agent does not recall.\n\nDistinguishing signals: The caller references past interactions or requests that the recipient did not initiate.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0003",
+    "category": "Pressure and Urgency",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by suggesting immediate action is needed, such as verifying payment information quickly before someone else can help.",
+    "signals": "The caller emphasizes time-sensitive actions or suggests that delays could result in missed opportunities.",
+    "text": "Scam category: Pressure and Urgency\n\nTypical behaviours: Scammers create a sense of urgency by suggesting immediate action is needed, such as verifying payment information quickly before someone else can help.\n\nDistinguishing signals: The caller emphasizes time-sensitive actions or suggests that delays could result in missed opportunities.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0004",
+    "category": "Information Gathering",
+    "support": 1,
+    "behaviours": "Scammers attempt to gather personal and financial information under the guise of offering services, often by asking for sensitive details like social security numbers or credit card information.",
+    "signals": "The caller requests specific personal identifiers or payment methods that are not typically required for informational inquiries.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: Scammers attempt to gather personal and financial information under the guise of offering services, often by asking for sensitive details like social security numbers or credit card information.\n\nDistinguishing signals: The caller requests specific personal identifiers or payment methods that are not typically required for informational inquiries.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0005",
+    "category": "Confusion and Disconnection",
+    "support": 1,
+    "behaviours": "The caller pretends to have previously spoken with the agent but claims the call was disconnected. They then ask for personal information or confirmation of actions that never took place.",
+    "signals": "Unexpected reference to a previous interaction, confusion expressed by the agent about what was discussed, and requests for sensitive details like ZIP code or prescription card.",
+    "text": "Scam category: Confusion and Disconnection\n\nTypical behaviours: The caller pretends to have previously spoken with the agent but claims the call was disconnected. They then ask for personal information or confirmation of actions that never took place.\n\nDistinguishing signals: Unexpected reference to a previous interaction, confusion expressed by the agent about what was discussed, and requests for sensitive details like ZIP code or prescription card.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0006",
+    "category": "Authority Impersonation",
+    "support": 1,
+    "behaviours": "The caller pretends to be from an organization or company that the agent trusts. They may claim to be an agent's personal representative or someone who needs to assist with official documents.",
+    "signals": "Use of organizational names, references to signing important documents like insurance forms, and attempts to guide the conversation towards providing personal information.",
+    "text": "Scam category: Authority Impersonation\n\nTypical behaviours: The caller pretends to be from an organization or company that the agent trusts. They may claim to be an agent's personal representative or someone who needs to assist with official documents.\n\nDistinguishing signals: Use of organizational names, references to signing important documents like insurance forms, and attempts to guide the conversation towards providing personal information.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0007",
+    "category": "Immediate Follow-Up",
+    "support": 1,
+    "behaviours": "The caller quickly follows up on a previous interaction that was supposedly initiated by the agent. They may claim there are urgent matters to address or documents to sign.",
+    "signals": "Rapid follow-up after a supposed initial contact, urgency in tone and content about completing tasks or signing documents.",
+    "text": "Scam category: Immediate Follow-Up\n\nTypical behaviours: The caller quickly follows up on a previous interaction that was supposedly initiated by the agent. They may claim there are urgent matters to address or documents to sign.\n\nDistinguishing signals: Rapid follow-up after a supposed initial contact, urgency in tone and content about completing tasks or signing documents.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0008",
+    "category": "Verification Requests",
+    "support": 1,
+    "behaviours": "The caller asks for verification of personal information such as ZIP code, state location, or identification numbers. They may do this under the guise of helping with a service.",
+    "signals": "Requests for specific personal identifiers like zip codes or card numbers, and attempts to confirm addresses or locations.",
+    "text": "Scam category: Verification Requests\n\nTypical behaviours: The caller asks for verification of personal information such as ZIP code, state location, or identification numbers. They may do this under the guise of helping with a service.\n\nDistinguishing signals: Requests for specific personal identifiers like zip codes or card numbers, and attempts to confirm addresses or locations.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f3_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 1,
+    "behaviours": "Scammers attempt to confuse the agent by referencing vague or non-existent interactions, such as previous calls or online forms that were never filled out.",
+    "signals": "The caller often mentions specific details like names of plans or services but lacks clear context or history with the agent. The agent expresses confusion about these references.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers attempt to confuse the agent by referencing vague or non-existent interactions, such as previous calls or online forms that were never filled out.\n\nDistinguishing signals: The caller often mentions specific details like names of plans or services but lacks clear context or history with the agent. The agent expresses confusion about these references.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0002",
+    "category": "False Urgency and Immediate Action",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by suggesting that there is an immediate need to act on something, such as verifying payment information or connecting to another agent.",
+    "signals": "The caller insists on taking action right away, often offering to connect the agent with someone else who can help immediately. The agent may feel pressured to proceed without fully understanding what's happening.",
+    "text": "Scam category: False Urgency and Immediate Action\n\nTypical behaviours: Scammers create a sense of urgency by suggesting that there is an immediate need to act on something, such as verifying payment information or connecting to another agent.\n\nDistinguishing signals: The caller insists on taking action right away, often offering to connect the agent with someone else who can help immediately. The agent may feel pressured to proceed without fully understanding what's happening.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0003",
+    "category": "Impersonation and Emotional Appeal",
+    "support": 1,
+    "behaviours": "Scammers impersonate known entities or individuals (like deceased family members) to gain trust, often appealing to the emotional state of the agent.",
+    "signals": "The caller references specific personal details or relationships that seem out of context but are designed to evoke a sense of familiarity and trust. The agent may feel compelled to cooperate due to these emotional triggers.",
+    "text": "Scam category: Impersonation and Emotional Appeal\n\nTypical behaviours: Scammers impersonate known entities or individuals (like deceased family members) to gain trust, often appealing to the emotional state of the agent.\n\nDistinguishing signals: The caller references specific personal details or relationships that seem out of context but are designed to evoke a sense of familiarity and trust. The agent may feel compelled to cooperate due to these emotional triggers.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0004",
+    "category": "Misleading Information",
+    "support": 1,
+    "behaviours": "Scammers provide misleading information about services or products, often using complex explanations or technical jargon that is difficult for the agent to verify.",
+    "signals": "The caller uses vague terms like 'supplement' or 'advantage plan', which sound official but lack clear definitions. The agent may be unsure of what these terms mean and how they relate to their current situation.",
+    "text": "Scam category: Misleading Information\n\nTypical behaviours: Scammers provide misleading information about services or products, often using complex explanations or technical jargon that is difficult for the agent to verify.\n\nDistinguishing signals: The caller uses vague terms like 'supplement' or 'advantage plan', which sound official but lack clear definitions. The agent may be unsure of what these terms mean and how they relate to their current situation.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0005",
+    "category": "Establishing Legitimacy",
+    "support": 1,
+    "behaviours": "The caller quickly introduces themselves as an agent or representative of a well-known organization and claims to be following up on a request made by the recipient.",
+    "signals": "The call starts with a rapid introduction of credentials and purpose, often mentioning a specific organization name and implying that the call is in response to prior contact from the recipient.",
+    "text": "Scam category: Establishing Legitimacy\n\nTypical behaviours: The caller quickly introduces themselves as an agent or representative of a well-known organization and claims to be following up on a request made by the recipient.\n\nDistinguishing signals: The call starts with a rapid introduction of credentials and purpose, often mentioning a specific organization name and implying that the call is in response to prior contact from the recipient.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0006",
+    "category": "Creating Urgency or Curiosity",
+    "support": 1,
+    "behaviours": "Scammers attempt to engage the agent's curiosity by hinting at important information or benefits related to their current situation, such as insurance plans or financial advice.",
+    "signals": "The caller uses phrases that suggest there is valuable or urgent information available if only certain steps are taken, like requesting personal documents for a comparison of services.",
+    "text": "Scam category: Creating Urgency or Curiosity\n\nTypical behaviours: Scammers attempt to engage the agent's curiosity by hinting at important information or benefits related to their current situation, such as insurance plans or financial advice.\n\nDistinguishing signals: The caller uses phrases that suggest there is valuable or urgent information available if only certain steps are taken, like requesting personal documents for a comparison of services.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0007",
+    "category": "Requesting Personal Information",
+    "support": 1,
+    "behaviours": "Once the agent shows interest in proceeding with the call's purpose, the scammer will request sensitive personal details such as identification numbers or other identifiers.",
+    "signals": "The transition from general conversation to specific requests for personal data is abrupt and often includes assurances that the information is needed only for comparison purposes.",
+    "text": "Scam category: Requesting Personal Information\n\nTypical behaviours: Once the agent shows interest in proceeding with the call's purpose, the scammer will request sensitive personal details such as identification numbers or other identifiers.\n\nDistinguishing signals: The transition from general conversation to specific requests for personal data is abrupt and often includes assurances that the information is needed only for comparison purposes.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0008",
+    "category": "Handling Objections",
+    "support": 1,
+    "behaviours": "When faced with reluctance, the scammer may pause or acknowledge concerns about giving out sensitive information over the phone but will continue to encourage cooperation.",
+    "signals": "The caller shows understanding of security concerns but uses phrases like 'it's safe' or 'we're monitored' to reassure and push for compliance.",
+    "text": "Scam category: Handling Objections\n\nTypical behaviours: When faced with reluctance, the scammer may pause or acknowledge concerns about giving out sensitive information over the phone but will continue to encourage cooperation.\n\nDistinguishing signals: The caller shows understanding of security concerns but uses phrases like 'it's safe' or 'we're monitored' to reassure and push for compliance.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f4_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 2,
+    "behaviours": "Scammers use vague references to previous interactions or documents that the victim may not recall, creating confusion. The caller attempts to confuse the agent by introducing vague or misleading information about previous interactions or requests.",
+    "signals": "Victims express uncertainty about prior communications or agreements with the caller. The agent expresses confusion or uncertainty, often asking for clarification on details that seem off or unrelated.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers use vague references to previous interactions or documents that the victim may not recall, creating confusion. The caller attempts to confuse the agent by introducing vague or misleading information about previous interactions or requests.\n\nDistinguishing signals: Victims express uncertainty about prior communications or agreements with the caller. The agent expresses confusion or uncertainty, often asking for clarification on details that seem off or unrelated.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0002",
+    "category": "Impersonation of Authority",
+    "support": 1,
+    "behaviours": "Scammers pretend to be from reputable organizations and use official-sounding titles to establish credibility.",
+    "signals": "Callers claim affiliation with well-known entities but provide little concrete information about their role or the organization's identity.",
+    "text": "Scam category: Impersonation of Authority\n\nTypical behaviours: Scammers pretend to be from reputable organizations and use official-sounding titles to establish credibility.\n\nDistinguishing signals: Callers claim affiliation with well-known entities but provide little concrete information about their role or the organization's identity.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0003",
+    "category": "Pressure for Immediate Action",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by suggesting that immediate action is necessary to avoid negative consequences.",
+    "signals": "Callers emphasize time-sensitive offers or threats, such as impending deadlines or missed opportunities.",
+    "text": "Scam category: Pressure for Immediate Action\n\nTypical behaviours: Scammers create a sense of urgency by suggesting that immediate action is necessary to avoid negative consequences.\n\nDistinguishing signals: Callers emphasize time-sensitive offers or threats, such as impending deadlines or missed opportunities.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0004",
+    "category": "Bait and Switch",
+    "support": 1,
+    "behaviours": "Scammers initially discuss one topic but then shift the conversation to a different product or service that is more profitable for them.",
+    "signals": "The call starts with a discussion about one matter, such as insurance benefits, but quickly transitions to selling an unrelated product like life insurance.",
+    "text": "Scam category: Bait and Switch\n\nTypical behaviours: Scammers initially discuss one topic but then shift the conversation to a different product or service that is more profitable for them.\n\nDistinguishing signals: The call starts with a discussion about one matter, such as insurance benefits, but quickly transitions to selling an unrelated product like life insurance.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0005",
+    "category": "Technical Disconnection",
+    "support": 1,
+    "behaviours": "The caller claims a technical disconnection to justify the call and create an opportunity to gather personal information.",
+    "signals": "The conversation starts with the caller stating they were previously disconnected, often asking for confirmation of previous interactions or seeking additional details.",
+    "text": "Scam category: Technical Disconnection\n\nTypical behaviours: The caller claims a technical disconnection to justify the call and create an opportunity to gather personal information.\n\nDistinguishing signals: The conversation starts with the caller stating they were previously disconnected, often asking for confirmation of previous interactions or seeking additional details.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0006",
+    "category": "Personal Connection",
+    "support": 1,
+    "behaviours": "The caller attempts to establish a rapport by referencing deceased family members or past relationships.",
+    "signals": "The agent is prompted to discuss personal matters such as the loss of a loved one, which can make them more trusting and cooperative.",
+    "text": "Scam category: Personal Connection\n\nTypical behaviours: The caller attempts to establish a rapport by referencing deceased family members or past relationships.\n\nDistinguishing signals: The agent is prompted to discuss personal matters such as the loss of a loved one, which can make them more trusting and cooperative.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0007",
+    "category": "Information Gathering",
+    "support": 1,
+    "behaviours": "The caller asks for sensitive information under the guise of providing assistance or following up on previous requests.",
+    "signals": "Requests for specific personal details such as zip code, address, or identification numbers are made in a casual and seemingly helpful manner.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: The caller asks for sensitive information under the guise of providing assistance or following up on previous requests.\n\nDistinguishing signals: Requests for specific personal details such as zip code, address, or identification numbers are made in a casual and seemingly helpful manner.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f5_qwen_training_0001",
+    "category": "Confusion and Misdirection",
+    "support": 1,
+    "behaviours": "Scammers attempt to confuse the recipient by referencing vague or non-existent interactions, such as previous calls or online forms that were never filled out.",
+    "signals": "The caller tries to establish a false sense of familiarity with the recipient, often mentioning specific details like names or dates that the recipient does not recall.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: Scammers attempt to confuse the recipient by referencing vague or non-existent interactions, such as previous calls or online forms that were never filled out.\n\nDistinguishing signals: The caller tries to establish a false sense of familiarity with the recipient, often mentioning specific details like names or dates that the recipient does not recall.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0002",
+    "category": "Pressure and Urgency",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by suggesting immediate action is needed for benefits or services.",
+    "signals": "The caller emphasizes time-sensitive offers, such as connecting to another agent immediately or completing an enrollment process quickly before the recipient can verify details.",
+    "text": "Scam category: Pressure and Urgency\n\nTypical behaviours: Scammers create a sense of urgency by suggesting immediate action is needed for benefits or services.\n\nDistinguishing signals: The caller emphasizes time-sensitive offers, such as connecting to another agent immediately or completing an enrollment process quickly before the recipient can verify details.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0003",
+    "category": "Information Gathering",
+    "support": 1,
+    "behaviours": "Scammers seek personal information under the guise of providing assistance or verifying existing services.",
+    "signals": "The caller requests sensitive data like identification numbers, addresses, and financial information to appear legitimate while actually aiming to steal identity or financial details.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: Scammers seek personal information under the guise of providing assistance or verifying existing services.\n\nDistinguishing signals: The caller requests sensitive data like identification numbers, addresses, and financial information to appear legitimate while actually aiming to steal identity or financial details.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0004",
+    "category": "False Assurance",
+    "support": 1,
+    "behaviours": "Scammers assure recipients that their actions are safe and cost-free to encourage compliance.",
+    "signals": "The caller repeatedly assures the recipient that there is no cost involved in providing information or completing a process, often while subtly guiding them towards revealing personal data.",
+    "text": "Scam category: False Assurance\n\nTypical behaviours: Scammers assure recipients that their actions are safe and cost-free to encourage compliance.\n\nDistinguishing signals: The caller repeatedly assures the recipient that there is no cost involved in providing information or completing a process, often while subtly guiding them towards revealing personal data.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0005",
+    "category": "Confusion and Uncertainty",
+    "support": 1,
+    "behaviours": "The caller attempts to confuse or mislead the agent by creating uncertainty about previous interactions, such as pretending that documents were supposed to be signed but weren't.",
+    "signals": "The scammer uses phrases like 'I resent it' or 'it never completed,' indicating a fabricated issue with document submission.",
+    "text": "Scam category: Confusion and Uncertainty\n\nTypical behaviours: The caller attempts to confuse or mislead the agent by creating uncertainty about previous interactions, such as pretending that documents were supposed to be signed but weren't.\n\nDistinguishing signals: The scammer uses phrases like 'I resent it' or 'it never completed,' indicating a fabricated issue with document submission.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0006",
+    "category": "False Pretense of Authority",
+    "support": 1,
+    "behaviours": "The caller pretends to have authority by claiming they are an agent from a reputable organization and that the recipient has requested information or services.",
+    "signals": "The scammer uses formal titles like 'agent' and references specific organizations, often asking if the call is expected.",
+    "text": "Scam category: False Pretense of Authority\n\nTypical behaviours: The caller pretends to have authority by claiming they are an agent from a reputable organization and that the recipient has requested information or services.\n\nDistinguishing signals: The scammer uses formal titles like 'agent' and references specific organizations, often asking if the call is expected.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0007",
+    "category": "Emotional Manipulation",
+    "support": 1,
+    "behaviours": "The caller tries to evoke an emotional response by mentioning deceased family members or significant life events to gain trust.",
+    "signals": "The scammer brings up personal details like a recently passed loved one, attempting to establish a rapport based on shared experiences.",
+    "text": "Scam category: Emotional Manipulation\n\nTypical behaviours: The caller tries to evoke an emotional response by mentioning deceased family members or significant life events to gain trust.\n\nDistinguishing signals: The scammer brings up personal details like a recently passed loved one, attempting to establish a rapport based on shared experiences.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0008",
+    "category": "Verification of Personal Information",
+    "support": 1,
+    "behaviours": "The caller seeks verification of personal information by asking about recent activities or requests made through the organization's website.",
+    "signals": "The scammer asks detailed questions about specific actions taken, such as filling out forms on a website, to confirm the recipient's identity and context.",
+    "text": "Scam category: Verification of Personal Information\n\nTypical behaviours: The caller seeks verification of personal information by asking about recent activities or requests made through the organization's website.\n\nDistinguishing signals: The scammer asks detailed questions about specific actions taken, such as filling out forms on a website, to confirm the recipient's identity and context.",
+    "source": "dataset training split",
+    "fold": 5
+  }
+]

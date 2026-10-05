@@ -1,0 +1,147 @@
+{
+  "model": "d1600-fit4",
+  "dataset": "datasets/huggingface_1600_test4_stripped.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "balanced_acc": 0.5,
+    "tp": 160,
+    "fp": 160,
+    "fn": 0,
+    "tn": 0,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 295.45,
+  "per_call_csv": "results/eval_d1600-fit4-stripped.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 160,
+        "id": "sd0807",
+        "words": 102,
+        "excerpt": "i am from i just to that you are a i so what is the for again it is a from you a i do not a can you me more about it me on that it here that you a on that does not i did not any are you you have the i for the can i your ",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and attempts to gather personal information without a clear context for the call."
+      },
+      {
+        "idx": 161,
+        "id": "sd0809",
+        "words": 82,
+        "excerpt": "i am from i just to that you are a i so what is the for again it is for the you from our and can you me more about this what is the and me on that it it is a that but before we can you me how much i for it again to our y",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and requests personal information without providing clear context or verifiable details."
+      },
+      {
+        "idx": 162,
+        "id": "sd0810",
+        "words": 130,
+        "excerpt": "i am from i just to that your is to what is the for it is a you from our i do not a can you me more about it me on that it here that you the on and with your that does not i did not any are you you have the i for the me ",
+        "verdict": "Fraud",
+        "reason": "The caller requested personal information under vague pretenses without providing verifiable details."
+      },
+      {
+        "idx": 163,
+        "id": "sd0811",
+        "words": 151,
+        "excerpt": "i am from i just to that you are to your i so what is the for again it is a of a you i do not a can you me more about it me on that it here that you it on our and with your that i do not my for that can you me the or to ",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and requests personal information without providing clear context or verifiable details."
+      },
+      {
+        "idx": 164,
+        "id": "sd0812",
+        "words": 131,
+        "excerpt": "i am from i just to that you are a i so what is the for again it is for the you and can you me more about this what is the me it is a that but before we can you me how you my we it from your when you the and what is the ",
+        "verdict": "Fraud",
+        "reason": "The caller requests personal information under vague pretenses and does not provide verifiable details like order numbers or tracking IDs."
+      },
+      {
+        "idx": 165,
+        "id": "sd0822",
+        "words": 84,
+        "excerpt": "i am from i just to that your will be what is the about it is a of you i do not can you me more about it me it here that you of and a of that can you me a or me it here that it is and and can you me how much i for this t",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and requests personal information under the pretense of a reward without providing verifiable details or context."
+      },
+      {
+        "idx": 166,
+        "id": "sd0825",
+        "words": 89,
+        "excerpt": "i am from i just to that your will be what is the for it here it is a you from our i do not a can you me more about it me it here you a on that does not can you me the the is i will on my can you for a i and it i did tha",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and requests personal information without providing clear context or verifiable details."
+      },
+      {
+        "idx": 167,
+        "id": "sd0835",
+        "words": 122,
+        "excerpt": "i am from i just to that your is to i so what is the for again it is a you from our can you me more about it the and me on that it here the is and it is a that but how do i this is not a you could be me i your if you wou",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and requests personal information without providing clear context or verifiable details."
+      },
+      {
+        "idx": 168,
+        "id": "sd0851",
+        "words": 84,
+        "excerpt": "i am from i just to that you your i it but can you me what is in the me on that for you to our you should have a that is but how did you my we it from your you an on our that is how do i this is not a can you me your or ",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and nonsensical, typical of a scammer trying to gather personal information without clear context or verifiable details."
+      },
+      {
+        "idx": 169,
+        "id": "sd0853",
+        "words": 96,
+        "excerpt": "i am from i just to that your is to i did not can you me more about the me on that it here that you a from our i do not so what is the it is would you me to up the of the what is the it here that it is being to that is m",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague language and requests personal information without providing clear context or verifiable details."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T03:08:42+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit4",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}

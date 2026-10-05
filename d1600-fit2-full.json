@@ -1,0 +1,115 @@
+{
+  "model": "d1600-fit2",
+  "dataset": "datasets/huggingface_1600_test2.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.98125,
+    "precision": 0.963855421686747,
+    "recall": 1.0,
+    "specificity": 0.9625,
+    "f1": 0.9815950920245399,
+    "balanced_acc": 0.98125,
+    "tp": 160,
+    "fp": 6,
+    "fn": 0,
+    "tn": 154,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 315.62,
+  "per_call_csv": "results/eval_d1600-fit2-full.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 222,
+        "id": "sd1131",
+        "words": 227,
+        "excerpt": "caller: Hello, my name is John and I'm calling from XYZ Insurance. How are you today? receiver: I'm doing well, thanks. What can I do for you? caller: We've been reviewing your file and we believe you're eligible for a d",
+        "verdict": "Fraud",
+        "reason": "The caller requested sensitive personal information and used vague references to public records without clear verification methods."
+      },
+      {
+        "idx": 237,
+        "id": "sd1186",
+        "words": 243,
+        "excerpt": "caller: Hello, my name is John and I'm calling from ABC Insurance Company. How are you today? receiver: I'm doing great, thanks for asking. What can I do for you, John? caller: We've been going over our records and notic",
+        "verdict": "Fraud",
+        "reason": "The caller avoided providing specific details about how they obtained the receiver's information and shifted quickly to selling insurance without addressing the receiver's questions thoroughly."
+      },
+      {
+        "idx": 254,
+        "id": "sd1267",
+        "words": 264,
+        "excerpt": "caller: Hello, my name is Karen and I'm calling from XYZ Company. We're offering a special deal on our new line of kitchen appliances. receiver: Oh, really? What makes you think I need new kitchen appliances? caller: Wel",
+        "verdict": "Fraud",
+        "reason": "The caller avoided providing specific details about how they obtained the receiver's information and seemed vague when questioned about a third-party vendor."
+      },
+      {
+        "idx": 255,
+        "id": "sd1268",
+        "words": 233,
+        "excerpt": "caller: Hello, my name is John and I'm calling from XYZ Company. We're offering a special deal on our new security system. receiver: Oh, really? What makes you think I need a new security system? caller: Well, we've had ",
+        "verdict": "Fraud",
+        "reason": "The caller uses vague and unverifiable claims about crime reports to pressure the receiver into purchasing a security system without clear affiliation or verification of their research team's credibility."
+      },
+      {
+        "idx": 256,
+        "id": "sd1272",
+        "words": 282,
+        "excerpt": "caller: Hello, my name is Karen and I'm calling from Green Earth Cleaning Solutions. How are you today? receiver: I'm doing great, thanks for asking. What can you do for me? caller: We're offering a special promotion on ",
+        "verdict": "Fraud",
+        "reason": "The caller's vague explanation about how they obtained the receiver's contact information and their reluctance to provide specific details about the database used are red flags for a scam."
+      },
+      {
+        "idx": 265,
+        "id": "sd1338",
+        "words": 232,
+        "excerpt": "caller: Hello, my name is John and I'm calling from XYZ Company. We're offering a special deal on our premium subscription service. receiver: Oh, really? What makes you think I need this service? caller: Well, we've been",
+        "verdict": "Fraud",
+        "reason": "The caller claimed to have monitored the receiver's online activity and offered a service based on that without explicit consent or clear communication about how they obtained contact information."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T00:22:27+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit2",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}

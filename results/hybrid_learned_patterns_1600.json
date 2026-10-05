@@ -1,0 +1,402 @@
+[
+  {
+    "id": "f1_qwen_training_0001",
+    "category": "Pressure Tactics",
+    "support": 2,
+    "behaviours": "Scammers create urgency by threatening immediate consequences if the victim doesn't act quickly. Scammers create urgency by claiming there is an immediate issue that needs to be resolved, such as unauthorized transactions or compromised personal information.",
+    "signals": "The scammer uses phrases like 'act now' or mentions time-sensitive offers to pressure the recipient into quick action. The caller insists on quick action and may threaten legal consequences if the receiver does not comply.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: Scammers create urgency by threatening immediate consequences if the victim doesn't act quickly. Scammers create urgency by claiming there is an immediate issue that needs to be resolved, such as unauthorized transactions or compromised personal information.\n\nDistinguishing signals: The scammer uses phrases like 'act now' or mentions time-sensitive offers to pressure the recipient into quick action. The caller insists on quick action and may threaten legal consequences if the receiver does not comply.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0002",
+    "category": "Refund Scam",
+    "support": 2,
+    "behaviours": "Scammers claim to represent a reputable company and inform the victim of an unexpected refund or error in billing. Scammers claim to be from a reputable company's customer service or refund department, stating that there is an issue with the receiver\u2019s recent purchase and offering a refund.",
+    "signals": "Requests for sensitive financial information such as bank account details under the guise of processing a refund. The scammer requests sensitive personal information such as bank account details or social security numbers under the guise of verifying identity for processing refunds. They often provide incorrect order details or email addresses to confuse the receiver.",
+    "text": "Scam category: Refund Scam\n\nTypical behaviours: Scammers claim to represent a reputable company and inform the victim of an unexpected refund or error in billing. Scammers claim to be from a reputable company's customer service or refund department, stating that there is an issue with the receiver\u2019s recent purchase and offering a refund.\n\nDistinguishing signals: Requests for sensitive financial information such as bank account details under the guise of processing a refund. The scammer requests sensitive personal information such as bank account details or social security numbers under the guise of verifying identity for processing refunds. They often provide incorrect order details or email addresses to confuse the receiver.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0003",
+    "category": "Tech Support Scam",
+    "support": 2,
+    "behaviours": "Pretending to be from a legitimate tech support team, scammers inform victims about non-existent computer issues. Scammers pose as technical support representatives from reputable companies to gain remote access or financial information.",
+    "signals": "Demanding remote access or downloads from unverified websites and reluctance to provide verification details when questioned. Unsolicited calls claiming a computer issue, requests for downloading unknown software, and providing fake call-back numbers.",
+    "text": "Scam category: Tech Support Scam\n\nTypical behaviours: Pretending to be from a legitimate tech support team, scammers inform victims about non-existent computer issues. Scammers pose as technical support representatives from reputable companies to gain remote access or financial information.\n\nDistinguishing signals: Demanding remote access or downloads from unverified websites and reluctance to provide verification details when questioned. Unsolicited calls claiming a computer issue, requests for downloading unknown software, and providing fake call-back numbers.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0004",
+    "category": "Verification Scam",
+    "support": 2,
+    "behaviours": "Scammers ask victims to verify their identity by providing personal details over the phone. Scammers ask for personal verification to confirm identity or account details, often claiming it is a security measure.",
+    "signals": "Refusal to provide any form of verification for the caller's identity or organization and insistence on urgent action without clear explanation. The scammer insists on immediate action and may offer to transfer the call to a supervisor if the receiver questions their legitimacy. They typically request sensitive information like social security numbers or bank account details.",
+    "text": "Scam category: Verification Scam\n\nTypical behaviours: Scammers ask victims to verify their identity by providing personal details over the phone. Scammers ask for personal verification to confirm identity or account details, often claiming it is a security measure.\n\nDistinguishing signals: Refusal to provide any form of verification for the caller's identity or organization and insistence on urgent action without clear explanation. The scammer insists on immediate action and may offer to transfer the call to a supervisor if the receiver questions their legitimacy. They typically request sensitive information like social security numbers or bank account details.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0005",
+    "category": "Information Verification",
+    "support": 2,
+    "behaviours": "Scammers request sensitive personal information under the guise of verifying identity or processing a refund. Scammers request personal information such as social security numbers, addresses, or financial details under the guise of verifying identity.",
+    "signals": "Requests for detailed personal data like social security numbers, dates of birth, and financial details over the phone without proper verification. The caller insists on immediate verification over the phone despite the receiver's reluctance and offers vague explanations for why they need this information.",
+    "text": "Scam category: Information Verification\n\nTypical behaviours: Scammers request sensitive personal information under the guise of verifying identity or processing a refund. Scammers request personal information such as social security numbers, addresses, or financial details under the guise of verifying identity.\n\nDistinguishing signals: Requests for detailed personal data like social security numbers, dates of birth, and financial details over the phone without proper verification. The caller insists on immediate verification over the phone despite the receiver's reluctance and offers vague explanations for why they need this information.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0006",
+    "category": "Gift Card Scam",
+    "support": 2,
+    "behaviours": "Scammers offer free gift cards but require personal information or payment to claim them. Scammers claim that the receiver has won a gift card from a major retailer and must pay a processing fee to receive it.",
+    "signals": "Requests for sensitive personal data like social security numbers, immediate payment for processing fees, and vague explanations about how the recipient was selected. The scammer requests payment for shipping and handling fees, which are unnecessary charges for legitimate promotions. The caller may also be vague about the retailer's name or how they obtained the recipient\u2019s contact information.",
+    "text": "Scam category: Gift Card Scam\n\nTypical behaviours: Scammers offer free gift cards but require personal information or payment to claim them. Scammers claim that the receiver has won a gift card from a major retailer and must pay a processing fee to receive it.\n\nDistinguishing signals: Requests for sensitive personal data like social security numbers, immediate payment for processing fees, and vague explanations about how the recipient was selected. The scammer requests payment for shipping and handling fees, which are unnecessary charges for legitimate promotions. The caller may also be vague about the retailer's name or how they obtained the recipient\u2019s contact information.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0007",
+    "category": "Verification Requests",
+    "support": 1,
+    "behaviours": "Scammers ask for personal information such as bank details, social security numbers, and addresses under the guise of verification.",
+    "signals": "The scammer insists on verifying identity or account details over the phone despite the recipient's reluctance.",
+    "text": "Scam category: Verification Requests\n\nTypical behaviours: Scammers ask for personal information such as bank details, social security numbers, and addresses under the guise of verification.\n\nDistinguishing signals: The scammer insists on verifying identity or account details over the phone despite the recipient's reluctance.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0008",
+    "category": "Official Impersonation",
+    "support": 1,
+    "behaviours": "Scammers pretend to be from legitimate organizations like Microsoft, Walmart, or government agencies to lend credibility to their requests.",
+    "signals": "The scammer uses official-sounding titles and company names but cannot provide verification details when questioned.",
+    "text": "Scam category: Official Impersonation\n\nTypical behaviours: Scammers pretend to be from legitimate organizations like Microsoft, Walmart, or government agencies to lend credibility to their requests.\n\nDistinguishing signals: The scammer uses official-sounding titles and company names but cannot provide verification details when questioned.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f2_qwen_training_0001",
+    "category": "Gift Card Scam",
+    "support": 3,
+    "behaviours": "Scammers claim that the recipient has won a gift card and need to verify personal information such as social security number or address. Scammers offer free or discounted gift cards but require personal financial information to claim them. The caller claims to represent a retail company and informs the receiver about winning a free gift card or prize.",
+    "signals": "Requests for sensitive personal information like SSN, unusual insistence on verifying identity over the phone, lack of physical office location despite being a company. Requests for credit card details, prepaid debit card purchases, or other forms of payment to 'process' a free reward. Requests for sensitive personal information like social security numbers before providing any details about how the gift will be delivered.",
+    "text": "Scam category: Gift Card Scam\n\nTypical behaviours: Scammers claim that the recipient has won a gift card and need to verify personal information such as social security number or address. Scammers offer free or discounted gift cards but require personal financial information to claim them. The caller claims to represent a retail company and informs the receiver about winning a free gift card or prize.\n\nDistinguishing signals: Requests for sensitive personal information like SSN, unusual insistence on verifying identity over the phone, lack of physical office location despite being a company. Requests for credit card details, prepaid debit card purchases, or other forms of payment to 'process' a free reward. Requests for sensitive personal information like social security numbers before providing any details about how the gift will be delivered.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0002",
+    "category": "Refund Scam",
+    "support": 2,
+    "behaviours": "Scammers pretend to be from a reputable company and claim there is an error that requires refunding money but need personal information such as credit card details. The caller claims to represent a reputable company and informs the receiver about an unexpected refund or compensation.",
+    "signals": "Requests for financial information like credit card numbers, vague or standard refund amounts, lack of specific knowledge about the company's policies. Requests for personal financial information such as bank account details under the guise of processing a refund, despite the receiver's reluctance.",
+    "text": "Scam category: Refund Scam\n\nTypical behaviours: Scammers pretend to be from a reputable company and claim there is an error that requires refunding money but need personal information such as credit card details. The caller claims to represent a reputable company and informs the receiver about an unexpected refund or compensation.\n\nDistinguishing signals: Requests for financial information like credit card numbers, vague or standard refund amounts, lack of specific knowledge about the company's policies. Requests for personal financial information such as bank account details under the guise of processing a refund, despite the receiver's reluctance.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0003",
+    "category": "Technical Support Scam",
+    "support": 2,
+    "behaviours": "Scammers claim to be from a technical support team and report that the recipient\u2019s device is infected with malware. Scammers claim to be from a technical support team and offer refunds or services but require access to personal information.",
+    "signals": "Urgent tone demanding immediate action, requests for remote access to personal devices, vague or non-existent virus names. Requests for license keys, email addresses, or other specific account details to 'verify' eligibility for a refund or service.",
+    "text": "Scam category: Technical Support Scam\n\nTypical behaviours: Scammers claim to be from a technical support team and report that the recipient\u2019s device is infected with malware. Scammers claim to be from a technical support team and offer refunds or services but require access to personal information.\n\nDistinguishing signals: Urgent tone demanding immediate action, requests for remote access to personal devices, vague or non-existent virus names. Requests for license keys, email addresses, or other specific account details to 'verify' eligibility for a refund or service.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0004",
+    "category": "Verification Scam",
+    "support": 2,
+    "behaviours": "Scammers ask recipients to verify their identity by providing sensitive information such as social security numbers. The caller claims to verify personal information under various pretenses such as confirming identity or validating account details.",
+    "signals": "Promises of rewards or refunds contingent on verification, inability to provide a call-back number for supervisor or company representative. Pressures the receiver into providing sensitive data immediately, often by creating a sense of urgency and assuring security measures that seem dubious.",
+    "text": "Scam category: Verification Scam\n\nTypical behaviours: Scammers ask recipients to verify their identity by providing sensitive information such as social security numbers. The caller claims to verify personal information under various pretenses such as confirming identity or validating account details.\n\nDistinguishing signals: Promises of rewards or refunds contingent on verification, inability to provide a call-back number for supervisor or company representative. Pressures the receiver into providing sensitive data immediately, often by creating a sense of urgency and assuring security measures that seem dubious.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0005",
+    "category": "Information Verification",
+    "support": 2,
+    "behaviours": "Scammers request sensitive personal information under the guise of verifying identity or processing a reward/refund. Scammers request sensitive personal information under the guise of verifying identity or resolving an issue, such as social security numbers or bank account details.",
+    "signals": "Requests for social security numbers, credit card details, or other private data are made to appear necessary and secure. The scammer insists on obtaining specific types of personal data over the phone and may dismiss concerns about privacy.",
+    "text": "Scam category: Information Verification\n\nTypical behaviours: Scammers request sensitive personal information under the guise of verifying identity or processing a reward/refund. Scammers request sensitive personal information under the guise of verifying identity or resolving an issue, such as social security numbers or bank account details.\n\nDistinguishing signals: Requests for social security numbers, credit card details, or other private data are made to appear necessary and secure. The scammer insists on obtaining specific types of personal data over the phone and may dismiss concerns about privacy.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0006",
+    "category": "Pressure Tactics",
+    "support": 1,
+    "behaviours": "Scammers create urgency by threatening consequences such as benefit suspension or legal action if the recipient doesn't comply.",
+    "signals": "The caller insists on immediate cooperation and warns of severe repercussions for non-compliance.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: Scammers create urgency by threatening consequences such as benefit suspension or legal action if the recipient doesn't comply.\n\nDistinguishing signals: The caller insists on immediate cooperation and warns of severe repercussions for non-compliance.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0007",
+    "category": "Plausible Deniability",
+    "support": 1,
+    "behaviours": "Scammers provide vague explanations about how they obtained the recipient's information or why verification is needed.",
+    "signals": "The caller avoids specifics about their organization\u2019s methods, instead offering general assurances of legitimacy without concrete evidence.",
+    "text": "Scam category: Plausible Deniability\n\nTypical behaviours: Scammers provide vague explanations about how they obtained the recipient's information or why verification is needed.\n\nDistinguishing signals: The caller avoids specifics about their organization\u2019s methods, instead offering general assurances of legitimacy without concrete evidence.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0008",
+    "category": "Refusal to Transfer Call",
+    "support": 1,
+    "behaviours": "Scammers refuse to transfer calls to a supervisor or official department when the recipient requests verification.",
+    "signals": "When asked for further validation, the caller claims that transferring the call is not possible and insists on handling everything themselves.",
+    "text": "Scam category: Refusal to Transfer Call\n\nTypical behaviours: Scammers refuse to transfer calls to a supervisor or official department when the recipient requests verification.\n\nDistinguishing signals: When asked for further validation, the caller claims that transferring the call is not possible and insists on handling everything themselves.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f3_qwen_training_0001",
+    "category": "Refund Scam",
+    "support": 4,
+    "behaviours": "Scammers pretend to represent a company like Amazon or Microsoft and offer unexpected refunds or compensation. The caller claims to be from a reputable company and informs the receiver about an unexpected refund or correction of overcharged fees. Scammers pretend to be customer service representatives from a company like Amazon. They claim there is an issue with a recent purchase that requires verification of account credentials.",
+    "signals": "Unsolicited offers of refunds for non-existent purchases, requests for personal financial information, and pressure tactics to act quickly. Requests for sensitive personal information such as social security numbers, birthdates, account numbers, and routing numbers under the guise of verifying identity or processing refunds. Requests for sensitive personal information such as login credentials or financial details, and pressure tactics to act immediately before the offer expires.",
+    "text": "Scam category: Refund Scam\n\nTypical behaviours: Scammers pretend to represent a company like Amazon or Microsoft and offer unexpected refunds or compensation. The caller claims to be from a reputable company and informs the receiver about an unexpected refund or correction of overcharged fees. Scammers pretend to be customer service representatives from a company like Amazon. They claim there is an issue with a recent purchase that requires verification of account credentials.\n\nDistinguishing signals: Unsolicited offers of refunds for non-existent purchases, requests for personal financial information, and pressure tactics to act quickly. Requests for sensitive personal information such as social security numbers, birthdates, account numbers, and routing numbers under the guise of verifying identity or processing refunds. Requests for sensitive personal information such as login credentials or financial details, and pressure tactics to act immediately before the offer expires.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0002",
+    "category": "Gift Card Scam",
+    "support": 4,
+    "behaviours": "The caller informs the receiver that they have won a gift card from a well-known retailer. Scammers contact receivers claiming they have won a gift card in a random draw or survey. They ask for personal details to verify the winner's identity. Scammers claim that the victim has won a gift card from a reputable company like Walmart. They ask for personal information such as name, address, or social security number to verify identity.",
+    "signals": "Requests for personal identification details like social security number and address to verify eligibility, often with vague or non-existent follow-up information. The scammer requests credit card numbers or other financial information under the guise of activating the prize, despite assurances that it is free. Unsolicited calls about winning prizes or gifts without prior entry, reluctance to provide supervisor contact details, and insistence on collecting sensitive personal data over the phone.",
+    "text": "Scam category: Gift Card Scam\n\nTypical behaviours: The caller informs the receiver that they have won a gift card from a well-known retailer. Scammers contact receivers claiming they have won a gift card in a random draw or survey. They ask for personal details to verify the winner's identity. Scammers claim that the victim has won a gift card from a reputable company like Walmart. They ask for personal information such as name, address, or social security number to verify identity.\n\nDistinguishing signals: Requests for personal identification details like social security number and address to verify eligibility, often with vague or non-existent follow-up information. The scammer requests credit card numbers or other financial information under the guise of activating the prize, despite assurances that it is free. Unsolicited calls about winning prizes or gifts without prior entry, reluctance to provide supervisor contact details, and insistence on collecting sensitive personal data over the phone.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0003",
+    "category": "Remote Access",
+    "support": 3,
+    "behaviours": "Scammers claim to be from reputable companies and offer remote access to fix issues or verify information. Scammers pose as technical support and claim to detect a virus or security issue. They guide the receiver through steps to grant remote access to their computer. Scammers attempt to gain remote access to the victim's computer under the pretense of fixing a problem.",
+    "signals": "Requests for downloading unknown software, providing personal credentials, or granting remote control of the computer. The scammer instructs the receiver to download software or click links that could install malware, often dismissing concerns about safety. The caller offers to remotely connect and fix issues on the victim's device, often using proprietary or custom software.",
+    "text": "Scam category: Remote Access\n\nTypical behaviours: Scammers claim to be from reputable companies and offer remote access to fix issues or verify information. Scammers pose as technical support and claim to detect a virus or security issue. They guide the receiver through steps to grant remote access to their computer. Scammers attempt to gain remote access to the victim's computer under the pretense of fixing a problem.\n\nDistinguishing signals: Requests for downloading unknown software, providing personal credentials, or granting remote control of the computer. The scammer instructs the receiver to download software or click links that could install malware, often dismissing concerns about safety. The caller offers to remotely connect and fix issues on the victim's device, often using proprietary or custom software.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0004",
+    "category": "Verification Scam",
+    "support": 2,
+    "behaviours": "Scammers ask victims to verify their identity by providing personal data over the phone. They may claim that this is necessary for security reasons. Scammers ask for verification of identity or account details under the guise of confirming eligibility for an offer.",
+    "signals": "Requests for sensitive information like social security numbers or account details, and refusal to provide alternative contact methods such as a call-back number. Requests for full names, addresses, and credit card information without clear explanation of why such data is necessary, insistence on immediate action to claim a reward or resolve an issue.",
+    "text": "Scam category: Verification Scam\n\nTypical behaviours: Scammers ask victims to verify their identity by providing personal data over the phone. They may claim that this is necessary for security reasons. Scammers ask for verification of identity or account details under the guise of confirming eligibility for an offer.\n\nDistinguishing signals: Requests for sensitive information like social security numbers or account details, and refusal to provide alternative contact methods such as a call-back number. Requests for full names, addresses, and credit card information without clear explanation of why such data is necessary, insistence on immediate action to claim a reward or resolve an issue.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0005",
+    "category": "Information Verification",
+    "support": 2,
+    "behaviours": "Scammers request personal information under the guise of verifying identity or resolving an issue, often claiming it's a standard procedure. Scammers request sensitive personal information such as social security numbers, bank account details, or dates of birth to verify identity.",
+    "signals": "The caller asks for sensitive details such as social security numbers, bank account information, or addresses to 'verify' the victim\u2019s identity. Requests for specific personal data that legitimate organizations might not ask over the phone due to privacy concerns.",
+    "text": "Scam category: Information Verification\n\nTypical behaviours: Scammers request personal information under the guise of verifying identity or resolving an issue, often claiming it's a standard procedure. Scammers request sensitive personal information such as social security numbers, bank account details, or dates of birth to verify identity.\n\nDistinguishing signals: The caller asks for sensitive details such as social security numbers, bank account information, or addresses to 'verify' the victim\u2019s identity. Requests for specific personal data that legitimate organizations might not ask over the phone due to privacy concerns.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0006",
+    "category": "Identity Theft",
+    "support": 1,
+    "behaviours": "Scammers pose as government officials or company representatives to gather sensitive personal information under the guise of protecting identity.",
+    "signals": "Requests for social security numbers, dates of birth, and other identifying details over the phone without proper verification.",
+    "text": "Scam category: Identity Theft\n\nTypical behaviours: Scammers pose as government officials or company representatives to gather sensitive personal information under the guise of protecting identity.\n\nDistinguishing signals: Requests for social security numbers, dates of birth, and other identifying details over the phone without proper verification.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0007",
+    "category": "Technical Support",
+    "support": 1,
+    "behaviours": "Scammers impersonate technical support teams from companies like Microsoft or Windows to resolve alleged computer issues.",
+    "signals": "Claims of virus infections detected by remote monitoring tools, requests for downloading specific software (like TeamViewer), and assurances that the process is safe.",
+    "text": "Scam category: Technical Support\n\nTypical behaviours: Scammers impersonate technical support teams from companies like Microsoft or Windows to resolve alleged computer issues.\n\nDistinguishing signals: Claims of virus infections detected by remote monitoring tools, requests for downloading specific software (like TeamViewer), and assurances that the process is safe.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0008",
+    "category": "Social Security Scam",
+    "support": 1,
+    "behaviours": "The caller poses as an official from the Social Security Administration (SSA) and claims there is a problem with the receiver's social security number.",
+    "signals": "Threatens legal action or arrest if the receiver does not provide personal information over the phone, often providing fake badge numbers or call-back numbers.",
+    "text": "Scam category: Social Security Scam\n\nTypical behaviours: The caller poses as an official from the Social Security Administration (SSA) and claims there is a problem with the receiver's social security number.\n\nDistinguishing signals: Threatens legal action or arrest if the receiver does not provide personal information over the phone, often providing fake badge numbers or call-back numbers.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f4_qwen_training_0001",
+    "category": "Refund Scam",
+    "support": 2,
+    "behaviours": "Scammers claim to represent a reputable company and inform the receiver of an unexpected refund or compensation due to them. They request personal information such as bank account details, credit card numbers, or social security numbers for verification purposes. Scammers claim to be calling on behalf of a reputable company to offer a refund for an alleged unauthorized transaction or delivery issue.",
+    "signals": "The caller insists on immediate action and often threatens that without providing requested information, the offer will be lost. Legitimate companies rarely initiate contact to provide refunds without prior interaction. Requests for personal financial information such as credit card numbers and expiration dates, despite the caller's supposed affiliation with a well-known brand.",
+    "text": "Scam category: Refund Scam\n\nTypical behaviours: Scammers claim to represent a reputable company and inform the receiver of an unexpected refund or compensation due to them. They request personal information such as bank account details, credit card numbers, or social security numbers for verification purposes. Scammers claim to be calling on behalf of a reputable company to offer a refund for an alleged unauthorized transaction or delivery issue.\n\nDistinguishing signals: The caller insists on immediate action and often threatens that without providing requested information, the offer will be lost. Legitimate companies rarely initiate contact to provide refunds without prior interaction. Requests for personal financial information such as credit card numbers and expiration dates, despite the caller's supposed affiliation with a well-known brand.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0002",
+    "category": "Technical Support Scam",
+    "support": 2,
+    "behaviours": "Scammers pose as technical support representatives from well-known companies like Microsoft or Amazon. They inform the receiver that their device is compromised and require remote access to fix it, often asking for personal information or directing them to download software. Scammers pose as technical support representatives, claiming to have detected malware or other issues on the victim's computer.",
+    "signals": "The caller may provide a generic customer service number instead of specific contact details for verification. Legitimate technical support usually does not initiate unsolicited calls. Requests for remote access to the victim's computer and downloading of unknown software tools.",
+    "text": "Scam category: Technical Support Scam\n\nTypical behaviours: Scammers pose as technical support representatives from well-known companies like Microsoft or Amazon. They inform the receiver that their device is compromised and require remote access to fix it, often asking for personal information or directing them to download software. Scammers pose as technical support representatives, claiming to have detected malware or other issues on the victim's computer.\n\nDistinguishing signals: The caller may provide a generic customer service number instead of specific contact details for verification. Legitimate technical support usually does not initiate unsolicited calls. Requests for remote access to the victim's computer and downloading of unknown software tools.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0003",
+    "category": "Gift Card Scam",
+    "support": 2,
+    "behaviours": "Scammers inform the receiver that they have won or been selected to receive a gift card from a reputable retailer, but require personal information such as credit card numbers for verification. Scammers inform victims that they've won a gift card through a random selection process or loyalty program.",
+    "signals": "The caller emphasizes urgency and may offer a website or phone number for further verification which turns out to be fraudulent. Legitimate offers usually do not require upfront payment or sensitive information. Requesting personal information such as full name, address, and social security number to verify identity before claiming the prize.",
+    "text": "Scam category: Gift Card Scam\n\nTypical behaviours: Scammers inform the receiver that they have won or been selected to receive a gift card from a reputable retailer, but require personal information such as credit card numbers for verification. Scammers inform victims that they've won a gift card through a random selection process or loyalty program.\n\nDistinguishing signals: The caller emphasizes urgency and may offer a website or phone number for further verification which turns out to be fraudulent. Legitimate offers usually do not require upfront payment or sensitive information. Requesting personal information such as full name, address, and social security number to verify identity before claiming the prize.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0004",
+    "category": "Urgency Creation",
+    "support": 2,
+    "behaviours": "Scammers create a sense of urgency by claiming that there are serious problems or opportunities that need to be addressed immediately. Scammers create a sense of urgency by claiming that immediate action is required to avoid serious consequences such as benefit suspension or financial loss.",
+    "signals": "The caller emphasizes time-sensitive issues, often threatening the suspension of benefits or services if action is not taken promptly. The caller emphasizes the need for quick resolution and warns about severe repercussions if no action is taken.",
+    "text": "Scam category: Urgency Creation\n\nTypical behaviours: Scammers create a sense of urgency by claiming that there are serious problems or opportunities that need to be addressed immediately. Scammers create a sense of urgency by claiming that immediate action is required to avoid serious consequences such as benefit suspension or financial loss.\n\nDistinguishing signals: The caller emphasizes time-sensitive issues, often threatening the suspension of benefits or services if action is not taken promptly. The caller emphasizes the need for quick resolution and warns about severe repercussions if no action is taken.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0005",
+    "category": "Technical Support Fraud",
+    "support": 2,
+    "behaviours": "Scammers pose as technical support personnel from reputable companies to gain access to personal devices or networks. Scammers pose as technical support personnel from software companies like Microsoft or hardware stores like Walmart, claiming that a customer's device is infected with malware.",
+    "signals": "The caller identifies a supposed issue with the receiver\u2019s device and guides them through steps that may lead to downloading malicious software or revealing sensitive information. The caller instructs the receiver to perform actions on their computer and requests remote access or personal information to 'fix' issues.",
+    "text": "Scam category: Technical Support Fraud\n\nTypical behaviours: Scammers pose as technical support personnel from reputable companies to gain access to personal devices or networks. Scammers pose as technical support personnel from software companies like Microsoft or hardware stores like Walmart, claiming that a customer's device is infected with malware.\n\nDistinguishing signals: The caller identifies a supposed issue with the receiver\u2019s device and guides them through steps that may lead to downloading malicious software or revealing sensitive information. The caller instructs the receiver to perform actions on their computer and requests remote access or personal information to 'fix' issues.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0006",
+    "category": "Verification Scam",
+    "support": 2,
+    "behaviours": "Scammers attempt to verify the identity of the victim by asking for personal details, often under the guise of resolving an urgent issue. Scammers pose as reputable companies offering prizes or refunds but require personal information verification.",
+    "signals": "Unwillingness or inability to provide clear verification of their own identity and affiliation with a legitimate organization. Requesting sensitive personal data like credit card numbers or bank details for 'verification', creating a sense of urgency, vague explanations about why the information is needed.",
+    "text": "Scam category: Verification Scam\n\nTypical behaviours: Scammers attempt to verify the identity of the victim by asking for personal details, often under the guise of resolving an urgent issue. Scammers pose as reputable companies offering prizes or refunds but require personal information verification.\n\nDistinguishing signals: Unwillingness or inability to provide clear verification of their own identity and affiliation with a legitimate organization. Requesting sensitive personal data like credit card numbers or bank details for 'verification', creating a sense of urgency, vague explanations about why the information is needed.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0007",
+    "category": "Pressure Tactics",
+    "support": 1,
+    "behaviours": "Scammers create urgency by threatening to suspend benefits or miss out on opportunities if the victim doesn't act quickly.",
+    "signals": "The caller insists that immediate action is necessary and uses fear tactics to rush the victim into providing personal information.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: Scammers create urgency by threatening to suspend benefits or miss out on opportunities if the victim doesn't act quickly.\n\nDistinguishing signals: The caller insists that immediate action is necessary and uses fear tactics to rush the victim into providing personal information.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0008",
+    "category": "Verification Requests",
+    "support": 1,
+    "behaviours": "Scammers ask for sensitive personal details such as bank account numbers, social security numbers, or other identifying information under the guise of verifying identity.",
+    "signals": "The caller requests specific types of personal data that legitimate organizations typically do not ask for over the phone.",
+    "text": "Scam category: Verification Requests\n\nTypical behaviours: Scammers ask for sensitive personal details such as bank account numbers, social security numbers, or other identifying information under the guise of verifying identity.\n\nDistinguishing signals: The caller requests specific types of personal data that legitimate organizations typically do not ask for over the phone.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f5_qwen_training_0001",
+    "category": "Refund Scam",
+    "support": 2,
+    "behaviours": "Scammers claim to be calling from a reputable company's customer service or refund department, stating that the recipient is due a refund for an unspecified overcharge or error. Scammers claim to be calling from a reputable company like Amazon or Walmart, stating that there is an error with the receiver's account and offering a refund. They request personal information such as full name, address, and sometimes social security number for verification purposes.",
+    "signals": "Requests for personal financial information such as bank account numbers and routing numbers under the guise of processing a refund. Often, the scammer avoids answering questions about how they detected the issue or why it's happening. The scammer insists on verifying identity over the phone despite having the customer\u2019s contact details on file. They may also offer to connect to a supervisor but avoid doing so when questioned.",
+    "text": "Scam category: Refund Scam\n\nTypical behaviours: Scammers claim to be calling from a reputable company's customer service or refund department, stating that the recipient is due a refund for an unspecified overcharge or error. Scammers claim to be calling from a reputable company like Amazon or Walmart, stating that there is an error with the receiver's account and offering a refund. They request personal information such as full name, address, and sometimes social security number for verification purposes.\n\nDistinguishing signals: Requests for personal financial information such as bank account numbers and routing numbers under the guise of processing a refund. Often, the scammer avoids answering questions about how they detected the issue or why it's happening. The scammer insists on verifying identity over the phone despite having the customer\u2019s contact details on file. They may also offer to connect to a supervisor but avoid doing so when questioned.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0002",
+    "category": "Gift Card Scam",
+    "support": 2,
+    "behaviours": "Scammers claim to be calling from a company's customer service department offering a free gift card as part of a loyalty program. Scammers claim that the receiver has won a gift card from a company like Walmart and request personal information for identity verification before sending the digital gift card via email.",
+    "signals": "Requests for personal information such as full name, address, and credit card details under the guise of verifying identity or covering shipping fees. The scammer often avoids explaining how the recipient was selected for the offer. The scammer insists on collecting sensitive personal data such as social security numbers, despite the customer's reluctance. They also avoid providing physical addresses for delivery.",
+    "text": "Scam category: Gift Card Scam\n\nTypical behaviours: Scammers claim to be calling from a company's customer service department offering a free gift card as part of a loyalty program. Scammers claim that the receiver has won a gift card from a company like Walmart and request personal information for identity verification before sending the digital gift card via email.\n\nDistinguishing signals: Requests for personal information such as full name, address, and credit card details under the guise of verifying identity or covering shipping fees. The scammer often avoids explaining how the recipient was selected for the offer. The scammer insists on collecting sensitive personal data such as social security numbers, despite the customer's reluctance. They also avoid providing physical addresses for delivery.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0003",
+    "category": "Verification Requests",
+    "support": 2,
+    "behaviours": "Scammers ask for personal information such as social security numbers, addresses, and other sensitive details to 'verify' the victim's identity. The caller asks for personal information such as social security numbers or credit card details under the guise of verifying identity.",
+    "signals": "The scammer insists on collecting detailed personal data under the pretense of verification but offers no clear way to confirm their legitimacy. Legitimate organizations rarely request sensitive information over the phone without prior contact or a secure verification process.",
+    "text": "Scam category: Verification Requests\n\nTypical behaviours: Scammers ask for personal information such as social security numbers, addresses, and other sensitive details to 'verify' the victim's identity. The caller asks for personal information such as social security numbers or credit card details under the guise of verifying identity.\n\nDistinguishing signals: The scammer insists on collecting detailed personal data under the pretense of verification but offers no clear way to confirm their legitimacy. Legitimate organizations rarely request sensitive information over the phone without prior contact or a secure verification process.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0004",
+    "category": "Pressure Tactics",
+    "support": 1,
+    "behaviours": "Scammers create urgency by threatening to cancel offers or suspend services if the victim doesn't act quickly.",
+    "signals": "The caller insists on immediate action and warns of severe consequences for delay.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: Scammers create urgency by threatening to cancel offers or suspend services if the victim doesn't act quickly.\n\nDistinguishing signals: The caller insists on immediate action and warns of severe consequences for delay.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0005",
+    "category": "Information Gathering",
+    "support": 1,
+    "behaviours": "Scammers request sensitive personal information such as social security numbers, credit card details, or bank account info under the guise of verification.",
+    "signals": "Requests for specific types of private data that legitimate entities typically do not ask for over the phone.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: Scammers request sensitive personal information such as social security numbers, credit card details, or bank account info under the guise of verification.\n\nDistinguishing signals: Requests for specific types of private data that legitimate entities typically do not ask for over the phone.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0006",
+    "category": "Impersonation",
+    "support": 1,
+    "behaviours": "Scammers pretend to be from reputable organizations like government agencies, customer service departments, or technical support teams.",
+    "signals": "The caller claims affiliation with well-known institutions but cannot provide clear verification details when asked.",
+    "text": "Scam category: Impersonation\n\nTypical behaviours: Scammers pretend to be from reputable organizations like government agencies, customer service departments, or technical support teams.\n\nDistinguishing signals: The caller claims affiliation with well-known institutions but cannot provide clear verification details when asked.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0007",
+    "category": "False Rewards",
+    "support": 1,
+    "behaviours": "Scammers offer prizes or refunds that require the victim to provide personal information as a condition of receiving them.",
+    "signals": "Unsolicited offers of unexpected rewards or refunds that come with conditions for claiming the prize.",
+    "text": "Scam category: False Rewards\n\nTypical behaviours: Scammers offer prizes or refunds that require the victim to provide personal information as a condition of receiving them.\n\nDistinguishing signals: Unsolicited offers of unexpected rewards or refunds that come with conditions for claiming the prize.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0008",
+    "category": "Identity Theft Scam",
+    "support": 1,
+    "behaviours": "Scammers claim to be calling from a government agency such as the Social Security Administration, stating that there is suspicious activity on the recipient's social security number.",
+    "signals": "Requests for personal identification information like full name and social security number under the guise of verifying identity. The scammer often pressures the recipient by threatening suspension of benefits or other consequences if they do not cooperate.",
+    "text": "Scam category: Identity Theft Scam\n\nTypical behaviours: Scammers claim to be calling from a government agency such as the Social Security Administration, stating that there is suspicious activity on the recipient's social security number.\n\nDistinguishing signals: Requests for personal identification information like full name and social security number under the guise of verifying identity. The scammer often pressures the recipient by threatening suspension of benefits or other consequences if they do not cooperate.",
+    "source": "dataset training split",
+    "fold": 5
+  }
+]

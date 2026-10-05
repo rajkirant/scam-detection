@@ -1,0 +1,402 @@
+[
+  {
+    "id": "f1_qwen_training_0001",
+    "category": "Confusion",
+    "support": 4,
+    "behaviours": "The scammer uses rapid, disjointed speech to confuse and disorient the victim. The scammer uses confusing and disjointed speech to disorient the victim. The scammer uses confusing and repetitive language to disorient the victim.",
+    "signals": "Unstructured sentences, frequent changes in topic, and repetitive questioning. Speech is fragmented, lacks coherence, and contains repetitive phrases. High frequency of fragmented sentences, repetition of phrases, and unclear context.",
+    "text": "Scam category: Confusion\n\nTypical behaviours: The scammer uses rapid, disjointed speech to confuse and disorient the victim. The scammer uses confusing and disjointed speech to disorient the victim. The scammer uses confusing and repetitive language to disorient the victim.\n\nDistinguishing signals: Unstructured sentences, frequent changes in topic, and repetitive questioning. Speech is fragmented, lacks coherence, and contains repetitive phrases. High frequency of fragmented sentences, repetition of phrases, and unclear context.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0002",
+    "category": "Authority Impersonation",
+    "support": 4,
+    "behaviours": "The scammer pretends to be a person of authority or someone familiar to the victim. The scammer pretends to be from an authoritative body like the government or a financial institution. Claims authority or affiliation with a legitimate organization to gain trust and compliance.",
+    "signals": "References to known entities or authorities without clear context, requests for personal information under false pretenses. References to official-sounding entities or roles without specific details, and requests for personal information or actions that seem out of context. Uses phrases like 'This is [organization]' without clear context, aiming to establish immediate credibility.",
+    "text": "Scam category: Authority Impersonation\n\nTypical behaviours: The scammer pretends to be a person of authority or someone familiar to the victim. The scammer pretends to be from an authoritative body like the government or a financial institution. Claims authority or affiliation with a legitimate organization to gain trust and compliance.\n\nDistinguishing signals: References to known entities or authorities without clear context, requests for personal information under false pretenses. References to official-sounding entities or roles without specific details, and requests for personal information or actions that seem out of context. Uses phrases like 'This is [organization]' without clear context, aiming to establish immediate credibility.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0003",
+    "category": "Pressure",
+    "support": 3,
+    "behaviours": "The scammer applies psychological pressure by creating a sense of urgency or obligation. The scammer creates a sense of urgency or pressure to act quickly. The scammer creates a sense of urgency or obligation to act quickly.",
+    "signals": "Use of phrases like 'you must', 'right now', and repeated insistence on immediate action. Frequent use of phrases indicating time sensitivity or immediate action required. Use of phrases indicating time sensitivity or immediate action required without clear explanation.",
+    "text": "Scam category: Pressure\n\nTypical behaviours: The scammer applies psychological pressure by creating a sense of urgency or obligation. The scammer creates a sense of urgency or pressure to act quickly. The scammer creates a sense of urgency or obligation to act quickly.\n\nDistinguishing signals: Use of phrases like 'you must', 'right now', and repeated insistence on immediate action. Frequent use of phrases indicating time sensitivity or immediate action required. Use of phrases indicating time sensitivity or immediate action required without clear explanation.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0004",
+    "category": "Pressure Tactics",
+    "support": 3,
+    "behaviours": "The scammer uses urgency and fear to pressure the victim into taking immediate action. Applies psychological pressure through urgency or threats to prompt quick decision-making. The scammer uses urgency and fear to pressure the victim into immediate action.",
+    "signals": "Repetition of phrases like 'urgent', 'immediate', or 'right now'; threats of negative consequences if no action is taken. Includes statements that imply consequences for not acting immediately or compliance with requests. Repetition of phrases like 'never do', 'don't', and references to urgent actions or consequences.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: The scammer uses urgency and fear to pressure the victim into taking immediate action. Applies psychological pressure through urgency or threats to prompt quick decision-making. The scammer uses urgency and fear to pressure the victim into immediate action.\n\nDistinguishing signals: Repetition of phrases like 'urgent', 'immediate', or 'right now'; threats of negative consequences if no action is taken. Includes statements that imply consequences for not acting immediately or compliance with requests. Repetition of phrases like 'never do', 'don't', and references to urgent actions or consequences.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0005",
+    "category": "Deception",
+    "support": 2,
+    "behaviours": "The scammer pretends to be from a legitimate organization or authority figure. The scammer pretends to be from a legitimate organization and tries to gather personal information.",
+    "signals": "References to official-sounding entities without clear identification, vague claims of authority. References to official-sounding entities without clear context, requests for sensitive details.",
+    "text": "Scam category: Deception\n\nTypical behaviours: The scammer pretends to be from a legitimate organization or authority figure. The scammer pretends to be from a legitimate organization and tries to gather personal information.\n\nDistinguishing signals: References to official-sounding entities without clear identification, vague claims of authority. References to official-sounding entities without clear context, requests for sensitive details.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0006",
+    "category": "Information Gathering",
+    "support": 2,
+    "behaviours": "The scammer attempts to gather personal information by posing as someone who needs it for verification purposes. The scammer asks leading questions to gather personal information from the victim.",
+    "signals": "Questions about personal details like names, addresses, or account numbers, often framed as necessary checks. Questions that seem innocuous but are designed to elicit specific types of personal data ('what is the', 'which you are on')",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: The scammer attempts to gather personal information by posing as someone who needs it for verification purposes. The scammer asks leading questions to gather personal information from the victim.\n\nDistinguishing signals: Questions about personal details like names, addresses, or account numbers, often framed as necessary checks. Questions that seem innocuous but are designed to elicit specific types of personal data ('what is the', 'which you are on')",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0007",
+    "category": "Social Engineering",
+    "support": 2,
+    "behaviours": "The scammer manipulates the victim into revealing personal information or performing actions that benefit the scammer.",
+    "signals": "Questions leading to disclosure of sensitive data, requests for financial assistance under fabricated circumstances. Requests for passwords, PINs, or other sensitive data; attempts to build trust through friendly conversation before asking for something.",
+    "text": "Scam category: Social Engineering\n\nTypical behaviours: The scammer manipulates the victim into revealing personal information or performing actions that benefit the scammer.\n\nDistinguishing signals: Questions leading to disclosure of sensitive data, requests for financial assistance under fabricated circumstances. Requests for passwords, PINs, or other sensitive data; attempts to build trust through friendly conversation before asking for something.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0008",
+    "category": "Transfer",
+    "support": 1,
+    "behaviours": "Attempts to transfer the call or involve another party to lend credibility.",
+    "signals": "Requests to connect with someone else within an organization or to switch lines.",
+    "text": "Scam category: Transfer\n\nTypical behaviours: Attempts to transfer the call or involve another party to lend credibility.\n\nDistinguishing signals: Requests to connect with someone else within an organization or to switch lines.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f2_qwen_training_0001",
+    "category": "Confusion",
+    "support": 4,
+    "behaviours": "The scammer uses confusing and disjointed speech to disorient the victim.",
+    "signals": "Speech is fragmented, lacks coherence, and contains repetitive questioning. Speech is fragmented, lacks coherence, and contains repetitive phrases. Speech is fragmented, lacks coherence, and includes frequent interruptions or abrupt changes in topic.",
+    "text": "Scam category: Confusion\n\nTypical behaviours: The scammer uses confusing and disjointed speech to disorient the victim.\n\nDistinguishing signals: Speech is fragmented, lacks coherence, and contains repetitive questioning. Speech is fragmented, lacks coherence, and contains repetitive phrases. Speech is fragmented, lacks coherence, and includes frequent interruptions or abrupt changes in topic.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0002",
+    "category": "Pressure",
+    "support": 4,
+    "behaviours": "The scammer creates a sense of urgency or pressure to act quickly. The scammer applies psychological pressure by creating a sense of urgency or obligation.",
+    "signals": "Use of phrases indicating time sensitivity or immediate action required. Scammer uses phrases indicating deadlines or consequences for not acting immediately. Repeated phrases indicating time sensitivity ('urgent', 'immediate action required'), or suggesting consequences for not complying.",
+    "text": "Scam category: Pressure\n\nTypical behaviours: The scammer creates a sense of urgency or pressure to act quickly. The scammer applies psychological pressure by creating a sense of urgency or obligation.\n\nDistinguishing signals: Use of phrases indicating time sensitivity or immediate action required. Scammer uses phrases indicating deadlines or consequences for not acting immediately. Repeated phrases indicating time sensitivity ('urgent', 'immediate action required'), or suggesting consequences for not complying.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0003",
+    "category": "Authority Impersonation",
+    "support": 3,
+    "behaviours": "The scammer pretends to be from an authoritative body like a bank or government agency. The scammer impersonates a figure of authority (e.g., law enforcement, government official) to instill fear and compliance. The scammer pretends to be a representative from an authority or service provider to gain trust.",
+    "signals": "References to official-sounding entities and demands for personal information. Use of authoritative language and threats of legal action or severe penalties if the victim does not follow instructions. References to official-sounding entities without clear context, such as 'we', 'our', and vague threats.",
+    "text": "Scam category: Authority Impersonation\n\nTypical behaviours: The scammer pretends to be from an authoritative body like a bank or government agency. The scammer impersonates a figure of authority (e.g., law enforcement, government official) to instill fear and compliance. The scammer pretends to be a representative from an authority or service provider to gain trust.\n\nDistinguishing signals: References to official-sounding entities and demands for personal information. Use of authoritative language and threats of legal action or severe penalties if the victim does not follow instructions. References to official-sounding entities without clear context, such as 'we', 'our', and vague threats.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0004",
+    "category": "Information Gathering",
+    "support": 3,
+    "behaviours": "The scammer asks detailed questions about personal information or recent activities to gather data for future use. The scammer attempts to gather personal information by posing questions. The scammer asks detailed questions about the victim's personal information or financial status.",
+    "signals": "Specific inquiries about the victim's daily routines, financial status, or recent transactions that seem out of context. Specific inquiries about personal details (e.g., account numbers, passwords) or general probing for any information the victim might share. Specific inquiries about personal details like names, addresses, or financial accounts without clear purpose.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: The scammer asks detailed questions about personal information or recent activities to gather data for future use. The scammer attempts to gather personal information by posing questions. The scammer asks detailed questions about the victim's personal information or financial status.\n\nDistinguishing signals: Specific inquiries about the victim's daily routines, financial status, or recent transactions that seem out of context. Specific inquiries about personal details (e.g., account numbers, passwords) or general probing for any information the victim might share. Specific inquiries about personal details like names, addresses, or financial accounts without clear purpose.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0005",
+    "category": "Deception",
+    "support": 3,
+    "behaviours": "The scammer pretends to be from a legitimate organization and tries to gather personal information. The scammer pretends to be from a legitimate organization and uses official-sounding language. The scammer pretends to be from a legitimate organization and uses technical jargon.",
+    "signals": "Attempts to establish credibility by referencing known entities but lacks specific details. References to authority figures, organizations, or legal processes without clear context or verification. References to official-sounding entities or technical terms like 'firewall' without context.",
+    "text": "Scam category: Deception\n\nTypical behaviours: The scammer pretends to be from a legitimate organization and tries to gather personal information. The scammer pretends to be from a legitimate organization and uses official-sounding language. The scammer pretends to be from a legitimate organization and uses technical jargon.\n\nDistinguishing signals: Attempts to establish credibility by referencing known entities but lacks specific details. References to authority figures, organizations, or legal processes without clear context or verification. References to official-sounding entities or technical terms like 'firewall' without context.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0006",
+    "category": "Pressure Tactics",
+    "support": 2,
+    "behaviours": "The scammer uses urgency and pressure to prompt immediate action, often threatening consequences if the victim doesn't comply. The scammer uses aggressive or urgent language to pressure the victim into taking immediate action.",
+    "signals": "Repetition of phrases urging quick decision-making or compliance, such as 'you need to do this now' or 'if you don\u2019t act fast'. Use of phrases like 'do not', 'immediately', and rapid-fire questioning without pauses.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: The scammer uses urgency and pressure to prompt immediate action, often threatening consequences if the victim doesn't comply. The scammer uses aggressive or urgent language to pressure the victim into taking immediate action.\n\nDistinguishing signals: Repetition of phrases urging quick decision-making or compliance, such as 'you need to do this now' or 'if you don\u2019t act fast'. Use of phrases like 'do not', 'immediately', and rapid-fire questioning without pauses.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0007",
+    "category": "Technical Assistance Request",
+    "support": 1,
+    "behaviours": "The scammer poses as technical support offering assistance with a supposed issue.",
+    "signals": "Questions about computer systems, networks, or software issues requiring immediate attention.",
+    "text": "Scam category: Technical Assistance Request\n\nTypical behaviours: The scammer poses as technical support offering assistance with a supposed issue.\n\nDistinguishing signals: Questions about computer systems, networks, or software issues requiring immediate attention.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0008",
+    "category": "Confusion and Misdirection",
+    "support": 1,
+    "behaviours": "The scammer uses confusing language, rapid-fire questions, and incomplete sentences to disorient the victim.",
+    "signals": "High frequency of grammatical errors, fragmented thoughts, and abrupt changes in topic.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: The scammer uses confusing language, rapid-fire questions, and incomplete sentences to disorient the victim.\n\nDistinguishing signals: High frequency of grammatical errors, fragmented thoughts, and abrupt changes in topic.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f3_qwen_training_0001",
+    "category": "Confusion",
+    "support": 4,
+    "behaviours": "The scammer uses rapid, disjointed speech to confuse and disorient the victim. The scammer uses confusing and disjointed speech to disorient the victim. The scammer uses confusing and repetitive language to disorient the victim.",
+    "signals": "Unstructured sentences, frequent interruptions, and repetitive questioning. Speech is fragmented, lacks coherence, and includes repetitive phrases. High frequency of nonsensical phrases, repetition of words or concepts without clear context.",
+    "text": "Scam category: Confusion\n\nTypical behaviours: The scammer uses rapid, disjointed speech to confuse and disorient the victim. The scammer uses confusing and disjointed speech to disorient the victim. The scammer uses confusing and repetitive language to disorient the victim.\n\nDistinguishing signals: Unstructured sentences, frequent interruptions, and repetitive questioning. Speech is fragmented, lacks coherence, and includes repetitive phrases. High frequency of nonsensical phrases, repetition of words or concepts without clear context.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0002",
+    "category": "Pressure",
+    "support": 3,
+    "behaviours": "The scammer applies psychological pressure by creating a sense of urgency or obligation. The scammer creates a sense of urgency or pressure to act quickly. Attempts to create a sense of urgency or pressure to act quickly without thinking.",
+    "signals": "Use of phrases like 'you must act now' or 'this is your last chance'. Phrases like 'urgent', 'immediate action needed', or rapid-fire questioning are used. Uses phrases like 'urgent', 'immediate action needed', or implies negative consequences for delay.",
+    "text": "Scam category: Pressure\n\nTypical behaviours: The scammer applies psychological pressure by creating a sense of urgency or obligation. The scammer creates a sense of urgency or pressure to act quickly. Attempts to create a sense of urgency or pressure to act quickly without thinking.\n\nDistinguishing signals: Use of phrases like 'you must act now' or 'this is your last chance'. Phrases like 'urgent', 'immediate action needed', or rapid-fire questioning are used. Uses phrases like 'urgent', 'immediate action needed', or implies negative consequences for delay.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0003",
+    "category": "Deception",
+    "support": 3,
+    "behaviours": "The scammer pretends to be from a legitimate organization and uses official-sounding language. Claims to be from a legitimate organization and tries to gather personal information.",
+    "signals": "References to authority figures, legal consequences, or technical jargon. References to non-specific organizations, legal issues, or technical terms without clear context. Mentions well-known organizations, uses official-sounding language but lacks specific details.",
+    "text": "Scam category: Deception\n\nTypical behaviours: The scammer pretends to be from a legitimate organization and uses official-sounding language. Claims to be from a legitimate organization and tries to gather personal information.\n\nDistinguishing signals: References to authority figures, legal consequences, or technical jargon. References to non-specific organizations, legal issues, or technical terms without clear context. Mentions well-known organizations, uses official-sounding language but lacks specific details.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0004",
+    "category": "Technical Support Scam",
+    "support": 3,
+    "behaviours": "The scammer claims there is a technical issue with the victim's device and offers to resolve it. The scammer claims that there is an issue with the victim's device or software and offers to assist in resolving it. Claims there is an urgent technical issue that needs immediate attention.",
+    "signals": "Discussion about computer viruses, system errors, or other tech-related problems requiring immediate attention. References to antivirus software or technical issues, insistence on remote access, and pressure tactics. Requests for remote access to devices and pressure to act quickly without verification.",
+    "text": "Scam category: Technical Support Scam\n\nTypical behaviours: The scammer claims there is a technical issue with the victim's device and offers to resolve it. The scammer claims that there is an issue with the victim's device or software and offers to assist in resolving it. Claims there is an urgent technical issue that needs immediate attention.\n\nDistinguishing signals: Discussion about computer viruses, system errors, or other tech-related problems requiring immediate attention. References to antivirus software or technical issues, insistence on remote access, and pressure tactics. Requests for remote access to devices and pressure to act quickly without verification.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0005",
+    "category": "Confusion and Disorientation",
+    "support": 2,
+    "behaviours": "The scammer uses rapid, disjointed speech to confuse the victim.",
+    "signals": "Unintelligible sentences, frequent changes in topic, and repetitive questioning. Speech is fragmented, lacks coherence, and includes frequent interruptions.",
+    "text": "Scam category: Confusion and Disorientation\n\nTypical behaviours: The scammer uses rapid, disjointed speech to confuse the victim.\n\nDistinguishing signals: Unintelligible sentences, frequent changes in topic, and repetitive questioning. Speech is fragmented, lacks coherence, and includes frequent interruptions.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0006",
+    "category": "Authority Impersonation",
+    "support": 2,
+    "behaviours": "The scammer pretends to be from a legitimate organization to gain trust and compliance. The scammer pretends to be from a legitimate authority or service provider.",
+    "signals": "References to official-sounding entities or services that the victim might recognize but are not clearly defined. Attempts to gather personal information under the guise of official business.",
+    "text": "Scam category: Authority Impersonation\n\nTypical behaviours: The scammer pretends to be from a legitimate organization to gain trust and compliance. The scammer pretends to be from a legitimate authority or service provider.\n\nDistinguishing signals: References to official-sounding entities or services that the victim might recognize but are not clearly defined. Attempts to gather personal information under the guise of official business.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0007",
+    "category": "Social Engineering",
+    "support": 2,
+    "behaviours": "The scammer manipulates the victim's emotions to gain personal information or compliance. The scammer attempts to establish trust and rapport with the victim by posing as a trusted authority or friend, often asking for personal information.",
+    "signals": "Questions that evoke sympathy or fear, leading into requests for sensitive information or actions. Use of vague language, repeated questioning about personal activities, and requests for sensitive details.",
+    "text": "Scam category: Social Engineering\n\nTypical behaviours: The scammer manipulates the victim's emotions to gain personal information or compliance. The scammer attempts to establish trust and rapport with the victim by posing as a trusted authority or friend, often asking for personal information.\n\nDistinguishing signals: Questions that evoke sympathy or fear, leading into requests for sensitive information or actions. Use of vague language, repeated questioning about personal activities, and requests for sensitive details.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0008",
+    "category": "Coercion",
+    "support": 1,
+    "behaviours": "The scammer coerces the victim into providing personal information or financial details under threat of harm or loss.",
+    "signals": "Threats of arrest, lawsuits, or damage to credit score if compliance is not met.",
+    "text": "Scam category: Coercion\n\nTypical behaviours: The scammer coerces the victim into providing personal information or financial details under threat of harm or loss.\n\nDistinguishing signals: Threats of arrest, lawsuits, or damage to credit score if compliance is not met.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f4_qwen_training_0001",
+    "category": "authority impersonation",
+    "support": 4,
+    "behaviours": "The scammer pretends to be a representative of an authority figure (e.g., law enforcement, government agency) to instill fear and compliance. The scammer pretends to be from a legitimate organization or authority figure to gain trust and compliance. The scammer pretends to be a representative from an authority or service provider to gain trust.",
+    "signals": "References to legal consequences or official actions if the victim does not comply. References to official-sounding entities without clear context, requests for personal information under the guise of verification. References to official-sounding entities without providing specific details, and requests for personal information under false pretenses.",
+    "text": "Scam category: authority impersonation\n\nTypical behaviours: The scammer pretends to be a representative of an authority figure (e.g., law enforcement, government agency) to instill fear and compliance. The scammer pretends to be from a legitimate organization or authority figure to gain trust and compliance. The scammer pretends to be a representative from an authority or service provider to gain trust.\n\nDistinguishing signals: References to legal consequences or official actions if the victim does not comply. References to official-sounding entities without clear context, requests for personal information under the guise of verification. References to official-sounding entities without providing specific details, and requests for personal information under false pretenses.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0002",
+    "category": "Pressure Tactics",
+    "support": 3,
+    "behaviours": "The scammer creates a sense of urgency and pressure to act quickly. The scammer creates a sense of urgency or obligation. The scammer uses urgency and pressure to prompt immediate action, often threatening consequences if the victim doesn't comply.",
+    "signals": "Phrases like 'you have to' followed by incomplete instructions, creating a feeling of obligation without clear direction. Repetition of phrases like 'you must', 'immediately', or 'urgent action required'. Repetition of phrases like 'you have to', 'immediately', or 'urgent' without providing clear information.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: The scammer creates a sense of urgency and pressure to act quickly. The scammer creates a sense of urgency or obligation. The scammer uses urgency and pressure to prompt immediate action, often threatening consequences if the victim doesn't comply.\n\nDistinguishing signals: Phrases like 'you have to' followed by incomplete instructions, creating a feeling of obligation without clear direction. Repetition of phrases like 'you must', 'immediately', or 'urgent action required'. Repetition of phrases like 'you have to', 'immediately', or 'urgent' without providing clear information.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0003",
+    "category": "confusion",
+    "support": 3,
+    "behaviours": "The scammer uses rapid, disjointed speech to confuse and disorient the victim. The scammer uses confusing and repetitive language to disorient the victim. The scammer uses confusing and disjointed speech to disorient the victim.",
+    "signals": "Speech is incoherent with frequent shifts in topic or context. High frequency of nonsensical phrases, repetition without clear context. Repetitive, unclear statements that do not form coherent sentences or questions.",
+    "text": "Scam category: confusion\n\nTypical behaviours: The scammer uses rapid, disjointed speech to confuse and disorient the victim. The scammer uses confusing and repetitive language to disorient the victim. The scammer uses confusing and disjointed speech to disorient the victim.\n\nDistinguishing signals: Speech is incoherent with frequent shifts in topic or context. High frequency of nonsensical phrases, repetition without clear context. Repetitive, unclear statements that do not form coherent sentences or questions.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0004",
+    "category": "social engineering",
+    "support": 3,
+    "behaviours": "The scammer uses psychological manipulation to extract sensitive information from the victim. The scammer manipulates the victim's emotions and trust to extract sensitive information or compliance. The scammer uses social engineering tactics to manipulate the victim into revealing sensitive information or performing actions beneficial to the scammer.",
+    "signals": "Attempts to build rapport or trust through personal questions and offers of assistance. Use of empathy, personal questions, and attempts to build a rapport quickly. Creating a sense of urgency, building trust through conversation, and guiding the victim towards specific actions.",
+    "text": "Scam category: social engineering\n\nTypical behaviours: The scammer uses psychological manipulation to extract sensitive information from the victim. The scammer manipulates the victim's emotions and trust to extract sensitive information or compliance. The scammer uses social engineering tactics to manipulate the victim into revealing sensitive information or performing actions beneficial to the scammer.\n\nDistinguishing signals: Attempts to build rapport or trust through personal questions and offers of assistance. Use of empathy, personal questions, and attempts to build a rapport quickly. Creating a sense of urgency, building trust through conversation, and guiding the victim towards specific actions.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0005",
+    "category": "Confusion and Disorientation",
+    "support": 2,
+    "behaviours": "The scammer uses rapid, disjointed speech to confuse the victim.",
+    "signals": "Unintelligible or repetitive phrases that do not form coherent sentences. Unstructured sentences, frequent interruptions, and unclear context.",
+    "text": "Scam category: Confusion and Disorientation\n\nTypical behaviours: The scammer uses rapid, disjointed speech to confuse the victim.\n\nDistinguishing signals: Unintelligible or repetitive phrases that do not form coherent sentences. Unstructured sentences, frequent interruptions, and unclear context.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0006",
+    "category": "Information Gathering",
+    "support": 2,
+    "behaviours": "The scammer attempts to extract personal information from the victim. The scammer asks for personal information under the guise of verification or assistance.",
+    "signals": "Questions that seem irrelevant but are designed to gather specific details about the individual. Requests for sensitive data such as account numbers, passwords, or personal identifiers.",
+    "text": "Scam category: Information Gathering\n\nTypical behaviours: The scammer attempts to extract personal information from the victim. The scammer asks for personal information under the guise of verification or assistance.\n\nDistinguishing signals: Questions that seem irrelevant but are designed to gather specific details about the individual. Requests for sensitive data such as account numbers, passwords, or personal identifiers.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0007",
+    "category": "technical support fraud",
+    "support": 2,
+    "behaviours": "The scammer poses as a technical support agent for a well-known company to gain access to personal information or devices. The scammer poses as a technical support representative and claims there is an issue with the victim's device or account that needs immediate attention.",
+    "signals": "Requests for remote access to the victim's device and assurances of resolving technical issues. Requests to access the victim\u2019s devices remotely, installation of software, or providing personal information.",
+    "text": "Scam category: technical support fraud\n\nTypical behaviours: The scammer poses as a technical support agent for a well-known company to gain access to personal information or devices. The scammer poses as a technical support representative and claims there is an issue with the victim's device or account that needs immediate attention.\n\nDistinguishing signals: Requests for remote access to the victim's device and assurances of resolving technical issues. Requests to access the victim\u2019s devices remotely, installation of software, or providing personal information.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0008",
+    "category": "Deceptive Authority",
+    "support": 1,
+    "behaviours": "The scammer pretends to be from an authoritative or trusted organization.",
+    "signals": "References to official-sounding entities or roles without providing specific details that could be verified.",
+    "text": "Scam category: Deceptive Authority\n\nTypical behaviours: The scammer pretends to be from an authoritative or trusted organization.\n\nDistinguishing signals: References to official-sounding entities or roles without providing specific details that could be verified.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f5_qwen_training_0001",
+    "category": "Confusion",
+    "support": 6,
+    "behaviours": "The scammer uses confusing and disjointed speech to disorient the victim.",
+    "signals": "Speech is fragmented, lacks coherence, and includes repetitive phrases. Speech is fragmented, lacks coherence, and contains repetitive phrases. Frequent use of incomplete sentences, repetition of phrases like 'how can I you', and unclear context.",
+    "text": "Scam category: Confusion\n\nTypical behaviours: The scammer uses confusing and disjointed speech to disorient the victim.\n\nDistinguishing signals: Speech is fragmented, lacks coherence, and includes repetitive phrases. Speech is fragmented, lacks coherence, and contains repetitive phrases. Frequent use of incomplete sentences, repetition of phrases like 'how can I you', and unclear context.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0002",
+    "category": "Pressure",
+    "support": 6,
+    "behaviours": "The scammer applies psychological pressure by creating a sense of urgency or obligation. The scammer applies psychological pressure by creating a sense of urgency or importance. The scammer creates a sense of urgency or pressure to act quickly.",
+    "signals": "Includes phrases indicating immediate action is required without clear explanation. Frequent use of phrases indicating immediate action is required without clear explanation. Frequent use of urgent language and attempts to rush the victim into action without clear explanation.",
+    "text": "Scam category: Pressure\n\nTypical behaviours: The scammer applies psychological pressure by creating a sense of urgency or obligation. The scammer applies psychological pressure by creating a sense of urgency or importance. The scammer creates a sense of urgency or pressure to act quickly.\n\nDistinguishing signals: Includes phrases indicating immediate action is required without clear explanation. Frequent use of phrases indicating immediate action is required without clear explanation. Frequent use of urgent language and attempts to rush the victim into action without clear explanation.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0003",
+    "category": "Deception",
+    "support": 6,
+    "behaviours": "The scammer pretends to be from a legitimate organization and uses official-sounding language. The scammer pretends to be from a legitimate organization or authority figure. The scammer pretends to be from a legitimate organization and tries to gather personal information.",
+    "signals": "Speech mimics customer service or authority figures, often asking for personal information. References to authority or official processes but with vague details that do not add up. Attempts to establish credibility through vague references to known entities (like 'Norton') and official-sounding language.",
+    "text": "Scam category: Deception\n\nTypical behaviours: The scammer pretends to be from a legitimate organization and uses official-sounding language. The scammer pretends to be from a legitimate organization or authority figure. The scammer pretends to be from a legitimate organization and tries to gather personal information.\n\nDistinguishing signals: Speech mimics customer service or authority figures, often asking for personal information. References to authority or official processes but with vague details that do not add up. Attempts to establish credibility through vague references to known entities (like 'Norton') and official-sounding language.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0004",
+    "category": "Denial",
+    "support": 1,
+    "behaviours": "The scammer denies responsibility or involvement in the situation while trying to manipulate the victim.",
+    "signals": "Includes statements like 'I'm not responsible' or 'It wasn't me', shifting blame.",
+    "text": "Scam category: Denial\n\nTypical behaviours: The scammer denies responsibility or involvement in the situation while trying to manipulate the victim.\n\nDistinguishing signals: Includes statements like 'I'm not responsible' or 'It wasn't me', shifting blame.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0005",
+    "category": "Isolation",
+    "support": 1,
+    "behaviours": "The scammer isolates the victim by making them feel special or targeted uniquely.",
+    "signals": "Attempts to make the conversation private and exclusive, often implying secrecy or importance.",
+    "text": "Scam category: Isolation\n\nTypical behaviours: The scammer isolates the victim by making them feel special or targeted uniquely.\n\nDistinguishing signals: Attempts to make the conversation private and exclusive, often implying secrecy or importance.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0006",
+    "category": "Pressure Tactics",
+    "support": 1,
+    "behaviours": "The scammer uses urgency and pressure to prompt immediate action, often by creating a sense of emergency or loss.",
+    "signals": "Repeated phrases like 'urgent', 'immediate action required', and the caller's insistence on quick responses.",
+    "text": "Scam category: Pressure Tactics\n\nTypical behaviours: The scammer uses urgency and pressure to prompt immediate action, often by creating a sense of emergency or loss.\n\nDistinguishing signals: Repeated phrases like 'urgent', 'immediate action required', and the caller's insistence on quick responses.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0007",
+    "category": "Deception Tactics",
+    "support": 1,
+    "behaviours": "The scammer pretends to be from a legitimate organization, such as a bank or government agency, to gain trust.",
+    "signals": "References to official-sounding entities without clear identification and vague requests for personal information.",
+    "text": "Scam category: Deception Tactics\n\nTypical behaviours: The scammer pretends to be from a legitimate organization, such as a bank or government agency, to gain trust.\n\nDistinguishing signals: References to official-sounding entities without clear identification and vague requests for personal information.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0008",
+    "category": "Confusion Tactics",
+    "support": 1,
+    "behaviours": "The scammer uses complex language and rapid-fire questions to confuse the victim and make it difficult to respond logically.",
+    "signals": "Rapid, disjointed speech patterns and overly complicated explanations that are hard to follow or verify.",
+    "text": "Scam category: Confusion Tactics\n\nTypical behaviours: The scammer uses complex language and rapid-fire questions to confuse the victim and make it difficult to respond logically.\n\nDistinguishing signals: Rapid, disjointed speech patterns and overly complicated explanations that are hard to follow or verify.",
+    "source": "dataset training split",
+    "fold": 5
+  }
+]

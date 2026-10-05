@@ -1,0 +1,77 @@
+{
+  "mode": "cv",
+  "folds": 5,
+  "per_fold": [
+    {
+      "acc": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 43,
+      "fp": 0,
+      "fn": 0,
+      "tn": 42
+    },
+    {
+      "acc": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 42,
+      "fp": 0,
+      "fn": 0,
+      "tn": 43
+    },
+    {
+      "acc": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 42,
+      "fp": 0,
+      "fn": 0,
+      "tn": 42
+    },
+    {
+      "acc": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 42,
+      "fp": 0,
+      "fn": 0,
+      "tn": 42
+    },
+    {
+      "acc": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "tp": 42,
+      "fp": 0,
+      "fn": 0,
+      "tn": 42
+    }
+  ],
+  "pooled": {
+    "acc": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "tp": 211,
+    "fp": 0,
+    "fn": 0,
+    "tn": 211
+  },
+  "mean_acc": 1.0,
+  "sd_acc": 0.0,
+  "mean_f1": 1.0,
+  "sd_f1": 0.0,
+  "elapsed_s": 148,
+  "model": "bert-base-uncased",
+  "seed": 42,
+  "epochs": 4,
+  "max_length": 256,
+  "batch_size": 8,
+  "lr": 2e-05
+}

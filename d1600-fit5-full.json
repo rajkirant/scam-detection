@@ -1,0 +1,147 @@
+{
+  "model": "d1600-fit5",
+  "dataset": "datasets/huggingface_1600_test5.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.915625,
+    "precision": 0.8556149732620321,
+    "recall": 1.0,
+    "specificity": 0.83125,
+    "f1": 0.9221902017291067,
+    "balanced_acc": 0.915625,
+    "tp": 160,
+    "fp": 27,
+    "fn": 0,
+    "tn": 133,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 329.87,
+  "per_call_csv": "results/eval_d1600-fit5-full.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 173,
+        "id": "sd0883",
+        "words": 114,
+        "excerpt": "caller: Hi, I'm calling to confirm the delivery of the package that was supposed to arrive yesterday. receiver: Okay, what's the tracking number? caller: It's #1234567890. receiver: Can you tell me who sent the package? ",
+        "verdict": "Fraud",
+        "reason": "The caller quickly pivoted to gathering personal details after realizing they dialed the wrong number, which is inconsistent with normal behavior for someone who has misdialed."
+      },
+      {
+        "idx": 179,
+        "id": "sd0922",
+        "words": 257,
+        "excerpt": "caller: Hi, I'm calling from XYZ Delivery Service. I just wanted to confirm that you're expecting a package to be delivered today? receiver: Yeah, I think so. What's the package for? caller: It's for the new laptop you o",
+        "verdict": "Fraud",
+        "reason": "The caller requested sensitive personal information under false pretenses and seemed to be verifying details rather than addressing a delivery issue."
+      },
+      {
+        "idx": 200,
+        "id": "sd1002",
+        "words": 291,
+        "excerpt": "caller: Hello, my name is John and I'm calling from ABC Insurance Company. How are you today? receiver: I'm doing great, thanks for asking. What can I do for you? caller: We've been going through our records and noticed ",
+        "verdict": "Fraud",
+        "reason": "The caller offers an unexpected insurance deal that seems too good to be true and immediately tries to sell a policy without verifying if the receiver is actually interested or needs such coverage."
+      },
+      {
+        "idx": 201,
+        "id": "sd1003",
+        "words": 250,
+        "excerpt": "caller: Hello, my name is John and I'm calling from ABC Insurance. How are you today? receiver: I'm doing great, thanks for asking. What can I do for you, John? caller: We're offering a special promotion on our life insu",
+        "verdict": "Fraud",
+        "reason": "The caller offers a suspiciously good deal and requests verification through a license number rather than directing to an official company website or contact method."
+      },
+      {
+        "idx": 205,
+        "id": "sd1036",
+        "words": 250,
+        "excerpt": "caller: Hello, my name is John and I'm calling from ABC Insurance. How are you today? receiver: I'm doing great, thanks for asking. What can I do for you, John? caller: We're offering a special promotion on our health in",
+        "verdict": "Fraud",
+        "reason": "The caller provided vague explanations and offered an unexpected promotion without prior communication, typical of scam tactics."
+      },
+      {
+        "idx": 207,
+        "id": "sd1044",
+        "words": 184,
+        "excerpt": "caller: Hi, my name is John and I'm calling from XYZ Insurance. How are you today? receiver: I'm doing well, thanks. What can I do for you, John? caller: We're offering a special promotion on our life insurance policies ",
+        "verdict": "Fraud",
+        "reason": "The caller offers an unusually good deal and requests personal engagement without providing clear verification of their company's legitimacy or offering concrete references immediately upon request."
+      },
+      {
+        "idx": 208,
+        "id": "sd1056",
+        "words": 285,
+        "excerpt": "caller: Hi, my name is John and I'm calling from SafeGuard Insurance. How are you today? receiver: I'm doing great, thanks for asking. What can I do for you, John? caller: We've been going over our records and noticed th",
+        "verdict": "Fraud",
+        "reason": "The caller claims to have verified the receiver's lack of insurance coverage through public records and offers a specific promotion without prior communication or context, which is typical of scam tactics."
+      },
+      {
+        "idx": 222,
+        "id": "sd1111",
+        "words": 206,
+        "excerpt": "caller: Hello, my name is John and I'm calling from ABC Insurance Company. We're offering a special deal on our life insurance policy. receiver: Oh, really? What makes this deal so special? caller: Well, we're offering a",
+        "verdict": "Fraud",
+        "reason": "The caller offered a significant discount without prior communication and requested no verification steps beyond superficial company ratings."
+      },
+      {
+        "idx": 225,
+        "id": "sd1124",
+        "words": 240,
+        "excerpt": "caller: Hi, my name is John and I'm calling from XYZ Insurance Company. We're offering a special promotion on our life insurance policies and I'd like to discuss it with you. receiver: Oh, really? What makes this promoti",
+        "verdict": "Fraud",
+        "reason": "The caller offers an unexpectedly generous promotion and immediately shifts to discussing personal details without addressing initial skepticism or providing direct evidence of legitimacy."
+      },
+      {
+        "idx": 228,
+        "id": "sd1153",
+        "words": 225,
+        "excerpt": "caller: Hi, my name is John and I'm calling from ABC Insurance. How are you today? receiver: I'm doing great, thanks for asking. What can I do for you? caller: We're offering a new insurance policy that can save you up t",
+        "verdict": "Fraud",
+        "reason": "The caller obtained and verified personal information (address) from public records without prior consent or context, which is a common tactic used by scammers to establish legitimacy."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T03:15:02+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit5",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}

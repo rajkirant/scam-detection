@@ -1,0 +1,74 @@
+[
+  {
+    "id": "qwen_training_0001",
+    "category": "Investment Fraud",
+    "support": 2,
+    "behaviours": "Scammers promote an investment opportunity with promises of high returns and use testimonials or third-party endorsements to build credibility. Promising high returns on investments using sophisticated trading strategies.",
+    "signals": "Promotion of a new investment platform, sharing success stories, and urging immediate action to secure special bonuses. Claims of exclusive access to expert knowledge, often with time-limited bonuses or early bird offers.",
+    "text": "Scam category: Investment Fraud\n\nTypical behaviours: Scammers promote an investment opportunity with promises of high returns and use testimonials or third-party endorsements to build credibility. Promising high returns on investments using sophisticated trading strategies.\n\nDistinguishing signals: Promotion of a new investment platform, sharing success stories, and urging immediate action to secure special bonuses. Claims of exclusive access to expert knowledge, often with time-limited bonuses or early bird offers.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0002",
+    "category": "Package Delivery",
+    "support": 1,
+    "behaviours": "The caller claims to be from a delivery service and requests personal information such as address and identity number for package verification.",
+    "signals": "Requests for sensitive personal information under the guise of verifying details for package delivery.",
+    "text": "Scam category: Package Delivery\n\nTypical behaviours: The caller claims to be from a delivery service and requests personal information such as address and identity number for package verification.\n\nDistinguishing signals: Requests for sensitive personal information under the guise of verifying details for package delivery.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0003",
+    "category": "Investment Scam",
+    "support": 1,
+    "behaviours": "Promises high returns on investments through an exclusive platform, requiring upfront payments or transfers to secure the opportunity.",
+    "signals": "Proposing lucrative investment opportunities with guaranteed high returns and demanding immediate financial commitments.",
+    "text": "Scam category: Investment Scam\n\nTypical behaviours: Promises high returns on investments through an exclusive platform, requiring upfront payments or transfers to secure the opportunity.\n\nDistinguishing signals: Proposing lucrative investment opportunities with guaranteed high returns and demanding immediate financial commitments.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0004",
+    "category": "Healthcare Offer",
+    "support": 1,
+    "behaviours": "Claims that the recipient qualifies for reduced health insurance premiums due to policy changes, urging them to press a number to connect with specialists.",
+    "signals": "Inviting the recipient to take advantage of unexpected healthcare benefits by pressing a specific key.",
+    "text": "Scam category: Healthcare Offer\n\nTypical behaviours: Claims that the recipient qualifies for reduced health insurance premiums due to policy changes, urging them to press a number to connect with specialists.\n\nDistinguishing signals: Inviting the recipient to take advantage of unexpected healthcare benefits by pressing a specific key.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0005",
+    "category": "Product Pre-Order",
+    "support": 1,
+    "behaviours": "Announces an exclusive deal for a new product at a discounted price, requiring credit card information and immediate payment to secure.",
+    "signals": "Offering limited-time discounts on high-demand products with the need for instant financial transactions.",
+    "text": "Scam category: Product Pre-Order\n\nTypical behaviours: Announces an exclusive deal for a new product at a discounted price, requiring credit card information and immediate payment to secure.\n\nDistinguishing signals: Offering limited-time discounts on high-demand products with the need for instant financial transactions.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0006",
+    "category": "Request for Personal Information",
+    "support": 1,
+    "behaviours": "Scammers ask for sensitive personal details such as full names, bank account numbers, passwords, and other identifying information.",
+    "signals": "The caller insists on obtaining specific types of personal data that are not typically requested in legitimate communications.",
+    "text": "Scam category: Request for Personal Information\n\nTypical behaviours: Scammers ask for sensitive personal details such as full names, bank account numbers, passwords, and other identifying information.\n\nDistinguishing signals: The caller insists on obtaining specific types of personal data that are not typically requested in legitimate communications.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0007",
+    "category": "Urgency and Threats",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by threatening legal action or withholding important items (like packages) unless immediate payment is made.",
+    "signals": "The call includes threats or warnings about negative consequences if the recipient does not comply with the scammer's demands.",
+    "text": "Scam category: Urgency and Threats\n\nTypical behaviours: Scammers create a sense of urgency by threatening legal action or withholding important items (like packages) unless immediate payment is made.\n\nDistinguishing signals: The call includes threats or warnings about negative consequences if the recipient does not comply with the scammer's demands.",
+    "source": "dataset training split"
+  },
+  {
+    "id": "qwen_training_0008",
+    "category": "Impersonation and Authority",
+    "support": 1,
+    "behaviours": "Scammers pretend to be from official organizations like police departments or government agencies to lend credibility to their requests.",
+    "signals": "The caller claims affiliation with a recognized authority figure or organization, often using this guise to demand compliance.",
+    "text": "Scam category: Impersonation and Authority\n\nTypical behaviours: Scammers pretend to be from official organizations like police departments or government agencies to lend credibility to their requests.\n\nDistinguishing signals: The caller claims affiliation with a recognized authority figure or organization, often using this guise to demand compliance.",
+    "source": "dataset training split"
+  }
+]

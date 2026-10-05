@@ -1,0 +1,147 @@
+{
+  "model": "d1600-fit2",
+  "dataset": "datasets/huggingface_1600_test2_stripped.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "balanced_acc": 0.5,
+    "tp": 160,
+    "fp": 160,
+    "fn": 0,
+    "tn": 0,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 300.53,
+  "per_call_csv": "results/eval_d1600-fit2-stripped.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 160,
+        "id": "sd0801",
+        "words": 120,
+        "excerpt": "i am from i just to that you are to your i have been for it but can you me a more about the what is in it me on that it here that it is a you from an i do not any are you you have the the is under your and would you me t",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scammer trying to gather personal information without providing clear details about the supposed offer or purchase."
+      },
+      {
+        "idx": 161,
+        "id": "sd0802",
+        "words": 96,
+        "excerpt": "i am from i just to that you are a to be i so what is the for again it is a you from our i did one but can you me more about the what is the and me on that it here that it is a with of and a that but how do i this is not",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scam attempt where they avoid providing clear information about the source or nature of an offer."
+      },
+      {
+        "idx": 162,
+        "id": "sd0803",
+        "words": 128,
+        "excerpt": "i am from i just to that you are to your i so what is the for again it is for the you i do not a can you me more about it me on that it here that you an and it is to be between that i do not that can you me the or the is",
+        "verdict": "Fraud",
+        "reason": "The caller's speech pattern and vague references to a refund without clear details are indicative of a scam attempt."
+      },
+      {
+        "idx": 163,
+        "id": "sd0806",
+        "words": 74,
+        "excerpt": "i am from i just to that you are a i so what is the for again it is a from you a that but can you me more about the the or me on that it here it is a that does but how did you my i do not it to we it from your on with we",
+        "verdict": "Fraud",
+        "reason": "The caller's inability to provide clear and specific information about the alleged delivery or purchase is suspicious."
+      },
+      {
+        "idx": 164,
+        "id": "sd0814",
+        "words": 115,
+        "excerpt": "i am from i just to that you are to your i so what is the for again it is for the you i do not a can you me more about it me on the it here that you a on our that does not i do not from your can you me the or the is woul",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scam attempt where they avoid providing clear information about the source or nature of an alleged interaction."
+      },
+      {
+        "idx": 165,
+        "id": "sd0816",
+        "words": 99,
+        "excerpt": "i am from i just to that you are to a i so what is the for again it is an from you an for a on the of this can you me more about the what is the me it here it is a that but how did you my we it from they it to us for i i",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scam attempt where they avoid providing clear information about the source or nature of an offer."
+      },
+      {
+        "idx": 166,
+        "id": "sd0826",
+        "words": 75,
+        "excerpt": "i am from i am the of your that was to i was it what is the me it is can you me what is in the to our it is a the of that but how did you my we it from the you it when you the i i your can you just my it is that is for y",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scam attempt where they avoid providing clear information."
+      },
+      {
+        "idx": 167,
+        "id": "sd0829",
+        "words": 98,
+        "excerpt": "i am from i just to that you are a to be i so what is the for again it is for a you from our and how did i for it me it here you with your what is the of my i am not to have to that we do not in our can you me what is th",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scam attempt where they avoid providing clear information about the transaction or order details."
+      },
+      {
+        "idx": 168,
+        "id": "sd0832",
+        "words": 122,
+        "excerpt": "i am from i just to that your will be between i have been for that for can you me what is in the me on that it here that you are a that is i do not a are you you have the i for the me some can you me with your or the wit",
+        "verdict": "Fraud",
+        "reason": "The caller's speech pattern and vague responses suggest an attempt to scam by not providing clear information about a supposed delivery or purchase."
+      },
+      {
+        "idx": 169,
+        "id": "sd0833",
+        "words": 105,
+        "excerpt": "i am from i just to that your will be i am a what is the it is can you me what is in the me it here that it is a the of that but how did i for this to our you with your in that is how did you my we do not have your we on",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and vague, typical of a scam attempt where they avoid providing clear information about the transaction or item being discussed."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T00:27:27+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit2",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}

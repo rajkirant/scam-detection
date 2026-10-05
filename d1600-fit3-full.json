@@ -1,0 +1,83 @@
+{
+  "model": "d1600-fit3",
+  "dataset": "datasets/huggingface_1600_test3.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.99375,
+    "precision": 0.9876543209876543,
+    "recall": 1.0,
+    "specificity": 0.9875,
+    "f1": 0.9937888198757764,
+    "balanced_acc": 0.99375,
+    "tp": 160,
+    "fp": 2,
+    "fn": 0,
+    "tn": 158,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 311.0,
+  "per_call_csv": "results/eval_d1600-fit3-full.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 264,
+        "id": "sd1313",
+        "words": 248,
+        "excerpt": "caller: Hello, my name is John and I'm calling from XYZ Insurance Company. We're offering a special discount on our new health insurance plan. receiver: Oh, really? What makes you think I need health insurance? caller: W",
+        "verdict": "Fraud",
+        "reason": "The caller started by offering an unsolicited service and used vague references to legitimacy without providing specific details or verification methods."
+      },
+      {
+        "idx": 278,
+        "id": "sd1365",
+        "words": 226,
+        "excerpt": "caller: Hi, my name is Karen and I'm calling from XYZ Services. We're offering a special deal on home security systems. receiver: Oh, really? What makes you think I need a home security system? caller: Well, we've had re",
+        "verdict": "Fraud",
+        "reason": "The caller avoided providing specific information about the source of burglary reports and insisted on a promotion that seems too good to be true without clear verification options."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T00:33:25+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit3",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}

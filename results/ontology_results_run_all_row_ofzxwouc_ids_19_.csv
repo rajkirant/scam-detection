@@ -1,0 +1,2 @@
+idx,true,pred,confidence,node,node_score,novel_flag,reason
+0,Fraud,Fraud,85,,0,True,"The caller is requesting sort code and account number for verification of PPI compensation, which is a common tactic to obtain banking details."

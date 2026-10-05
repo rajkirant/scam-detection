@@ -1,0 +1,402 @@
+[
+  {
+    "id": "f1_qwen_training_0001",
+    "category": "Technical Support",
+    "support": 3,
+    "behaviours": "The scammer poses as a technical support representative from a reputable company to address a fabricated security issue. The caller poses as technical support personnel and guides the recipient through steps that may lead to granting remote access or providing sensitive information. Pretending to be technical support, the scammer guides the victim through steps on their computer.",
+    "signals": "The call involves discussing computer issues, often mentioning hackers and the need for immediate action. The scammer may ask for personal information or payment details. The call involves troubleshooting a supposed issue on the recipient's device, often asking for control over the computer. Instructs the user to open specific web browsers or navigate to certain addresses within the browser.",
+    "text": "Scam category: Technical Support\n\nTypical behaviours: The scammer poses as a technical support representative from a reputable company to address a fabricated security issue. The caller poses as technical support personnel and guides the recipient through steps that may lead to granting remote access or providing sensitive information. Pretending to be technical support, the scammer guides the victim through steps on their computer.\n\nDistinguishing signals: The call involves discussing computer issues, often mentioning hackers and the need for immediate action. The scammer may ask for personal information or payment details. The call involves troubleshooting a supposed issue on the recipient's device, often asking for control over the computer. Instructs the user to open specific web browsers or navigate to certain addresses within the browser.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0002",
+    "category": "Refund Request",
+    "support": 2,
+    "behaviours": "The caller poses as a customer service representative from a company and claims that there is an issue with the recipient's account requiring immediate attention. The caller pretends to be from a company's customer service team to discuss a refund.",
+    "signals": "The scammer asks for personal information or directs the recipient to perform actions on their computer, such as logging into accounts or downloading software. The conversation revolves around an unexpected charge or subscription, and the scammer may ask for personal information or direct the recipient to a website to process a refund.",
+    "text": "Scam category: Refund Request\n\nTypical behaviours: The caller poses as a customer service representative from a company and claims that there is an issue with the recipient's account requiring immediate attention. The caller pretends to be from a company's customer service team to discuss a refund.\n\nDistinguishing signals: The scammer asks for personal information or directs the recipient to perform actions on their computer, such as logging into accounts or downloading software. The conversation revolves around an unexpected charge or subscription, and the scammer may ask for personal information or direct the recipient to a website to process a refund.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0003",
+    "category": "Security Alert",
+    "support": 1,
+    "behaviours": "The caller pretends to be from a security or support team and claims that there is an urgent issue with the recipient's device or account.",
+    "signals": "The scammer often mentions specific technical issues like malware infections, unauthorized purchases, or blocked access due to security reasons.",
+    "text": "Scam category: Security Alert\n\nTypical behaviours: The caller pretends to be from a security or support team and claims that there is an urgent issue with the recipient's device or account.\n\nDistinguishing signals: The scammer often mentions specific technical issues like malware infections, unauthorized purchases, or blocked access due to security reasons.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0004",
+    "category": "Invoice Payment",
+    "support": 1,
+    "behaviours": "The caller claims that there is an outstanding invoice or subscription requiring payment and offers a refund if immediate action is taken.",
+    "signals": "The scammer tries to create urgency by mentioning bank closures or other time-sensitive reasons for not being able to process payments immediately.",
+    "text": "Scam category: Invoice Payment\n\nTypical behaviours: The caller claims that there is an outstanding invoice or subscription requiring payment and offers a refund if immediate action is taken.\n\nDistinguishing signals: The scammer tries to create urgency by mentioning bank closures or other time-sensitive reasons for not being able to process payments immediately.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0005",
+    "category": "Social Engineering",
+    "support": 1,
+    "behaviours": "The caller uses social engineering tactics, such as pretending to be a religious figure or using emotional appeals, to gain the recipient's trust.",
+    "signals": "The scammer attempts to disarm skepticism by addressing potential objections directly and may use personal details to build rapport.",
+    "text": "Scam category: Social Engineering\n\nTypical behaviours: The caller uses social engineering tactics, such as pretending to be a religious figure or using emotional appeals, to gain the recipient's trust.\n\nDistinguishing signals: The scammer attempts to disarm skepticism by addressing potential objections directly and may use personal details to build rapport.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0006",
+    "category": "Threat Creation",
+    "support": 1,
+    "behaviours": "The scammer creates an urgent situation, such as threatening legal action or service termination, to pressure the victim into taking immediate action.",
+    "signals": "Imminent threats of arrest, fines, or service disconnection if no action is taken.",
+    "text": "Scam category: Threat Creation\n\nTypical behaviours: The scammer creates an urgent situation, such as threatening legal action or service termination, to pressure the victim into taking immediate action.\n\nDistinguishing signals: Imminent threats of arrest, fines, or service disconnection if no action is taken.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0007",
+    "category": "Technical Emergency",
+    "support": 1,
+    "behaviours": "The scammer pretends to be from a technical support team and claims that the victim's device has been compromised by malware or other issues.",
+    "signals": "Unsolicited calls about unexpected computer problems, often triggered by visiting common websites like social media platforms.",
+    "text": "Scam category: Technical Emergency\n\nTypical behaviours: The scammer pretends to be from a technical support team and claims that the victim's device has been compromised by malware or other issues.\n\nDistinguishing signals: Unsolicited calls about unexpected computer problems, often triggered by visiting common websites like social media platforms.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f1_qwen_training_0008",
+    "category": "Service Renewal",
+    "support": 1,
+    "behaviours": "The scammer impersonates a service provider to offer urgent renewal of warranties or services, often implying that the victim has missed important deadlines.",
+    "signals": "Calls about expiring warranties or services with instructions to press specific numbers for further action.",
+    "text": "Scam category: Service Renewal\n\nTypical behaviours: The scammer impersonates a service provider to offer urgent renewal of warranties or services, often implying that the victim has missed important deadlines.\n\nDistinguishing signals: Calls about expiring warranties or services with instructions to press specific numbers for further action.",
+    "source": "dataset training split",
+    "fold": 1
+  },
+  {
+    "id": "f2_qwen_training_0001",
+    "category": "Technical Support Scam",
+    "support": 2,
+    "behaviours": "The scammer claims that the caller's device has been compromised and offers technical assistance in exchange for personal information. The caller pretends to be from a technical support team and claims that there is an issue with the recipient's device or account.",
+    "signals": "Reports of malware or blocked devices requiring immediate attention, followed by requests for detailed instructions to resolve. Requests for personal information, such as computer model details, and offers immediate assistance if the victim provides sensitive data.",
+    "text": "Scam category: Technical Support Scam\n\nTypical behaviours: The scammer claims that the caller's device has been compromised and offers technical assistance in exchange for personal information. The caller pretends to be from a technical support team and claims that there is an issue with the recipient's device or account.\n\nDistinguishing signals: Reports of malware or blocked devices requiring immediate attention, followed by requests for detailed instructions to resolve. Requests for personal information, such as computer model details, and offers immediate assistance if the victim provides sensitive data.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0002",
+    "category": "Confusion and Misdirection",
+    "support": 1,
+    "behaviours": "The scammer attempts to confuse the caller by asking irrelevant or misleading questions, often about their country of origin or language proficiency.",
+    "signals": "Questions that are unrelated to the supposed purpose of the call, such as inquiring about the caller's nationality when it is not relevant.",
+    "text": "Scam category: Confusion and Misdirection\n\nTypical behaviours: The scammer attempts to confuse the caller by asking irrelevant or misleading questions, often about their country of origin or language proficiency.\n\nDistinguishing signals: Questions that are unrelated to the supposed purpose of the call, such as inquiring about the caller's nationality when it is not relevant.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0003",
+    "category": "False Authority",
+    "support": 1,
+    "behaviours": "The scammer pretends to be from a legitimate authority or company and uses official-sounding titles or department names.",
+    "signals": "References to non-existent departments, such as 'Department of National Crime Agency', or impersonating well-known companies.",
+    "text": "Scam category: False Authority\n\nTypical behaviours: The scammer pretends to be from a legitimate authority or company and uses official-sounding titles or department names.\n\nDistinguishing signals: References to non-existent departments, such as 'Department of National Crime Agency', or impersonating well-known companies.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0004",
+    "category": "Automatic Confirmation",
+    "support": 1,
+    "behaviours": "The scammer automatically confirms a transaction or subscription without the caller's explicit consent and offers an immediate refund if questioned.",
+    "signals": "Unsolicited confirmation of charges or subscriptions followed by an offer to cancel, often with a prompt for action.",
+    "text": "Scam category: Automatic Confirmation\n\nTypical behaviours: The scammer automatically confirms a transaction or subscription without the caller's explicit consent and offers an immediate refund if questioned.\n\nDistinguishing signals: Unsolicited confirmation of charges or subscriptions followed by an offer to cancel, often with a prompt for action.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0005",
+    "category": "Virus Alert",
+    "support": 1,
+    "behaviours": "Scammers initiate contact by claiming the victim's device has detected malware or viruses, often after downloading a suspicious software like Reimage.",
+    "signals": "The caller offers immediate technical support to resolve issues that they claim are critical and urgent.",
+    "text": "Scam category: Virus Alert\n\nTypical behaviours: Scammers initiate contact by claiming the victim's device has detected malware or viruses, often after downloading a suspicious software like Reimage.\n\nDistinguishing signals: The caller offers immediate technical support to resolve issues that they claim are critical and urgent.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0006",
+    "category": "Unauthorized Charges",
+    "support": 1,
+    "behaviours": "Scammers inform victims of unauthorized charges on their accounts for services or products they did not purchase, often related to antivirus software.",
+    "signals": "The caller requests the victim to log into their account or provide sensitive information over the phone to cancel the charges.",
+    "text": "Scam category: Unauthorized Charges\n\nTypical behaviours: Scammers inform victims of unauthorized charges on their accounts for services or products they did not purchase, often related to antivirus software.\n\nDistinguishing signals: The caller requests the victim to log into their account or provide sensitive information over the phone to cancel the charges.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0007",
+    "category": "Fraudulent Activity",
+    "support": 1,
+    "behaviours": "Scammers claim there has been suspicious activity on the victim's device or account, often suggesting that personal data may have been compromised.",
+    "signals": "The caller insists on guiding the victim through steps to cancel fraudulent transactions and requests access to the victim\u2019s computer.",
+    "text": "Scam category: Fraudulent Activity\n\nTypical behaviours: Scammers claim there has been suspicious activity on the victim's device or account, often suggesting that personal data may have been compromised.\n\nDistinguishing signals: The caller insists on guiding the victim through steps to cancel fraudulent transactions and requests access to the victim\u2019s computer.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f2_qwen_training_0008",
+    "category": "Invoice Confusion",
+    "support": 1,
+    "behaviours": "Scammers send an invoice for a service or product the victim does not recognize, often related to antivirus software.",
+    "signals": "The caller instructs the victim to follow specific steps on their device to cancel the subscription or payment.",
+    "text": "Scam category: Invoice Confusion\n\nTypical behaviours: Scammers send an invoice for a service or product the victim does not recognize, often related to antivirus software.\n\nDistinguishing signals: The caller instructs the victim to follow specific steps on their device to cancel the subscription or payment.",
+    "source": "dataset training split",
+    "fold": 2
+  },
+  {
+    "id": "f3_qwen_training_0001",
+    "category": "Fraud Alert",
+    "support": 1,
+    "behaviours": "The caller claims to be from an official service or company and informs the recipient of suspicious activity on their account, such as unauthorized access.",
+    "signals": "The scammer often asks for immediate action like verifying personal information over the phone or granting remote access to resolve a supposed issue.",
+    "text": "Scam category: Fraud Alert\n\nTypical behaviours: The caller claims to be from an official service or company and informs the recipient of suspicious activity on their account, such as unauthorized access.\n\nDistinguishing signals: The scammer often asks for immediate action like verifying personal information over the phone or granting remote access to resolve a supposed issue.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0002",
+    "category": "Technical Support",
+    "support": 1,
+    "behaviours": "The caller pretends to be from technical support and informs the recipient that their device is infected with malware or has security vulnerabilities.",
+    "signals": "The scammer typically requests remote access to the victim's computer to 'fix' the issue, often under the guise of preventing further damage.",
+    "text": "Scam category: Technical Support\n\nTypical behaviours: The caller pretends to be from technical support and informs the recipient that their device is infected with malware or has security vulnerabilities.\n\nDistinguishing signals: The scammer typically requests remote access to the victim's computer to 'fix' the issue, often under the guise of preventing further damage.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0003",
+    "category": "Invoice Payment",
+    "support": 1,
+    "behaviours": "The caller claims that there is an outstanding invoice or subscription and seeks payment details.",
+    "signals": "Often involves discussions about bank closures or immediate financial transactions to resolve a supposed debt or service cancellation issue.",
+    "text": "Scam category: Invoice Payment\n\nTypical behaviours: The caller claims that there is an outstanding invoice or subscription and seeks payment details.\n\nDistinguishing signals: Often involves discussions about bank closures or immediate financial transactions to resolve a supposed debt or service cancellation issue.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0004",
+    "category": "Refund Claim",
+    "support": 1,
+    "behaviours": "The caller pretends to be from a company's refund department and informs the recipient of an error in their account that requires correction.",
+    "signals": "Typically involves guiding the victim through steps on their computer, often asking for personal information or directing them to make payments.",
+    "text": "Scam category: Refund Claim\n\nTypical behaviours: The caller pretends to be from a company's refund department and informs the recipient of an error in their account that requires correction.\n\nDistinguishing signals: Typically involves guiding the victim through steps on their computer, often asking for personal information or directing them to make payments.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0005",
+    "category": "Invoice Scam",
+    "support": 1,
+    "behaviours": "The scammer initiates contact claiming that the victim has an outstanding invoice or order for a product they did not request.",
+    "signals": "Requests personal information such as name and order ID to verify details, often with a sense of urgency.",
+    "text": "Scam category: Invoice Scam\n\nTypical behaviours: The scammer initiates contact claiming that the victim has an outstanding invoice or order for a product they did not request.\n\nDistinguishing signals: Requests personal information such as name and order ID to verify details, often with a sense of urgency.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0006",
+    "category": "Security Alert",
+    "support": 1,
+    "behaviours": "The scammer pretends to be from technical support and informs the victim that their device is compromised or blocked for security reasons.",
+    "signals": "Asks about recent activities on the computer, particularly if the user clicked on suspicious links or downloaded unknown files.",
+    "text": "Scam category: Security Alert\n\nTypical behaviours: The scammer pretends to be from technical support and informs the victim that their device is compromised or blocked for security reasons.\n\nDistinguishing signals: Asks about recent activities on the computer, particularly if the user clicked on suspicious links or downloaded unknown files.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0007",
+    "category": "Subscription Confirmation",
+    "support": 1,
+    "behaviours": "The scammer calls to confirm a subscription charge that the victim did not authorize.",
+    "signals": "Provides an automated message confirming a transaction and prompts for action to cancel or confirm the payment.",
+    "text": "Scam category: Subscription Confirmation\n\nTypical behaviours: The scammer calls to confirm a subscription charge that the victim did not authorize.\n\nDistinguishing signals: Provides an automated message confirming a transaction and prompts for action to cancel or confirm the payment.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f3_qwen_training_0008",
+    "category": "Support Impersonation",
+    "support": 1,
+    "behaviours": "Claims to be from official support but refuses to provide assistance over the phone, asking victims to call back on another number.",
+    "signals": "Avoids answering questions directly and suggests that further action is needed by calling a different number.",
+    "text": "Scam category: Support Impersonation\n\nTypical behaviours: Claims to be from official support but refuses to provide assistance over the phone, asking victims to call back on another number.\n\nDistinguishing signals: Avoids answering questions directly and suggests that further action is needed by calling a different number.",
+    "source": "dataset training split",
+    "fold": 3
+  },
+  {
+    "id": "f4_qwen_training_0001",
+    "category": "Technical Support Scam",
+    "support": 2,
+    "behaviours": "The caller pretends to be a technical support representative and informs the recipient that their device has been infected with malware. Scammers pose as technical support personnel to address fabricated security alerts or issues on the victim's device.",
+    "signals": "Claims about viruses or stability issues detected on devices; prompts for downloading specific software (e.g., Reimage) to resolve. The scammer initiates contact by mentioning a security alert or unusual activity detected on the victim\u2019s computer or account.",
+    "text": "Scam category: Technical Support Scam\n\nTypical behaviours: The caller pretends to be a technical support representative and informs the recipient that their device has been infected with malware. Scammers pose as technical support personnel to address fabricated security alerts or issues on the victim's device.\n\nDistinguishing signals: Claims about viruses or stability issues detected on devices; prompts for downloading specific software (e.g., Reimage) to resolve. The scammer initiates contact by mentioning a security alert or unusual activity detected on the victim\u2019s computer or account.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0002",
+    "category": "Fraud Claim",
+    "support": 1,
+    "behaviours": "The scammer initiates contact by claiming there is fraudulent activity on the victim's account or an unexpected charge.",
+    "signals": "The caller asks if the victim can access a computer or bank account to 'verify' information, often suggesting that immediate action is necessary.",
+    "text": "Scam category: Fraud Claim\n\nTypical behaviours: The scammer initiates contact by claiming there is fraudulent activity on the victim's account or an unexpected charge.\n\nDistinguishing signals: The caller asks if the victim can access a computer or bank account to 'verify' information, often suggesting that immediate action is necessary.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0003",
+    "category": "Support Impersonation",
+    "support": 1,
+    "behaviours": "Scammers pretend to be customer support representatives from well-known companies and ask for personal details.",
+    "signals": "The call starts with a greeting that mimics official company scripts but includes vague or incorrect information about the caller's identity.",
+    "text": "Scam category: Support Impersonation\n\nTypical behaviours: Scammers pretend to be customer support representatives from well-known companies and ask for personal details.\n\nDistinguishing signals: The call starts with a greeting that mimics official company scripts but includes vague or incorrect information about the caller's identity.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0004",
+    "category": "Technical Assistance",
+    "support": 1,
+    "behaviours": "Scammers pose as technical support personnel, guiding victims through steps to 'fix' issues on their devices.",
+    "signals": "The conversation involves detailed instructions for accessing online accounts or downloading software, often under the guise of resolving a security issue.",
+    "text": "Scam category: Technical Assistance\n\nTypical behaviours: Scammers pose as technical support personnel, guiding victims through steps to 'fix' issues on their devices.\n\nDistinguishing signals: The conversation involves detailed instructions for accessing online accounts or downloading software, often under the guise of resolving a security issue.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0005",
+    "category": "Transfer Confirmation",
+    "support": 1,
+    "behaviours": "Scammers call pretending to confirm recent transactions or transfers made by the victim.",
+    "signals": "They ask about specific purchases or payments that the victim did not authorize and offer to 'cancel' them, often requiring personal information for verification.",
+    "text": "Scam category: Transfer Confirmation\n\nTypical behaviours: Scammers call pretending to confirm recent transactions or transfers made by the victim.\n\nDistinguishing signals: They ask about specific purchases or payments that the victim did not authorize and offer to 'cancel' them, often requiring personal information for verification.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0006",
+    "category": "Password Reset Scam",
+    "support": 1,
+    "behaviours": "Scammers pretend to be customer support and ask about recent password changes.",
+    "signals": "Unusual frequency of password changes reported by the caller, unexpected contact regarding account security.",
+    "text": "Scam category: Password Reset Scam\n\nTypical behaviours: Scammers pretend to be customer support and ask about recent password changes.\n\nDistinguishing signals: Unusual frequency of password changes reported by the caller, unexpected contact regarding account security.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0007",
+    "category": "Fraud Prevention Call",
+    "support": 1,
+    "behaviours": "Pretending to be from a fraud prevention team to verify personal financial information.",
+    "signals": "Request for sort code and account number, confusion about recent transactions or charges.",
+    "text": "Scam category: Fraud Prevention Call\n\nTypical behaviours: Pretending to be from a fraud prevention team to verify personal financial information.\n\nDistinguishing signals: Request for sort code and account number, confusion about recent transactions or charges.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f4_qwen_training_0008",
+    "category": "Invoice Verification Scam",
+    "support": 1,
+    "behaviours": "Caller receives an invoice they do not recognize and seeks clarification.",
+    "signals": "Unfamiliarity with the company sending the invoice, request to visit a specific website or follow instructions on a computer.",
+    "text": "Scam category: Invoice Verification Scam\n\nTypical behaviours: Caller receives an invoice they do not recognize and seeks clarification.\n\nDistinguishing signals: Unfamiliarity with the company sending the invoice, request to visit a specific website or follow instructions on a computer.",
+    "source": "dataset training split",
+    "fold": 4
+  },
+  {
+    "id": "f5_qwen_training_0001",
+    "category": "Technical Support Scam",
+    "support": 2,
+    "behaviours": "Scammers impersonate technical support staff and claim that there is a problem with the victim's device or account. The caller poses as a technical support representative and claims there is a problem with the recipient's device or software.",
+    "signals": "The caller guides the victim through steps to 'fix' issues, often asking for remote access to the computer. Asks the recipient to download specific software, provide login credentials, or perform actions that could compromise security.",
+    "text": "Scam category: Technical Support Scam\n\nTypical behaviours: Scammers impersonate technical support staff and claim that there is a problem with the victim's device or account. The caller poses as a technical support representative and claims there is a problem with the recipient's device or software.\n\nDistinguishing signals: The caller guides the victim through steps to 'fix' issues, often asking for remote access to the computer. Asks the recipient to download specific software, provide login credentials, or perform actions that could compromise security.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0002",
+    "category": "Support Impersonation",
+    "support": 1,
+    "behaviours": "Scammers pretend to be customer support representatives of well-known companies, often for technology or financial services.",
+    "signals": "The caller insists on being from a specific company but struggles with basic geographical questions about the company's location. They may also ask for personal information under the guise of security verification.",
+    "text": "Scam category: Support Impersonation\n\nTypical behaviours: Scammers pretend to be customer support representatives of well-known companies, often for technology or financial services.\n\nDistinguishing signals: The caller insists on being from a specific company but struggles with basic geographical questions about the company's location. They may also ask for personal information under the guise of security verification.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0003",
+    "category": "Security Alert",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by claiming that the victim's device has been compromised or blocked due to security threats.",
+    "signals": "The caller describes a fabricated alert on the victim\u2019s screen and offers immediate assistance, often asking for remote access to resolve an issue.",
+    "text": "Scam category: Security Alert\n\nTypical behaviours: Scammers create a sense of urgency by claiming that the victim's device has been compromised or blocked due to security threats.\n\nDistinguishing signals: The caller describes a fabricated alert on the victim\u2019s screen and offers immediate assistance, often asking for remote access to resolve an issue.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0004",
+    "category": "Threats and Consequences",
+    "support": 1,
+    "behaviours": "Scammers threaten victims with legal or financial consequences if they do not comply with their demands.",
+    "signals": "The caller warns of severe repercussions such as fines, arrest, or damage to credit score unless the victim follows instructions immediately.",
+    "text": "Scam category: Threats and Consequences\n\nTypical behaviours: Scammers threaten victims with legal or financial consequences if they do not comply with their demands.\n\nDistinguishing signals: The caller warns of severe repercussions such as fines, arrest, or damage to credit score unless the victim follows instructions immediately.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0005",
+    "category": "Contract and Service Offer",
+    "support": 1,
+    "behaviours": "Scammers attempt to sell services by posing as customer service representatives from telecom companies.",
+    "signals": "The caller offers contract-based services with other major networks under the guise of flexibility or better deals, often without addressing initial complaints about current service.",
+    "text": "Scam category: Contract and Service Offer\n\nTypical behaviours: Scammers attempt to sell services by posing as customer service representatives from telecom companies.\n\nDistinguishing signals: The caller offers contract-based services with other major networks under the guise of flexibility or better deals, often without addressing initial complaints about current service.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0006",
+    "category": "Password Reset Scam",
+    "support": 1,
+    "behaviours": "Scammers pretend to be customer support and claim that there have been multiple password change attempts on the victim's account.",
+    "signals": "The caller asks about recent password changes or requests immediate action regarding suspicious activities.",
+    "text": "Scam category: Password Reset Scam\n\nTypical behaviours: Scammers pretend to be customer support and claim that there have been multiple password change attempts on the victim's account.\n\nDistinguishing signals: The caller asks about recent password changes or requests immediate action regarding suspicious activities.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0007",
+    "category": "Security Alert Scam",
+    "support": 1,
+    "behaviours": "Scammers create a sense of urgency by claiming that the victim's accounts are at risk due to security breaches or hacking attempts.",
+    "signals": "The caller mentions blocked access, data risks, or unauthorized network activity and guides the victim through steps to 'fix' these issues.",
+    "text": "Scam category: Security Alert Scam\n\nTypical behaviours: Scammers create a sense of urgency by claiming that the victim's accounts are at risk due to security breaches or hacking attempts.\n\nDistinguishing signals: The caller mentions blocked access, data risks, or unauthorized network activity and guides the victim through steps to 'fix' these issues.",
+    "source": "dataset training split",
+    "fold": 5
+  },
+  {
+    "id": "f5_qwen_training_0008",
+    "category": "Phishing Scam",
+    "support": 1,
+    "behaviours": "Scammers attempt to gather personal information by posing as a legitimate service provider or authority figure.",
+    "signals": "The caller asks for verification of unknown transactions, requests access to the victim's computer, or seeks confirmation of unfamiliar messages.",
+    "text": "Scam category: Phishing Scam\n\nTypical behaviours: Scammers attempt to gather personal information by posing as a legitimate service provider or authority figure.\n\nDistinguishing signals: The caller asks for verification of unknown transactions, requests access to the victim's computer, or seeks confirmation of unfamiliar messages.",
+    "source": "dataset training split",
+    "fold": 5
+  }
+]

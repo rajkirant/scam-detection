@@ -1,0 +1,147 @@
+{
+  "model": "d1600-fit5",
+  "dataset": "datasets/huggingface_1600_test5_stripped.csv",
+  "calls": 320,
+  "metrics": {
+    "acc": 0.5,
+    "precision": 0.5,
+    "recall": 1.0,
+    "specificity": 0.0,
+    "f1": 0.6666666666666666,
+    "balanced_acc": 0.5,
+    "tp": 160,
+    "fp": 160,
+    "fn": 0,
+    "tn": 0,
+    "unreadable": 0,
+    "scored": 320,
+    "total": 320
+  },
+  "baselines": {
+    "always_scam": {
+      "acc": 0.5,
+      "precision": 0.5,
+      "recall": 1.0,
+      "specificity": 0.0,
+      "f1": 0.6666666666666666,
+      "balanced_acc": 0.5,
+      "tp": 160,
+      "fp": 160,
+      "fn": 0,
+      "tn": 0,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    },
+    "never_scam": {
+      "acc": 0.5,
+      "precision": 0.0,
+      "recall": 0.0,
+      "specificity": 1.0,
+      "f1": 0.0,
+      "balanced_acc": 0.5,
+      "tp": 0,
+      "fp": 0,
+      "fn": 160,
+      "tn": 160,
+      "unreadable": 0,
+      "scored": 320,
+      "total": 320
+    }
+  },
+  "elapsed_s": 300.36,
+  "per_call_csv": "results/eval_d1600-fit5-stripped.csv",
+  "misses": {
+    "false_scam": [
+      {
+        "idx": 160,
+        "id": "sd0804",
+        "words": 116,
+        "excerpt": "i am from i just to that your will be i was not a what is the for me it here it is a from your in i do not have an in can you me more about the it is a with a and a inside it was via that how did you my we it from the th",
+        "verdict": "Fraud",
+        "reason": "The caller's speech pattern and content suggest an attempt to gather personal information under unclear circumstances."
+      },
+      {
+        "idx": 161,
+        "id": "sd0808",
+        "words": 115,
+        "excerpt": "i am from i just to that you are a to be i so what is the for again it is for a you the is that can you me more about the what is the and me on that it is a that does not i could have i an i for the me on the again i the",
+        "verdict": "Fraud",
+        "reason": "The caller's speech pattern is disjointed and nonsensical, typical of someone trying to gather information without a clear purpose or context."
+      },
+      {
+        "idx": 162,
+        "id": "sd0813",
+        "words": 125,
+        "excerpt": "i am from i just to that you are a i so what is the for again it is a you from our i do not a can you me more about it the is and it was on me on that can you for a of i have and i do not have any of that are you you hav",
+        "verdict": "Fraud",
+        "reason": "The caller's speech pattern and request for personal information without a clear context indicate scamming behavior."
+      },
+      {
+        "idx": 163,
+        "id": "sd0815",
+        "words": 94,
+        "excerpt": "i am from i just to that your is to i have been for that can you me more about it what is the me on that it the is that but can you me what is in the to our it is a from your in my in i do not have an in are you you have",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and nonsensical, typical of scammers trying to gather information without a clear legitimate purpose."
+      },
+      {
+        "idx": 164,
+        "id": "sd0819",
+        "words": 171,
+        "excerpt": "i am from i just to that your will be between i have been for that can you me what is in it me it here it is a you from an i do not a are you it is not a or no it is a would you me to the if you did not it what is your i",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and attempts to gather personal information without a clear purpose."
+      },
+      {
+        "idx": 165,
+        "id": "sd0821",
+        "words": 83,
+        "excerpt": "i am from i just to that you are a to be i so what is the for again it is for a you the is that but can you me more about the what is the and me on that it here it is a that but before you can i your and just in i to my ",
+        "verdict": "Fraud",
+        "reason": "The caller's speech pattern and request for personal information without a clear context indicate scamming behavior."
+      },
+      {
+        "idx": 166,
+        "id": "sd0823",
+        "words": 75,
+        "excerpt": "i am from i just to that you are a i so what is the for again it is from you a that can you me more about the me it here it is a i do not that can you me the the is me on my can you for just a no i and that up for no at ",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and nonsensical, typical of scammers trying to gather information without a clear purpose or context."
+      },
+      {
+        "idx": 167,
+        "id": "sd0836",
+        "words": 125,
+        "excerpt": "i am from can i to that is me who is this my is and i am to the of your for what you a and it is to i just to will be to for it i do not any can you me more about the me it here that the was on and the is a that does not",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and nonsensical, typical of a scammer trying to gather information without clear context or legitimate purpose."
+      },
+      {
+        "idx": 168,
+        "id": "sd0838",
+        "words": 169,
+        "excerpt": "i am from can you your for the we are to what is the about it is a from your she it and we are to it to your my i do not have a i for the me on that can you me your so i can up the it is but i there might be some here i ",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and attempts to gather personal information without a clear purpose."
+      },
+      {
+        "idx": 169,
+        "id": "sd0846",
+        "words": 110,
+        "excerpt": "i am from i am to the of a to your what is the about it is a from a the of can you me more about the who is the me it here the is that but can you also the and the i the the is and you the on that out you i have been a o",
+        "verdict": "Fraud",
+        "reason": "The caller's speech is disjointed and nonsensical, typical of someone trying to gather information without a clear purpose or context, suggesting a scam attempt."
+      }
+    ],
+    "missed_scam": [],
+    "unreadable": []
+  },
+  "finished_at": "2026-10-02T03:20:03+00:00",
+  "kind": "llm",
+  "base_model": "qwen2.5:14b",
+  "profile": "d1600-fit5",
+  "shots": 4,
+  "rubric": true,
+  "truncated": 0
+}
