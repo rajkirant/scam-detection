@@ -236,6 +236,12 @@ try:
 except ValueError as e:
     check("broken JSON is refused, with where", "line" in str(e))
 shipped = M.load_ontology()
+shipped_text = open(os.path.join(HERE, "..", "knowledge",
+                                 "mcq_ontology.json")).read()
+check("the shipped tree holds no learned knowledge or dataset evidence",
+      [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
+                   '"evidence"', '"knowledge"', "built_from", "honeypot",
+                   "scambait", "huggingface") if w in shipped_text], [])
 check("the shipped tree loads: 15 subjects, 7 common questions, 50 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
        M.count_questions(shipped)), (15, 7, 50))
@@ -353,10 +359,10 @@ check("an unreadable subject: the common questions are still asked",
       (r["answers"][0]["choice"], r["subject"], r["requests"]),
       (None, "other", 3))
 STATE["payloads"] = []
-M.classify(GIFT, tree, knowledge=True)
-check("knowledge: the subject's entries go with its questions, not the root",
-      ("A real bank never asks" in STATE["payloads"][1]["prompt"],
-       "Background" in STATE["payloads"][0]["prompt"]), (True, False))
+M.classify(GIFT, tree)
+check("no learned knowledge in any prompt, even where the file has some",
+      any("A real bank never asks" in p["prompt"] or "Background" in p["prompt"]
+          for p in STATE["payloads"]), False)
 check("explain() names the answers that moved the score",
       M.explain(M.classify(GIFT, tree)),
       "bank; score +2.00 (scam): gift +1.0, threat +1.0; 1 answer without a "
