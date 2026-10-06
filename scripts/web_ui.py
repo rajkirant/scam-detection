@@ -3142,6 +3142,11 @@ PAGE = r"""<!doctype html>
   .tq-if { font-size:11px; color:var(--dim); margin:4px 0; }
   .tq-end { border:1px solid var(--line); border-radius:8px; padding:9px 12px;
             font-size:13px; }
+  .tq-asked { font-size:12.5px; color:var(--dim); }
+  .tq-ans { display:flex; gap:10px; align-items:baseline; margin-top:4px;
+            font-size:13.5px; }
+  .tq-run { margin-left:auto; flex:none; font:12px var(--mono); color:var(--dim); }
+  .tq-quote { font-size:12.5px; font-style:italic; margin:4px 0 0 58px; }
   .mcqopt b { font-family:var(--mono); min-width:14px; }
   .mcqopt .pill { flex:none; }
   textarea.json { min-height:420px; }
@@ -4263,8 +4268,6 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <div class="hint" style="margin-top:0">the JSON file the classifier starts
         from &middot; a tree of questions</div>
       <select id="mcqfile" style="width:100%; margin-top:8px"></select>
-      <div class="qp" id="mcqq" style="margin-top:12px"></div>
-      <div id="mcqopts"></div>
       <div class="hint" id="mcqbuilt"></div>
     </div>
 
@@ -7351,8 +7354,7 @@ function mcqPaint(r) {
   if (!o) {
     $('mcqsub').textContent = 'This file has problems and cannot be used: '
       + r.problems.join('; ');
-    $('mcqq').textContent = '';
-    $('mcqopts').innerHTML = $('mcqbuilt').innerHTML = '';
+    $('mcqbuilt').innerHTML = '';
     return;
   }
   const common = mcqCountQ(o.common_questions);
@@ -7361,13 +7363,6 @@ function mcqPaint(r) {
     + `${o.common_questions.length} common questions, ${all} questions in all `
     + `(follow-ups included) · score = the sum of `
     + 'the answer values: above 0 scam, below 0 legitimate, 0 neutral';
-  $('mcqq').textContent = o.prompt;
-  $('mcqopts').innerHTML = o.options.map((x, i) => `<div class="mcqopt">`
-    + `<b>${r.letters[i]}</b><span>${esc(x.text)}`
-    + `<span class="muted"> · ${mcqCountQ(x.questions)} questions${
-      x.value ? ` · value ${x.value > 0 ? '+' : ''}${x.value}` : ''}</span></span></div>`
-  ).join('') + `<div class="hint">and ${o.common_questions.length} common `
-    + `questions for every call (${common} with their follow-ups)</div>`;
   const t = (o.training || [])[o.training ? o.training.length - 1 : 0];
   $('mcqbuilt').innerHTML = t
     ? `trained on <code>${esc(t.dataset)}</code>, ${t.calls} calls, ${esc(t.date || '')}`
@@ -7446,34 +7441,41 @@ function mcqPaintAnswer(r) {
   if (unq) notes.push(`${unq} answer${unq === 1 ? '' : 's'} came without a quote `
     + 'found in the transcript, and counted as Not stated (struck through below).');
 
-  const subjRows = r.subjects.map((x, i) => ({x, p: root.probs[i] || 0}))
-    .filter(({p}, i) => p >= 0.01 || i === root.choice)
-    .sort((a, b) => b.p - a.p)
-    .map(({x, p}) => `<tr class="${x.id === r.subject ? 'chosen' : ''}">
-      <td>${x.letter}</td><td class="optname">${esc(x.text)}</td>
-      <td class="optbar"><div class="bar"><i style="width:${(100 * p).toFixed(1)}%"></i></div></td>
-      <td>${(100 * p).toFixed(1)}%</td></tr>`).join('');
-
-  let running = r.answers[0].value || 0;
-  const rows = r.answers.slice(1).map(a => {
+  // the path the call took: each answer, follow-ups nested under the answer
+  // that opened them, with the score so far
+  let running = root.value || 0;
+  const nodes = [], stack = [];
+  for (const a of r.answers.slice(1)) {
     running += a.value;
-    const depth = 1 + Math.max(0, (a.path.split('/').length - 2) / 2);
+    const d = Math.max(0, (a.path.split('/').length - 2) / 2);
+    const n = {a, run: running, depth: d, kids: []};
+    stack.length = Math.min(stack.length, d);
+    (d && stack[d - 1] ? stack[d - 1].kids : nodes).push(n);
+    stack[d] = n;
+  }
+  const card = n => {
+    const a = n.a, rec = a.role === 'recorded';
+    const tag = n.depth ? 'follow-up' : a.path.startsWith('common/') ? 'common'
+      : 'subject';
     const quote = a.quoted === false
-      ? `<span class="muted"><s>${esc(a.quote || 'no quote')}</s> · not in the `
-        + 'transcript</span>'
-      : a.quote ? `<em>“${esc(a.quote)}”</em>` : '';
-    return `<tr>
-      <td class="optname" style="padding-left:${8 + 18 * depth}px">↳ `
-      + `${esc(a.question)}<div class="muted" style="font-size:11px">${esc(a.path)}`
-      + `${a.role === 'recorded' ? ' · recorded, scores 0' : ''}</div></td>
-      <td class="optname">${a.text === null ? '<span class="muted">unreadable</span>'
-        : esc(a.text)}${a.picked ? `<div class="muted" style="font-size:11px">picked `
-        + `<s>${esc(a.picked)}</s></div>` : ''}</td>
-      <td>${mcqSigned(a.value)}</td>
-      <td>${mcqSigned(running)}</td>
-      <td>${a.p === null ? '—' : (100 * a.p).toFixed(0) + '%'}</td>
-      <td class="optname">${quote}</td></tr>`;
-  }).join('');
+      ? `<div class="tq-quote muted"><s>“${esc(a.quote || 'no quote')}”</s> not in `
+        + `the transcript, so it counts as Not stated; the model picked `
+        + `<s>${esc(a.picked || '')}</s></div>`
+      : a.quote ? `<div class="tq-quote">“${esc(a.quote)}”</div>` : '';
+    const kids = n.kids.length ? `<div class="tq-fu"><div class="tq-if">because `
+      + `“${esc(a.text || '')}” was chosen, it asked:</div>`
+      + n.kids.map(card).join('') + '</div>' : '';
+    return `<div class="tq-card ${rec ? 'recorded' : ''}">
+      <div class="tq-asked">${esc(a.question)}<span class="tq-tag">${tag}${
+        rec ? ' · recorded, scores 0' : ''}</span></div>
+      <div class="tq-ans"><span class="tq-v ${a.value > 0 ? 'pos' : a.value < 0
+        ? 'neg' : ''}">${mcqFmt(a.value)}</span>
+        <b>${a.text === null ? 'unreadable' : esc(a.text)}</b>
+        <span class="tq-run">${a.p === null ? '' : (100 * a.p).toFixed(0) + '% · '}`
+      + `score ${mcqFmt(n.run)}</span></div>${quote}${kids}</div>`;
+  };
+  const path = nodes.map((n, i) => `<div class="tq-step"><div class="tq-num">`
+    + `${i + 1}</div>${card(n)}</div>`).join('');
 
   $('mcqanswer').innerHTML = `
   <div class="card">
@@ -7499,22 +7501,19 @@ function mcqPaintAnswer(r) {
   </div>
   ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
   <div class="card">
-    <div class="qp">${esc(r.prompt)}</div>
-    <div class="scroll"><table class="opts">${subjRows}</table></div>
-  </div>
-  <div class="card">
-    <div class="qp">The walk through the tree, in the order it was asked</div>
-    <div class="scroll"><table class="opts">
-      <tr><th>question</th><th>answer</th><th>value</th><th>score so far</th>
-          <th>p</th><th>quote</th></tr>
-      <tr><td class="optname">${esc(r.prompt)}</td>
-        <td class="optname">${subj ? esc(subj.text) : '<span class="muted">unreadable</span>'}</td>
-        <td>${mcqSigned(root.value || 0)}</td><td>${mcqSigned(root.value || 0)}</td>
-        <td>${root.p === null ? '—' : (100 * root.p).toFixed(0) + '%'}</td><td></td></tr>
-      ${rows}
-      <tr class="chosen"><td class="optname">final score</td><td>${word.toLowerCase()}</td>
-        <td></td><td>${mcqSigned(r.score)}</td><td></td><td></td></tr>
-    </table></div>
+    <div class="qp">The path this call took through the tree</div>
+    <div class="tq-root" style="margin-top:8px"><b>${esc(r.prompt)}</b>
+      <span class="tq-v ${(root.value || 0) > 0 ? 'pos' : (root.value || 0) < 0
+        ? 'neg' : ''}">${mcqFmt(root.value || 0)}</span>
+      <b style="display:inline">${subj ? esc(subj.text) : 'unreadable'}</b>
+      <span class="tq-tag">${root.p === null ? '' : (100 * root.p).toFixed(0)
+        + '% on this subject'}</span></div>
+    <div class="tq-flow">${path || '<div class="tq-step hint">no questions asked</div>'}
+      <div class="tq-step"><div class="tq-num">Σ</div><div class="tq-end">
+        <b>final score ${mcqFmt(r.score)}</b> · ${word.toLowerCase()} · the sum of
+        the values chosen on the way; above 0 scam, below 0 legitimate, 0
+        neutral</div></div>
+    </div>
   </div>
   <div class="card hint">${r.words} words · ${r.requests} questions asked, one
     request each · quotes ${r.quotes ? 'required' : 'off'} · ${r.elapsed_ms} ms · <code>${esc(r.ontology)}</code></div>`;

@@ -671,10 +671,11 @@ that support the answer. An answer whose quote is not in the transcript counts
 as Not stated. Options marked `absence` ("no payment at all") need no quote.
 The result shows:
 - the verdict and the score,
-- the subject, with the probability on each,
-- the walk through the tree: every question asked, in order, nested under the
-  subject, with the answer, its value, the score so far, the probability the
-  model put on it, and the quote.
+- the path the call took through the tree. It starts at the chosen subject,
+  then lists each question asked in order, with the answer chosen, its value,
+  the probability on it, the score so far, and the quote. Follow-ups are
+  nested under the answer that opened them. Questions that were not asked are
+  not shown.
 
 There is no retrieval and no learned knowledge. The model sees the
 transcript, one question and its options, and a few fixed rules, and nothing
