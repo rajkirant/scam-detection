@@ -662,8 +662,7 @@ question score 0. A recorded question, such as who the caller says they are,
 is kept to explain the verdict. The call's **score** is the sum of the values
 of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
 neutral.** When a dataset is scored, neutral counts as not scam. The 50
-questions, their values, and the evidence and notes behind each are in the
-file.
+questions and their values are in the file.
 
 **Classify** walks the transcript through the tree, one request per question
 (about a dozen per call), with no retrieval. The model answers one letter.
@@ -677,10 +676,11 @@ The result shows:
   subject, with the answer, its value, the score so far, the probability the
   model put on it, and the quote.
 
-*Show the subject's knowledge* adds the subject's legit contrast and its
-entries from `scam_ontology.json` and `scam_patterns.json` to each of its
-questions. The file's `how_to_ask` text is put in the prompts, worded for the
-model.
+There is no retrieval and no learned knowledge. The model sees the
+transcript, one question and its options, and the file's `how_to_ask` rules,
+worded for the model, and nothing else. The ontology file itself holds no scam
+patterns, no knowledge-base entries and no dataset evidence. Its values are
+hand-set starting points, and only training changes them.
 
 **Your own question about this call** sits under it, in the Ask tab. Type
 any question about the loaded transcript:
@@ -966,7 +966,7 @@ The tree comes from `knowledge/mcq_ontology.json` (`--ontology` for another,
 such as a trained file). Each answer's value is summed into the call's score:
 above 0 scam, below 0 legitimate, 0 neutral (counted as not scam).
 `--no-quotes` skips the supporting quotes (faster: one letter per question).
-`--knowledge` shows the model the subject's knowledge entries. See
+No retrieval and no learned knowledge go into the prompts. See
 [the MCQ ontology page](#mcq-ontology-page). The run prints which subject the
 scam and legitimate calls were routed to, how many were neutral, the score
 band table, and a per-call CSV with these columns:

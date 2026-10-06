@@ -2300,8 +2300,6 @@ def start_eval_run(page, form):
         flags += ["--ontology", "knowledge/" + path.name]
         if form.get("quotes") is False:
             flags.append("--no-quotes")
-        if form.get("knowledge"):
-            flags.append("--knowledge")
         name = path.stem
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
@@ -2596,13 +2594,12 @@ def mcq_ask(form):
     path = mcq_path(form.get("ontology"))
     onto = mcq_ontology.load_ontology(path)
     quotes = form.get("quotes", True) is not False
-    knowledge = bool(form.get("knowledge"))
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     t0 = time.time()
     try:
-        res = mcq_ontology.classify(text, onto, quotes, knowledge)
+        res = mcq_ontology.classify(text, onto, quotes)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -2613,7 +2610,7 @@ def mcq_ask(form):
                       "text": o["text"]}
                      for i, o in enumerate(onto["options"])],
         "explain": mcq_ontology.explain(res), "quotes": quotes,
-        "knowledge": knowledge, "pct": mcq_ontology.pct(res["score"]),
+        "pct": mcq_ontology.pct(res["score"]),
         "model": llm_judge.DEFAULT_MODEL, "words": len(text.split()),
         "elapsed_ms": int(1000 * (time.time() - t0))})
     return res
@@ -2802,8 +2799,6 @@ def start_mcq_train_onto_run(form):
              "--force"]
     if form.get("quotes") is False:
         flags.append("--no-quotes")
-    if form.get("knowledge"):
-        flags.append("--knowledge")
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_id = time.strftime("%Y%m%d_%H%M%S") + "_mcqtrainonto_" + path.stem
@@ -4250,13 +4245,9 @@ per held-out call, so it takes minutes, not seconds.</pre>
         <span class="note">an answer whose quote is not in the transcript
           counts as Not stated; off is faster, one letter per question</span></span>
       </label>
-      <label class="inline">
-        <input type="checkbox" id="mcqknow">
-        <span><span class="name">Show the subject's knowledge</span>
-        <span class="note">its legit contrast and its entries from
-          scam_ontology.json and scam_patterns.json, with each question</span></span>
-      </label>
-      <div class="hint">Used by Classify, Score a dataset and Train.</div>
+      <div class="hint">Used by Classify, Score a dataset and Train. No
+        retrieval and no learned knowledge: the model sees the transcript,
+        the question and its options.</div>
     </div>
 
     <div class="sect">
@@ -7258,7 +7249,7 @@ async function mcqBoot() {
   mcqSavedList(cfg.questions, null);
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value,
-    quotes: $('mcqquotes').checked, knowledge: $('mcqknow').checked});
+    quotes: $('mcqquotes').checked});
   $('mcqsave').onclick = mcqSave;
   $('mcqjson').addEventListener('input', mcqJsonCheck);
   $('mcqbgo').onclick = mcqTrainOnto;
@@ -7376,7 +7367,7 @@ async function mcqAsk() {
   $('mcqanswer').innerHTML = '<div class="card muted">' + esc(MCQ.model)
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
-    quotes: $('mcqquotes').checked, knowledge: $('mcqknow').checked});
+    quotes: $('mcqquotes').checked});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -7484,8 +7475,7 @@ function mcqPaintAnswer(r) {
     </table></div>
   </div>
   <div class="card hint">${r.words} words · ${r.requests} questions asked, one
-    request each · quotes ${r.quotes ? 'required' : 'off'} · knowledge
-    ${r.knowledge ? 'shown' : 'off'} · ${r.elapsed_ms} ms · <code>${esc(r.ontology)}</code></div>`;
+    request each · quotes ${r.quotes ? 'required' : 'off'} · ${r.elapsed_ms} ms · <code>${esc(r.ontology)}</code></div>`;
 }
 
 // Say, as it is typed, which kind of question this will be. A rough mirror
@@ -7749,7 +7739,7 @@ async function mcqTrainOnto() {
   const res = await api('/api/mcq/train', {
     ontology: mcqFile, dataset: $('mcqbds').value, calls: $('mcqbcalls').value,
     new_options: $('mcqbnew').value, prior: $('mcqbprior').value,
-    quotes: $('mcqquotes').checked, knowledge: $('mcqknow').checked,
+    quotes: $('mcqquotes').checked,
     name: 'knowledge/' + name, overwrite: $('mcqbover').checked});
   if (res.error) { $('mcqberr').textContent = res.error; return; }
   mcqBuildRun = {id: res.id, path: 'knowledge/' + name};

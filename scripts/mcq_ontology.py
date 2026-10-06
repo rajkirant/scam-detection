@@ -23,8 +23,8 @@ probability on every letter, which is kept with each answer.
   score     the sum of the values of the options chosen
   verdict   scam above 0, legitimate below 0, neutral at exactly 0
 
-About a dozen requests per call; no retrieval unless --knowledge shows the
-subject's entries from scam_ontology.json and scam_patterns.json.
+About a dozen requests per call. No retrieval and no learned knowledge:
+the transcript, the question and its options are all the model sees.
 
 `train` starts from an ontology and a dataset (a training fold) and writes a
 new file: it adds options where calls answered Not stated but had something
@@ -493,48 +493,12 @@ def _rules(onto):
     }
 
 
-def knowledge_context(subject):
-    """What the subject's knowledge entries say, for the prompt: its
-    legit_contrast, and the scam_ontology.json nodes and scam_patterns.json
-    patterns it lists. '' when it lists none."""
-    lines = []
-    if subject.get("legit_contrast"):
-        lines.append("What the legitimate version looks like: "
-                     + subject["legit_contrast"])
-    know = subject.get("knowledge") or {}
-    want_nodes = set(know.get("scam_ontology.json") or [])
-    want_pats = set(know.get("scam_patterns.json") or [])
-    try:
-        if want_nodes:
-            nodes = json.loads((KNOWLEDGE_DIR / "scam_ontology.json")
-                               .read_text(encoding="utf-8")).get("nodes", [])
-            for n in nodes:
-                if n.get("id") in want_nodes and n.get("legit_contrast"):
-                    lines.append("%s - the legitimate version: %s"
-                                 % (n.get("name") or n["id"],
-                                    n["legit_contrast"]))
-        if want_pats:
-            pats = json.loads((KNOWLEDGE_DIR / "scam_patterns.json")
-                              .read_text(encoding="utf-8")).get("patterns", [])
-            for p in pats:
-                if p.get("id") in want_pats:
-                    lines.append("Known scam pattern: %s %s"
-                                 % (p.get("behaviours", ""),
-                                    p.get("signals", "")))
-    except (OSError, ValueError):
-        pass
-    return "\n".join("- " + " ".join(l.split()) for l in lines)
-
-
-def question_prompt(transcript, q, onto, root=False, quotes=True,
-                    context=""):
-    """The prompt for one question about one call."""
+def question_prompt(transcript, q, onto, root=False, quotes=True):
+    """The prompt for one question about one call: the transcript, the
+    question, its options and the file's rules - nothing else."""
     n = len(q["options"])
     rules = _rules(onto)
-    lines = []
-    if context:
-        lines += ["Background on calls of this kind:", context, ""]
-    lines.append("Question: " + q["prompt"])
+    lines = ["Question: " + q["prompt"]]
     # absence options are marked, as the file's own rule calls them
     lines += ["%s - %s%s" % (LETTERS[i], o["text"],
                              " (absence)" if o.get("absence") else "")
@@ -564,8 +528,7 @@ def _needs_quote(q, o, root, quotes):
             and o["id"] != NOT_MENTIONED and not o.get("absence"))
 
 
-def ask(transcript, q, onto, root=False, quotes=True, context="",
-        timeout=300):
+def ask(transcript, q, onto, root=False, quotes=True, timeout=300):
     """Put one question about one call to the model. One request.
 
     Returns {"probs", "how", "choice": the option the model picked (None:
@@ -576,7 +539,7 @@ def ask(transcript, q, onto, root=False, quotes=True, context="",
     """
     n = len(q["options"])
     quoting = quotes and not root and q.get("role") != ROLE_RECORDED
-    prompt = question_prompt(transcript, q, onto, root, quotes, context)
+    prompt = question_prompt(transcript, q, onto, root, quotes)
     text, steps = generate(prompt, QUOTE_TOKENS if quoting else ANSWER_TOKENS,
                            timeout=timeout,
                            stop=["\n\n", "\nQuestion"] if quoting else None)
@@ -656,7 +619,7 @@ def question_order(onto, subject):
     return out
 
 
-def classify(transcript, onto, quotes=True, knowledge=False, timeout=300):
+def classify(transcript, onto, quotes=True, timeout=300):
     """Walk the tree for one call: the root question, then the common
     questions and the subject's, each follow-up straight after the answer
     that opens it. One request per question.
@@ -674,13 +637,11 @@ def classify(transcript, onto, quotes=True, knowledge=False, timeout=300):
         subject = onto["options"][a["choice"]]
     else:
         subject = next((s for s in onto["options"] if s["id"] == "other"), None)
-    context = knowledge_context(subject) if knowledge and subject else ""
     queue = question_order(onto, subject)
     i = 0
     while i < len(queue):
         path, q = queue[i]
-        a = ask(transcript, q, onto, quotes=quotes, context=context,
-                timeout=timeout)
+        a = ask(transcript, q, onto, quotes=quotes, timeout=timeout)
         rec = _answer_record(path, q, a)
         answers.append(rec)
         if a["effective"] is not None:
@@ -701,20 +662,19 @@ def _summarise(answers, subject):
             "measured": sum(1 for r in answers if r["how"] == "logprobs")}
 
 
-def classify_all(transcripts, onto, quotes=True, knowledge=False,
-                 parallel=None):
+def classify_all(transcripts, onto, quotes=True, parallel=None):
     """classify() over many calls, in order. SCAM_LLM_PARALLEL (or
     `parallel`) sends that many calls at once - which only helps if Ollama
     serves requests in parallel (OLLAMA_NUM_PARALLEL) and the GPU has room."""
     from concurrent.futures import ThreadPoolExecutor
     parallel = max(1, int(parallel or os.environ.get("SCAM_LLM_PARALLEL") or 1))
     with ThreadPoolExecutor(max_workers=parallel) as pool:
-        for res in pool.map(lambda t: classify(t, onto, quotes, knowledge),
+        for res in pool.map(lambda t: classify(t, onto, quotes),
                             transcripts):
             yield res
 
 
-def presize(transcripts, onto, quotes=True, knowledge=False):
+def presize(transcripts, onto, quotes=True):
     """Size the context window once, for the longest call and the longest
     question, so the model is loaded once rather than reloaded each time a
     longer prompt turns up (the window only grows - see ollama_ctx.STICKY)."""
@@ -725,12 +685,8 @@ def presize(transcripts, onto, quotes=True, knowledge=False):
     qs.append({"prompt": onto["prompt"], "options": onto["options"]})
     biggest = max(qs, key=lambda q: len(q["prompt"]) + sum(
         len(o["text"]) + 6 for o in q["options"]))
-    ctx = ""
-    if knowledge:
-        ctx = max((knowledge_context(s) for s in onto["options"]), key=len,
-                  default="")
     return ollama_ctx.fit_num_ctx(
-        question_prompt(longest, biggest, onto, False, quotes, ctx),
+        question_prompt(longest, biggest, onto, False, quotes),
         QUOTE_TOKENS + 2, where="mcq")
 
 
@@ -1326,7 +1282,7 @@ def _accuracy(results, labels):
 
 def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
                    new_options=NEW_OPTIONS, prior=PRIOR_WEIGHT, seed=42,
-                   quotes=True, knowledge=False, log=print):
+                   quotes=True, log=print):
     """Train an ontology on a dataset; returns the trained tree (a new
     object - `onto` is not changed). See the comment above for the steps."""
     if not 2 <= calls <= 500:
@@ -1342,9 +1298,9 @@ def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
     n_legit = len(sample) - n_scam
     log("  %d calls from %s (%d scam, %d not), seed %d"
         % (len(sample), csv_path, n_scam, n_legit, seed))
-    log("  %d subjects, %d questions; quotes %s, knowledge %s"
+    log("  %d subjects, %d questions; quotes %s"
         % (len(onto["options"]), count_questions(onto),
-           "required" if quotes else "off", "shown" if knowledge else "off"))
+           "required" if quotes else "off"))
     t0 = time.time()
     qmap = {path: q for path, q, _ in iter_questions(onto)}
     root = {"prompt": onto["prompt"], "options": onto["options"]}
@@ -1352,10 +1308,10 @@ def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
 
     # 1. walk every call
     log("\n  step 1 of 4: every call through the tree")
-    presize([t for t, _ in sample], onto, quotes, knowledge)
+    presize([t for t, _ in sample], onto, quotes)
     results = []
     for i, ((text, y), res) in enumerate(zip(sample, classify_all(
-            [t for t, _ in sample], onto, quotes, knowledge)), 1):
+            [t for t, _ in sample], onto, quotes)), 1):
         results.append(res)
         log("    %2d/%d  %-5s  %-20s score %+5.2f  %-7s (%d questions)"
             % (i, len(sample), "scam" if y else "legit",
@@ -1405,13 +1361,8 @@ def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
                     if a["path"] != path:
                         continue
                     old = a["option"]
-                    ctx = ""
-                    if knowledge and r["subject"]:
-                        ctx = knowledge_context(next(
-                            s for s in onto["options"]
-                            if s["id"] == r["subject"]))
                     new = _answer_record(path, q, ask(
-                        sample[ci][0], q, onto, quotes=quotes, context=ctx))
+                        sample[ci][0], q, onto, quotes=quotes))
                     r["answers"][ai] = new
                     if new["option"] != old:
                         # the old option's follow-ups no longer apply
@@ -1490,7 +1441,7 @@ def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
         "dataset": str(csv_path), "calls": len(sample), "scam": n_scam,
         "legit": n_legit, "seed": seed, "prior_weight": prior,
         "new_options_per_question": new_options, "quotes": quotes,
-        "knowledge": knowledge, "model": llm_judge.DEFAULT_MODEL,
+        "model": llm_judge.DEFAULT_MODEL,
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "added": added, "changed": len(changed),
         "training_calls_right_before": round(acc0, 4),
@@ -1521,7 +1472,7 @@ def _show_call(res, onto):
 
 def run_ask(args):
     onto = load_ontology(args.ontology)
-    res = classify(args.text, onto, not args.no_quotes, args.knowledge)
+    res = classify(args.text, onto, not args.no_quotes)
     _show_call(res, onto)
     return 0
 
@@ -1573,16 +1524,15 @@ def run_evaluate(args):
     rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
     print()
     print("==> score  %s over %d calls" % (args.ontology, len(rows)))
-    print("  %s  (%d subjects, %d questions; quotes %s, knowledge %s)"
+    print("  %s  (%d subjects, %d questions; quotes %s)"
           % (onto["prompt"], len(onto["options"]), count_questions(onto),
-             "required" if quotes else "off",
-             "shown" if args.knowledge else "off"))
+             "required" if quotes else "off"))
     trained = [t.get("dataset") for t in onto.get("training") or []]
     if any(t and Path(t).name == Path(args.csv).name for t in trained):
         print("  NOTE this ontology was trained on this dataset: some of the "
               "calls scored here\n       set its options and values - a "
               "held-out set is the fairer read.")
-    ctx = presize([r["text"] for r in rows], onto, quotes, args.knowledge)
+    ctx = presize([r["text"] for r in rows], onto, quotes)
     print("  about a dozen requests per call, context window %s" % ctx)
 
     truths = [r["label"] for r in rows]
@@ -1591,7 +1541,7 @@ def run_evaluate(args):
     t0 = time.time()
     try:
         for r, res in zip(rows, classify_all([r["text"] for r in rows], onto,
-                                             quotes, args.knowledge)):
+                                             quotes)):
             results.append(res)
             # neutral (a score of exactly 0) is not called a scam
             pred = int(res["verdict"] == "scam")
@@ -1635,7 +1585,6 @@ def run_evaluate(args):
                                       for i, s in enumerate(onto["options"])],
                           "neutral": neutral, "questions_asked": asked,
                           "unquoted": unquoted, "quotes": quotes,
-                          "knowledge": args.knowledge,
                           "measured": sum(r["measured"] for r in results)})
     return m
 
@@ -1673,8 +1622,7 @@ def run_train(args):
     onto = load_ontology(args.ontology)
     print("==> train %s on %s" % (args.ontology, args.csv))
     trained = train_ontology(args.csv, onto, args.calls, args.new_options,
-                             args.prior, args.seed, not args.no_quotes,
-                             args.knowledge)
+                             args.prior, args.seed, not args.no_quotes)
     trained.setdefault("trained_from", str(args.ontology))
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(to_file(trained), indent=2, ensure_ascii=False)
@@ -1705,9 +1653,6 @@ def build_parser():
         p.add_argument("--no-quotes", action="store_true",
                        help="do not require a supporting quote for each "
                             "answer (faster: one letter per question)")
-        p.add_argument("--knowledge", action="store_true",
-                       help="show the model the subject's knowledge entries "
-                            "with its questions")
 
     a = sub.add_parser("ask", help="one transcript through the tree")
     a.add_argument("--text", required=True)

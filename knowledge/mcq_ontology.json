@@ -2,52 +2,7 @@
   "id": "call_type",
   "version": 2,
   "prompt": "What is this call mainly about?",
-  "about": "The MCQ ontology as a tree. The root question picks the subject of the call; it does not decide the verdict, because scam and legitimate calls occur under every subject. Every call then answers the common questions and the questions of its subject, and some answers open follow-up questions that are asked only when that answer is chosen. Every answer has a value between -1 and 1: positive points toward scam, negative toward legitimate. The call's score is the sum of the values of the answers chosen.",
-  "built_from": {
-    "previous_version": "knowledge/mcq_ontology.json at commit 3ecabb2: six subjects with two levels of questions. Its questions are kept here and extended.",
-    "knowledge": [
-      "knowledge/scam_ontology.json",
-      "knowledge/scam_patterns.json"
-    ],
-    "datasets": [
-      {
-        "dataset": "datasets/huggingface_1600.csv",
-        "column": "type",
-        "note": "eight call types of 200 calls each; every type is all scam or all legitimate, so the type alone would give the label away"
-      },
-      {
-        "dataset": "datasets/scambait_huggingface_real_tech_support_only_200.csv",
-        "note": "real technical-support scam calls and legitimate support conversations"
-      },
-      {
-        "dataset": "datasets/scambait_synthetic_196.csv",
-        "column": "topic",
-        "note": "99 topics, nearly all with one real scam call and one legitimate call written to match, so the subject alone never decides"
-      },
-      {
-        "dataset": "datasets/scambait_bank_422.csv",
-        "where": {
-          "source": "harpervalley"
-        },
-        "note": "real legitimate bank calls"
-      },
-      {
-        "dataset": "datasets/scamai_full_1000.csv",
-        "columns": [
-          "opening_type",
-          "asks",
-          "signals"
-        ],
-        "note": "calls to a honeypot; its non-scam calls are labelled spam, so a sign found about equally often in both classes marks unwanted calls, not scams"
-      },
-      {
-        "dataset": "datasets/everything_7013.csv",
-        "column": "scam_type",
-        "note": "scam types of the pooled robocall and scam sets"
-      }
-    ],
-    "evidence_format": "Each evidence entry counts the calls labelled scam and nonscam in a dataset that carry a value. In scamai_full_1000 the nonscam calls are spam; elsewhere they are legitimate calls. The counts are read from the CSV files by the script that wrote this file."
-  },
+  "about": "The MCQ ontology as a tree. The root question picks the subject of the call; it does not decide the verdict, because scam and legitimate calls occur under every subject. Every call then answers the common questions and the questions of its subject, and some answers open follow-up questions that are asked only when that answer is chosen. Every answer has a value between -1 and 1: positive points toward scam, negative toward legitimate. The call's score is the sum of the values of the answers chosen. The file holds no learned knowledge: no scam patterns, no knowledge-base entries and no dataset evidence. The values are hand-set starting points; training on a dataset adds options and updates them.",
   "how_to_ask": {
     "route": "Ask the root question first. It is only about the subject of the call, not about whether it is a scam.",
     "questions": "Then ask the common questions and the questions of the chosen subject. Choose exactly one option for each question.",
@@ -55,7 +10,6 @@
     "follow_up": "When the chosen option has follow_up questions, ask them as well. A follow-up is asked only when its option was chosen.",
     "quotes": "Every answer needs a short verbatim quote from the transcript that supports it, except not_mentioned and options marked absence. An answer without a supporting quote counts as not_mentioned.",
     "absence": "Options marked absence say that something did not happen, such as no payment. There is nothing to quote, so they need no quote. Choose one only when the transcript covers the part of the call where it would have happened; for a call cut off early, answer not_mentioned.",
-    "retrieval": "After routing, the subject's knowledge entries can be retrieved and shown to the model as context with its questions: the scam_patterns.json patterns and the scam_ontology.json nodes listed under knowledge.",
     "sequence": "Each subject's ask list is the order its calls are asked: urgency first, then the subject's own questions (for a bank call, whether money is to go to a different account), then the other common questions, and the recorded questions last. A follow-up comes straight after the answer that opens it. The call's score is the sum of the values of every answer chosen on the way."
   },
   "common_questions": [
@@ -66,24 +20,7 @@
         {
           "id": "recording_press_key",
           "text": "A recorded message that asks the person to press a key, or to call a number, to speak to someone",
-          "value": 0.3,
-          "note": "Weak: robocalls that hand over to a live agent are common in the scam data, but in the honeypot calls they are more often spam than scam.",
-          "evidence": [
-            {
-              "dataset": "datasets/everything_7013.csv",
-              "column": "scam_type",
-              "value": "robocall",
-              "scam": 834,
-              "nonscam": 0
-            },
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "signals",
-              "value": "scripted_robocall_handoff",
-              "scam": 18,
-              "nonscam": 35
-            }
-          ]
+          "value": 0.3
         },
         {
           "id": "live_person",
@@ -109,8 +46,7 @@
         {
           "id": "number_from_alert",
           "text": "The person is calling a number shown in a pop-up, a locked or warning screen, or an unexpected email, invoice, or text",
-          "value": 1.0,
-          "note": "In the YouTube scam-baiting calls the person often rings the scammer from a fake warning or a fake invoice. The matching legitimate calls point out that a real system message never shows a number or a web address (scambait_synthetic_196, topic blocked_message_read_out)."
+          "value": 1.0
         },
         {
           "id": "caller_raised_problem",
@@ -120,37 +56,17 @@
         {
           "id": "returning_missed_call",
           "text": "The person is returning a missed call or a voicemail, with no letter or reference to check it against",
-          "value": 0.3,
-          "note": "The legitimate calls of scambait_synthetic_196 topics tax_office_return_call and customs_callback start by asking for the reference on a letter; the scam calls do not."
+          "value": 0.3
         },
         {
           "id": "caller_offer",
           "text": "The caller offers a product, a service, or a deal the person had not asked about",
-          "value": 0.0,
-          "evidence": [
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "opening_type",
-              "value": "cold_pitch",
-              "scam": 25,
-              "nonscam": 29
-            }
-          ]
+          "value": 0.0
         },
         {
           "id": "known_earlier_contact",
           "text": "The call follows up something the person confirms they did or arranged themselves, such as an order, a form, an appointment, or a complaint",
-          "value": -0.5,
-          "note": "The person has to confirm it: in the honeypot calls, scam and spam calls both claim earlier contact about equally often.",
-          "evidence": [
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "opening_type",
-              "value": "references_prior_action",
-              "scam": 322,
-              "nonscam": 369
-            }
-          ]
+          "value": -0.5
         },
         {
           "id": "official_number",
@@ -171,30 +87,12 @@
         {
           "id": "security_codes",
           "text": "A password, a PIN, or a one-time code sent to the person's phone or email",
-          "value": 1.0,
-          "note": "No real bank or service asks for these (scam_patterns.json bank_impersonation_0005 and 0006)."
+          "value": 1.0
         },
         {
           "id": "full_id_number",
           "text": "A full Social Security, Medicare, tax, passport, or other ID number",
           "value": 0.5,
-          "note": "In the honeypot calls, a request for a Social Security number is mostly a scam sign and a request for a Medicare number mostly a spam sign. The follow-up decides.",
-          "evidence": [
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "asks",
-              "value": "ssn",
-              "scam": 266,
-              "nonscam": 61
-            },
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "asks",
-              "value": "medicare_id",
-              "scam": 17,
-              "nonscam": 55
-            }
-          ],
           "follow_up": [
             {
               "id": "id_purpose",
@@ -203,32 +101,12 @@
                 {
                   "id": "id_suspended_or_misused",
                   "text": "To check or restore a number the caller says is suspended, blocked, or used in a crime",
-                  "value": 1.0,
-                  "note": "Social Security numbers are not suspended. This is the story of the Social Security scams in huggingface_1600.",
-                  "evidence": [
-                    {
-                      "dataset": "datasets/huggingface_1600.csv",
-                      "column": "type",
-                      "value": "ssn",
-                      "scam": 200,
-                      "nonscam": 0
-                    }
-                  ]
+                  "value": 1.0
                 },
                 {
                   "id": "new_card_or_benefit",
                   "text": "To send a new card, a benefit, or a free item",
-                  "value": 0.3,
-                  "note": "Weak: in the honeypot calls, Medicare offers are labelled spam more often than scam.",
-                  "evidence": [
-                    {
-                      "dataset": "datasets/scamai_full_1000.csv",
-                      "column": "signals",
-                      "value": "medicare_pretext",
-                      "scam": 58,
-                      "nonscam": 172
-                    }
-                  ]
+                  "value": 0.3
                 },
                 {
                   "id": "application_by_person",
@@ -248,30 +126,6 @@
           "id": "full_card_or_bank",
           "text": "A full card number, the security code on the back of a card, or full bank account details",
           "value": 0.3,
-          "note": "Weak on its own: the honeypot's spam callers ask for these about as often as its scammers. The follow-up decides.",
-          "evidence": [
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "asks",
-              "value": "credit_card",
-              "scam": 80,
-              "nonscam": 108
-            },
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "asks",
-              "value": "debit_card",
-              "scam": 24,
-              "nonscam": 37
-            },
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "asks",
-              "value": "bank_routing",
-              "scam": 69,
-              "nonscam": 67
-            }
-          ],
           "follow_up": [
             {
               "id": "card_purpose",
@@ -280,8 +134,7 @@
                 {
                   "id": "to_receive_money",
                   "text": "To send the person a refund, a prize, a grant, or a loan",
-                  "value": 1.0,
-                  "note": "A real refund goes back to the original payment method with no new card details (scambait_synthetic_196, topic refund_already_processed, legitimate call)."
+                  "value": 1.0
                 },
                 {
                   "id": "to_fix_or_unblock",
@@ -310,23 +163,7 @@
         {
           "id": "basic_identity",
           "text": "Only a name, a date of birth, or an address",
-          "value": 0.0,
-          "evidence": [
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "signals",
-              "value": "requested_dob",
-              "scam": 15,
-              "nonscam": 17
-            },
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "signals",
-              "value": "requested_full_address",
-              "scam": 15,
-              "nonscam": 32
-            }
-          ]
+          "value": 0.0
         },
         {
           "id": "none_asked",
@@ -337,8 +174,7 @@
         {
           "id": "partial_only",
           "text": "Only part of a number, such as the last four digits, or a reference number from a letter",
-          "value": -0.8,
-          "note": "The legitimate calls of scambait_synthetic_196 check who they are talking to with a reference from a letter."
+          "value": -0.8
         },
         {
           "id": "not_mentioned",
@@ -391,8 +227,7 @@
         {
           "id": "official_channel",
           "text": "The organisation's own website, app, or online account, or a payment method printed on a bill or letter",
-          "value": -1.0,
-          "note": "The legitimate calls of scambait_synthetic_196 send the person to the online portal or their own account."
+          "value": -1.0
         },
         {
           "id": "not_mentioned",
@@ -408,8 +243,7 @@
         {
           "id": "guided_check_for_proof",
           "text": "The person is told to open a system screen or type a command, so the caller can 'show proof' of a problem",
-          "value": 1.0,
-          "note": "Scammers present normal system messages as problems (scam_patterns.json tech_support_0004)."
+          "value": 1.0
         },
         {
           "id": "remote_control",
@@ -478,20 +312,17 @@
         {
           "id": "caller_contacts_only",
           "text": "Only a phone number, link, website, or app given by the caller is offered for checking",
-          "value": 0.8,
-          "note": "A number the caller gives cannot prove who the caller is (scam_patterns.json bank_impersonation_0001)."
+          "value": 0.8
         },
         {
           "id": "caller_quotes_details",
           "text": "The caller tries to prove who they are by quoting the person's own details, or a badge or case number",
-          "value": 0.3,
-          "note": "Scammers quote badge numbers and the last digits of a Social Security number (scam_patterns.json government_impersonation_0001 to 0003)."
+          "value": 0.3
         },
         {
           "id": "encouraged",
           "text": "The person is invited to hang up and call a published number, check their own account, or wait for a letter",
-          "value": -1.0,
-          "note": "The legitimate calls of scambait_synthetic_196 tell the person to ring the number on their statement."
+          "value": -1.0
         },
         {
           "id": "not_mentioned",
@@ -507,16 +338,7 @@
         {
           "id": "threat_now",
           "text": "A threat of harm if the person does not act now: arrest, legal action, a frozen account, a service cut off, lost data, or a lost parcel",
-          "value": 1.0,
-          "evidence": [
-            {
-              "dataset": "datasets/scamai_full_1000.csv",
-              "column": "signals",
-              "value": "urgent_threat",
-              "scam": 10,
-              "nonscam": 5
-            }
-          ]
+          "value": 1.0
         },
         {
           "id": "secrecy",
@@ -551,60 +373,6 @@
     {
       "id": "bank_account",
       "text": "Bank account, card, or a payment on it",
-      "legit_contrast": "A real bank may call about suspicious activity, but it moves money only between the customer's own accounts, never asks for a full PIN, password, or one-time code, and is happy for the customer to hang up and call the number on their card.",
-      "evidence": [
-        {
-          "dataset": "datasets/scambait_bank_422.csv",
-          "where": {
-            "source": "harpervalley"
-          },
-          "scam": 0,
-          "nonscam": 211
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "bank fraud alert scam",
-          "scam": 3,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "impersonates_bank",
-          "scam": 3,
-          "nonscam": 4
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "bank_transaction_check",
-            "bank_verification_callback",
-            "card_replacement",
-            "debit_card_purchase_alert",
-            "payment_alert_query",
-            "standing_order_query",
-            "unexpected_debit_query",
-            "unrecognised_card_transaction",
-            "unrecognised_charge"
-          ],
-          "scam": 9,
-          "nonscam": 8
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "bank_impersonation"
-        ],
-        "scam_patterns.json": [
-          "bank_impersonation_0001",
-          "bank_impersonation_0002",
-          "bank_impersonation_0005",
-          "bank_impersonation_0006",
-          "invoice_supplier_0002"
-        ]
-      },
       "ask": [
         "common/pressure",
         "money_movement",
@@ -676,8 +444,7 @@
             {
               "id": "nothing_moves",
               "text": "Nothing moves: the person only confirms or reviews a payment",
-              "value": -1.0,
-              "note": "The legitimate bank calls of scambait_synthetic_196 only ask whether the person made a payment."
+              "value": -1.0
             },
             {
               "id": "not_mentioned",
@@ -691,80 +458,6 @@
     {
       "id": "tech_support",
       "text": "Computer, phone, internet, email, or online account problem",
-      "legit_contrast": "Real technical support does not cold-call about infections, and a real warning from the computer never shows a phone number or a web address to call. When the person contacts support themselves, a real technician fixes the problem they reported and charges through an invoice or an existing plan, never in gift cards.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "support",
-          "scam": 200,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/scambait_huggingface_real_tech_support_only_200.csv",
-          "scam": 100,
-          "nonscam": 100
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "account_date_correction",
-            "account_details_selfservice",
-            "account_details_update",
-            "agent_location_question",
-            "appointment_followup",
-            "blocked_message_calm",
-            "blocked_message_read_out",
-            "blocked_message_reassurance",
-            "blocked_message_short",
-            "blocked_message_variant",
-            "blocked_message_walkthrough",
-            "blocked_message_with_sound",
-            "blue_screen_error",
-            "broadband_line_fault",
-            "broadband_maintenance_notice",
-            "computer_alert_sound",
-            "computer_shutdown_message",
-            "email_account_help",
-            "email_login_alert",
-            "email_password_reset",
-            "it_helpdesk_callback",
-            "it_helpdesk_guided_fix",
-            "laptop_error_screen",
-            "laptop_popup_query",
-            "locked_computer",
-            "network_security_notice",
-            "phone_verification_policy",
-            "popup_from_social_media",
-            "remote_session_query",
-            "router_security_update",
-            "scheduled_technician_call",
-            "security_awareness_call",
-            "security_centre_message",
-            "security_software_query",
-            "software_licence_query",
-            "spyware_alert_query",
-            "transfer_to_department",
-            "virus_alert_message",
-            "warning_alert_page",
-            "work_computer_locked"
-          ],
-          "scam": 39,
-          "nonscam": 40
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "tech_support"
-        ],
-        "scam_patterns.json": [
-          "tech_support_0001",
-          "tech_support_0002",
-          "tech_support_0003",
-          "tech_support_0004"
-        ]
-      },
       "ask": [
         "common/pressure",
         "fix_cost",
@@ -868,74 +561,6 @@
     {
       "id": "government",
       "text": "Government, tax, Social Security, benefits, immigration, police, or a court",
-      "legit_contrast": "Real agencies write letters first. They do not demand payment by gift card, crypto, or wire, do not threaten immediate arrest by phone, and do not suspend Social Security numbers. A real follow-up call refers to a letter the person can check, and any payment goes through the agency's official channel.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "ssn",
-          "scam": 200,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "benefits/grants scam",
-          "scam": 52,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "legal threat scam",
-          "scam": 5,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "irs/tax scam",
-          "scam": 1,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "impersonates_government",
-          "scam": 23,
-          "nonscam": 4
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "fake_authority",
-          "scam": 53,
-          "nonscam": 19
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "identity_document_renewal",
-            "tax_correspondence_followup",
-            "tax_office_return_call",
-            "tax_return_query"
-          ],
-          "scam": 4,
-          "nonscam": 4
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "government_tax"
-        ],
-        "scam_patterns.json": [
-          "government_impersonation_0001",
-          "government_impersonation_0002",
-          "government_impersonation_0003",
-          "government_impersonation_0004"
-        ]
-      },
       "ask": [
         "common/pressure",
         "claim",
@@ -1013,8 +638,7 @@
             {
               "id": "letter_followup",
               "text": "A follow-up to a letter, a form, or an application the person can check",
-              "value": -0.8,
-              "note": "The legitimate tax calls of scambait_synthetic_196 ask for the reference on the letter."
+              "value": -0.8
             },
             {
               "id": "not_mentioned",
@@ -1059,34 +683,6 @@
     {
       "id": "delivery",
       "text": "Parcel, courier, or delivery, including a customs charge on a parcel",
-      "legit_contrast": "Real couriers confirm a time or an address for a parcel the person is expecting. Any customs or redelivery charge is paid through the courier's own website or the letter, not by reading card details to a caller.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "delivery",
-          "scam": 0,
-          "nonscam": 200
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "customs_callback",
-            "parcel_redelivery"
-          ],
-          "scam": 2,
-          "nonscam": 2
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "order_confirmation"
-        ],
-        "scam_patterns.json": [
-          "bank_impersonation_0003"
-        ]
-      },
       "ask": [
         "common/pressure",
         "requested_action",
@@ -1179,48 +775,6 @@
     {
       "id": "order_refund",
       "text": "An order, a purchase, or a refund",
-      "legit_contrast": "Real refunds go back to the original payment method by themselves. A real shop handles order problems inside the person's own account, and never needs remote access, gift cards, or money 'sent back' after a refund that was too large.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "refund",
-          "scam": 200,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "call_transferred_complaint",
-            "laptop_order_invoice",
-            "misdirected_order_email",
-            "online_order_confirmation",
-            "order_billing_query",
-            "order_charge_notice",
-            "order_confirmation_check",
-            "order_dispatch_notice",
-            "order_verification_bank",
-            "purchase_confirmation",
-            "purchase_query",
-            "purchase_verification",
-            "refund_already_processed",
-            "refund_claim_followup",
-            "refund_department_query",
-            "supervisor_callback",
-            "unrecognised_order_email",
-            "unrecognised_order_query"
-          ],
-          "scam": 18,
-          "nonscam": 18
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "refund_scam",
-          "order_confirmation"
-        ]
-      },
       "ask": [
         "common/pressure",
         "claim",
@@ -1297,8 +851,7 @@
                     {
                       "id": "automatic",
                       "text": "Automatically, back to the original payment method",
-                      "value": -1.0,
-                      "note": "The legitimate call of scambait_synthetic_196 topic refund_already_processed: the refund goes back the same way it came in."
+                      "value": -1.0
                     },
                     {
                       "id": "not_mentioned",
@@ -1352,44 +905,6 @@
     {
       "id": "billing_subscription",
       "text": "A bill, an invoice, a subscription, a renewal, or a service plan",
-      "legit_contrast": "A real company lets the person check a bill or cancel a renewal in their own account, and refunds through the original payment method. A real supplier does not change its bank details by phone or email without the change being checked.",
-      "evidence": [
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "antivirus_renewal",
-            "billing_dispute",
-            "billing_query_confused_caller",
-            "business_invoice_query",
-            "cancel_recurring_charge",
-            "cancellation_department",
-            "charge_message_query",
-            "confusing_invoice",
-            "invoice_amount_query",
-            "invoice_explanation",
-            "invoice_query",
-            "invoice_received_last_week",
-            "invoice_worry",
-            "large_invoice_email",
-            "plan_expiry_invoice",
-            "service_ending_notice",
-            "subscription_auto_renewal_notice",
-            "subscription_renewal_query",
-            "unexpected_invoice"
-          ],
-          "scam": 19,
-          "nonscam": 19
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "refund_scam"
-        ],
-        "scam_patterns.json": [
-          "invoice_supplier_0001"
-        ]
-      },
       "ask": [
         "common/pressure",
         "claim",
@@ -1460,8 +975,7 @@
                     {
                       "id": "via_own_account",
                       "text": "In the person's own account, or the caller cancels it with no details or access needed",
-                      "value": -1.0,
-                      "note": "The legitimate call of scambait_synthetic_196 topic large_invoice_email: the plan can be changed and the difference refunded."
+                      "value": -1.0
                     },
                     {
                       "id": "not_mentioned",
@@ -1494,16 +1008,6 @@
     {
       "id": "utility",
       "text": "Electricity, gas, or water supply",
-      "legit_contrast": "Real utilities send several written notices before cutting off supply, and take payment through normal channels, never prepaid cards or wire transfers on a phone call.",
-      "evidence": [],
-      "knowledge": {
-        "scam_ontology.json": [
-          "utility_disconnection"
-        ],
-        "scam_patterns.json": [
-          "bank_impersonation_0004"
-        ]
-      },
       "ask": [
         "common/pressure",
         "claim",
@@ -1574,26 +1078,6 @@
     {
       "id": "prize_reward",
       "text": "A prize, a lottery, a gift, a reward, or a free offer",
-      "legit_contrast": "Real prizes never need an upfront payment of tax or fees, and come from a draw the person knows they entered.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "reward",
-          "scam": 200,
-          "nonscam": 0
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "prize_lottery"
-        ],
-        "scam_patterns.json": [
-          "prize_lottery_0001",
-          "prize_lottery_0002",
-          "bank_impersonation_0003"
-        ]
-      },
       "ask": [
         "common/pressure",
         "entered",
@@ -1686,72 +1170,6 @@
     {
       "id": "insurance_health",
       "text": "Insurance, Medicare or health cover, or a warranty",
-      "legit_contrast": "A real insurer or agent gives a quote or services an existing policy, and lets the person take time and get the offer in writing. Real warranty renewals come from a company the person already deals with, in writing, and do not demand card payment on a cold call.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "insurance",
-          "scam": 0,
-          "nonscam": 200
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "medicare_pretext",
-          "scam": 58,
-          "nonscam": 172
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "impersonates_insurance",
-          "scam": 36,
-          "nonscam": 138
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "auto_warranty_pretext",
-          "scam": 3,
-          "nonscam": 61
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "vehicle warranty scam",
-          "scam": 20,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "health insurance scam",
-          "scam": 11,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "insurance quote spam",
-          "scam": 2,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "vehicle_service_reminder"
-          ],
-          "scam": 1,
-          "nonscam": 1
-        }
-      ],
-      "knowledge": {
-        "scam_ontology.json": [
-          "warranty_vehicle"
-        ]
-      },
       "ask": [
         "common/pressure",
         "claim",
@@ -1800,7 +1218,6 @@
         {
           "id": "claim",
           "prompt": "What is the call about?",
-          "note": "Weak signs only: in the honeypot calls, Medicare, insurance and warranty offers are mostly labelled spam, not scam (see this subject's evidence).",
           "options": [
             {
               "id": "cover_expiring",
@@ -1860,66 +1277,6 @@
     {
       "id": "sales_offer",
       "text": "Selling a product or a service, or asking for a donation",
-      "legit_contrast": "A real sales call says which company is calling, explains the offer, sends the terms in writing, and takes payment only after the person agrees to buy, with time to think.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "telemarketing",
-          "scam": 0,
-          "nonscam": 200
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "home_security_pretext",
-          "scam": 15,
-          "nonscam": 40
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "solar_pretext",
-          "scam": 1,
-          "nonscam": 5
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "telemarketing (generic)",
-          "scam": 58,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "google business listing scam",
-          "scam": 37,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "political campaign",
-          "scam": 2,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "broadband_upgrade_offer",
-            "pharmacy_order"
-          ],
-          "scam": 2,
-          "nonscam": 2
-        }
-      ],
-      "knowledge": {
-        "scam_patterns.json": [
-          "prize_lottery_0001"
-        ]
-      },
       "ask": [
         "common/pressure",
         "payment_terms",
@@ -2033,42 +1390,6 @@
     {
       "id": "loan_debt",
       "text": "A loan, credit, debt relief, or a student loan",
-      "legit_contrast": "Honest lenders and debt services do not guarantee approval, and do not ask for a fee, insurance, or a first payment before any loan or relief is given.",
-      "evidence": [
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "debt_relief_pretext",
-          "scam": 165,
-          "nonscam": 9
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "education/student loan scam",
-          "scam": 10,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "loan/credit scam",
-          "scam": 1,
-          "nonscam": 0
-        },
-        {
-          "dataset": "datasets/everything_7013.csv",
-          "column": "scam_type",
-          "value": "loan/debt scam (hindi)",
-          "scam": 1,
-          "nonscam": 0
-        }
-      ],
-      "knowledge": {
-        "scam_patterns.json": [
-          "prize_lottery_0001"
-        ]
-      },
       "ask": [
         "common/pressure",
         "promise",
@@ -2112,7 +1433,6 @@
         {
           "id": "promise",
           "prompt": "What does the caller promise?",
-          "note": "Debt relief offers are almost all labelled scam in the honeypot calls (see this subject's evidence).",
           "options": [
             {
               "id": "debt_cancelled",
@@ -2167,16 +1487,6 @@
     {
       "id": "investment",
       "text": "An investment, trading, or a cryptocurrency opportunity",
-      "legit_contrast": "Licensed advisers explain the risks, do not guarantee high returns, and invest through accounts in the person's own name with known, licensed providers.",
-      "evidence": [],
-      "knowledge": {
-        "scam_ontology.json": [
-          "romance_investment"
-        ],
-        "scam_patterns.json": [
-          "romance_relationship_0001"
-        ]
-      },
       "ask": [
         "common/pressure",
         "returns",
@@ -2286,18 +1596,6 @@
     {
       "id": "family_personal",
       "text": "A family member, a friend, or a romantic contact",
-      "legit_contrast": "A genuine family emergency survives a check: calling the relative back on their own number, or asking other family, is never refused. A real partner does not ask for money before the two have met in person.",
-      "evidence": [],
-      "knowledge": {
-        "scam_ontology.json": [
-          "grandparent_family",
-          "romance_investment"
-        ],
-        "scam_patterns.json": [
-          "romance_relationship_0001",
-          "romance_relationship_0002"
-        ]
-      },
       "ask": [
         "common/pressure",
         "story",
@@ -2395,31 +1693,6 @@
     {
       "id": "wrong_number",
       "text": "A wrong number, or a caller looking for someone else",
-      "legit_contrast": "A real wrong number ends quickly once the mistake is clear. A caller who keeps talking, makes friends, or turns to an offer is using the wrong number as an opening.",
-      "evidence": [
-        {
-          "dataset": "datasets/huggingface_1600.csv",
-          "column": "type",
-          "value": "wrong",
-          "scam": 0,
-          "nonscam": 200
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "opening_type",
-          "value": "wrong_number_probe",
-          "scam": 102,
-          "nonscam": 62
-        },
-        {
-          "dataset": "datasets/scamai_full_1000.csv",
-          "column": "signals",
-          "value": "wrong_number",
-          "scam": 20,
-          "nonscam": 9
-        }
-      ],
-      "knowledge": {},
       "ask": [
         "common/pressure",
         "after_mistake",
@@ -2434,7 +1707,6 @@
         {
           "id": "after_mistake",
           "prompt": "What happens once it is clear the number is wrong?",
-          "note": "In the honeypot calls a wrong-number opening is more often scam than spam, while every wrong-number call in huggingface_1600 is legitimate. What happens next decides.",
           "options": [
             {
               "id": "turns_to_offer",
@@ -2464,21 +1736,6 @@
       "id": "other",
       "text": "Something else, or not clear from the call",
       "note": "No questions of its own: only the common questions are asked.",
-      "evidence": [
-        {
-          "dataset": "datasets/scambait_synthetic_196.csv",
-          "column": "topic",
-          "values": [
-            "appointment_reminder",
-            "missed_call_followup",
-            "missed_callback",
-            "spouse_handling_account"
-          ],
-          "scam": 4,
-          "nonscam": 4
-        }
-      ],
-      "knowledge": {},
       "ask": [
         "common/pressure"
       ],
@@ -2490,7 +1747,7 @@
     "formula": "score = the sum of the values of every chosen option: the common questions, the subject's questions, and every follow-up that was asked",
     "values": "Each value is between -1 and 1. Positive points toward scam and negative toward legitimate; 1.0 is a strong sign and smaller numbers are weaker ones. not_mentioned is always 0.",
     "recorded": "Questions with role recorded score 0 on every option. They record who the caller claims to be or what the call is about, so the verdict can be explained. On their own they separate nothing, because a real bank also says it is a bank.",
-    "tuning": "The values are starting points, set from the knowledge files and the evidence in this file. Training on a dataset adds options and updates the values; train on training folds only, never on test calls."
+    "tuning": "The values are hand-set starting points. Training on a dataset adds options and updates the values; train on training folds only, never on test calls."
   },
   "bands_note": "The sign of the score decides: above 0 is scam, below 0 is legitimate, and exactly 0 is neutral.",
   "bands": [

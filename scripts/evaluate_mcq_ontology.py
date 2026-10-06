@@ -97,8 +97,6 @@ def main():
                          "mcq_ontology__stripped for the content-deletion pass)")
     ap.add_argument("--no-quotes", action="store_true",
                     help="do not require a supporting quote for each answer")
-    ap.add_argument("--knowledge", action="store_true",
-                    help="show the model the subject's knowledge entries")
     ap.add_argument("--debug", action="store_true",
                     help="print every answer for the first calls")
     args = ap.parse_args()
@@ -119,9 +117,8 @@ def main():
     print("  tree    : %s - %d subjects, %d common questions, %d in all"
           % (onto["prompt"], len(onto["options"]),
              len(onto["common_questions"]), MCQ.count_questions(onto)))
-    print("  answers : quotes %s, knowledge %s"
-          % ("required" if quotes else "off",
-             "shown" if args.knowledge else "off"))
+    print("  answers : quotes %s; no retrieval, no learned knowledge"
+          % ("required" if quotes else "off"))
     print("  verdict : the sign of the summed answer values (0 = neutral, "
           "counted as not scam)")
     import ollama_ctx
@@ -132,13 +129,12 @@ def main():
               "calls scored here\n       set its options and values - a "
               "held-out set is the fairer read.")
     print("  context window %s for the run"
-          % MCQ.presize([t for t, _ in data], onto, quotes, args.knowledge))
+          % MCQ.presize([t for t, _ in data], onto, quotes))
     print("=" * 74)
 
     rows, results = [], []
     t0 = time.time()
-    answers = MCQ.classify_all([t for t, _ in data], onto, quotes,
-                               args.knowledge)
+    answers = MCQ.classify_all([t for t, _ in data], onto, quotes)
     for i, (text, true) in enumerate(data, 1):
         try:
             res = next(answers)

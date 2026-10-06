@@ -80,8 +80,6 @@ def main():
                     help="repeat the same transcript N times to check stability")
     ap.add_argument("--no-quotes", action="store_true",
                     help="do not require a supporting quote for each answer")
-    ap.add_argument("--knowledge", action="store_true",
-                    help="show the model the subject's knowledge entries")
     args = ap.parse_args()
 
     if args.idx is None and args.raw_row is None:
@@ -111,7 +109,7 @@ def main():
     for i in range(args.runs):
         if args.runs > 1:
             print("\n--- run %d/%d ---" % (i + 1, args.runs))
-        result = MCQ.classify(text, onto, not args.no_quotes, args.knowledge)
+        result = MCQ.classify(text, onto, not args.no_quotes)
         MCQ._show_call(result, onto)
         predicted = "Fraud" if result["verdict"] == "scam" else "Normal"
         correct = predicted == true_label
