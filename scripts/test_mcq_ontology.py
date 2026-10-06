@@ -669,6 +669,11 @@ text = open(out_tree).read()
 check("train writes a file that loads, without empty lists",
       (rc, len(M.load_ontology(out_tree)["training"]),
        '"follow_up": []' in text), (0, 1, False))
+saved = json.loads(text)
+check("the trained file is just the questionnaire and a run summary",
+      (sorted(saved), "training" in text.split('"training": [')[0],
+       '"added": {' in text, saved["training"][0]["added"]),
+      (["common_questions", "options", "prompt", "training"], False, False, 1))
 try:
     M.main(["train", "--csv", tr_csv, "--ontology", path, "--out", out_tree])
     check("an existing file is not replaced without --force", False)

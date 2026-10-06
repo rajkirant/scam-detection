@@ -2581,8 +2581,7 @@ def mcq_save(form):
     if path.exists() and not mcq_ontology.is_mcq_ontology(path):
         raise ValueError("knowledge/%s is a different kind of knowledge file "
                          "- save under another name" % path.name)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
+    path.write_text(mcq_ontology.dumps(obj) + "\n", encoding="utf-8")
     return mcq_read("knowledge/" + path.name)
 
 
@@ -7330,7 +7329,8 @@ function mcqPaint(r) {
   const t = (o.training || [])[o.training ? o.training.length - 1 : 0];
   $('mcqbuilt').innerHTML = t
     ? `trained on <code>${esc(t.dataset)}</code>, ${t.calls} calls, ${esc(t.date || '')}`
-      + ` · ${t.added.length} options added, ${t.changed} values changed · `
+      + ` · ${Array.isArray(t.added) ? t.added.length : t.added} options added, `
+      + `${t.changed} values changed · `
       + `training calls ${Math.round(100 * t.training_calls_right_before)}% → `
       + `${Math.round(100 * t.training_calls_right_after)}% right`
       + (o.training.length > 1 ? ` · trained ${o.training.length} times` : '')
