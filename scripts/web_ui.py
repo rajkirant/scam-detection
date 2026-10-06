@@ -4427,7 +4427,10 @@ per held-out call, so it takes minutes, not seconds.</pre>
           -1 (legitimate) to 1 (scam). <code>not_mentioned</code> and every
           option of a <code>"role": "recorded"</code> question score 0. An
           option's <code>follow_up</code> questions are asked only when it is
-          chosen. Anything else in the file is kept but not read.</div>
+          chosen. A subject's <code>ask</code> list is the order its calls are
+          asked: its own question ids, and common ones as
+          <code>common/&lt;id&gt;</code>. Anything else in the file is kept but
+          not read.</div>
         <textarea id="mcqjson" class="json" spellcheck="false"></textarea>
         <div class="askrow" style="margin-top:10px">
           <label for="mcqsavename" style="margin:0">Save as knowledge/</label>
@@ -4454,8 +4457,11 @@ is a new file; the ontology it started from is kept as it is.</pre>
         the call is mainly about &mdash; the subject. It does not decide the
         verdict, because scam and legitimate calls occur under every subject.
         Every call then answers the common questions, and the questions of its
-        subject. Some answers open follow-up questions, asked only when that
-        answer is chosen. One request per question: the transcript, the
+        subject, in the order the subject's <code>ask</code> list gives: for a
+        bank call, urgency first, then whether the money is to go to a
+        different account, then the rest. Some answers open follow-up
+        questions, asked straight after, and only when that answer is chosen.
+        The Classify tab shows the walk with the score building up as it goes. One request per question: the transcript, the
         question and its options lettered A, B, C&hellip;, and the model
         answers one letter.</p>
 
@@ -7415,20 +7421,23 @@ function mcqPaintAnswer(r) {
       <td class="optbar"><div class="bar"><i style="width:${(100 * p).toFixed(1)}%"></i></div></td>
       <td>${(100 * p).toFixed(1)}%</td></tr>`).join('');
 
+  let running = r.answers[0].value || 0;
   const rows = r.answers.slice(1).map(a => {
-    const depth = Math.max(0, (a.path.split('/').length - 2) / 2);
+    running += a.value;
+    const depth = 1 + Math.max(0, (a.path.split('/').length - 2) / 2);
     const quote = a.quoted === false
       ? `<span class="muted"><s>${esc(a.quote || 'no quote')}</s> · not in the `
         + 'transcript</span>'
       : a.quote ? `<em>“${esc(a.quote)}”</em>` : '';
     return `<tr>
-      <td class="optname" style="padding-left:${8 + 18 * depth}px">${depth ? '↳ ' : ''}`
+      <td class="optname" style="padding-left:${8 + 18 * depth}px">↳ `
       + `${esc(a.question)}<div class="muted" style="font-size:11px">${esc(a.path)}`
       + `${a.role === 'recorded' ? ' · recorded, scores 0' : ''}</div></td>
       <td class="optname">${a.text === null ? '<span class="muted">unreadable</span>'
         : esc(a.text)}${a.picked ? `<div class="muted" style="font-size:11px">picked `
         + `<s>${esc(a.picked)}</s></div>` : ''}</td>
       <td>${mcqSigned(a.value)}</td>
+      <td>${mcqSigned(running)}</td>
       <td>${a.p === null ? '—' : (100 * a.p).toFixed(0) + '%'}</td>
       <td class="optname">${quote}</td></tr>`;
   }).join('');
@@ -7461,12 +7470,17 @@ function mcqPaintAnswer(r) {
     <div class="scroll"><table class="opts">${subjRows}</table></div>
   </div>
   <div class="card">
-    <div class="qp">The answers, in the order they were asked</div>
+    <div class="qp">The walk through the tree, in the order it was asked</div>
     <div class="scroll"><table class="opts">
-      <tr><th>question</th><th>answer</th><th>value</th><th>p</th><th>quote</th></tr>
+      <tr><th>question</th><th>answer</th><th>value</th><th>score so far</th>
+          <th>p</th><th>quote</th></tr>
+      <tr><td class="optname">${esc(r.prompt)}</td>
+        <td class="optname">${subj ? esc(subj.text) : '<span class="muted">unreadable</span>'}</td>
+        <td>${mcqSigned(root.value || 0)}</td><td>${mcqSigned(root.value || 0)}</td>
+        <td>${root.p === null ? '—' : (100 * root.p).toFixed(0) + '%'}</td><td></td></tr>
       ${rows}
-      <tr class="chosen"><td class="optname">score</td><td></td>
-        <td>${mcqSigned(r.score)}</td><td></td><td></td></tr>
+      <tr class="chosen"><td class="optname">final score</td><td>${word.toLowerCase()}</td>
+        <td></td><td>${mcqSigned(r.score)}</td><td></td><td></td></tr>
     </table></div>
   </div>
   <div class="card hint">${r.words} words · ${r.requests} questions asked, one

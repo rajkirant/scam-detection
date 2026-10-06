@@ -98,6 +98,9 @@ _LOGPROBS_OK = None          # None = not tried yet; False = this Ollama has non
 #                          carry a `value` (a file of the older one-question
 #                          kind does: its options' verdicts become +1 / -1).
 #   common_questions       asked of every call
+#   ask                    a subject's order for its call: its own question
+#                          ids and common/<id>, e.g. urgency first for a bank
+#                          call, then where the money is to go
 #   question               {id, prompt, role?, options}; role "recorded"
 #                          scores 0 on every option
 #   option                 {id, text, value -1..1, absence?, follow_up?}
@@ -223,11 +226,39 @@ def check_ontology(obj):
         obj = _from_flat(obj)
     probs = []
     _check_question(obj, "the root question", probs, root=True)
+    common = {q.get("id") for q in obj.get("common_questions") or []
+              if isinstance(q, dict)}
     for o in obj.get("options") or []:
         if isinstance(o, dict):
             _check_list(o.get("questions", []), str(o.get("id")), probs)
+            _check_ask(o, common, probs)
     _check_list(obj.get("common_questions", []), "common", probs)
     return probs
+
+
+def _check_ask(subject, common, probs):
+    """A subject's `ask` order may name only its own questions and the
+    common ones (as common/<id>), each once."""
+    ask = subject.get("ask")
+    if ask is None:
+        return
+    sid = subject.get("id")
+    if not isinstance(ask, list):
+        probs.append('%s: "ask" must be a list of question ids' % sid)
+        return
+    own = {q.get("id") for q in subject.get("questions") or []
+           if isinstance(q, dict)}
+    seen = set()
+    for ref in ask:
+        if ref in seen:
+            probs.append('%s: "ask" names %r twice' % (sid, ref))
+        seen.add(ref)
+        ok = (isinstance(ref, str) and (ref in own or (
+            ref.startswith("common/") and ref[7:] in common)))
+        if not ok:
+            probs.append('%s: "ask" names %r, which is neither one of its '
+                         'questions nor common/<a common question>'
+                         % (sid, ref))
 
 
 def _norm_question(q):
@@ -601,6 +632,30 @@ def _answer_record(path, q, a, root=False):
             "how": a["how"], "quote": a["quote"], "quoted": a["quoted"]}
 
 
+def question_order(onto, subject):
+    """[(path, question)] in the order a call on this subject is asked them.
+
+    A subject's `ask` list sets the order: its own question ids, and the
+    common questions as common/<id> - for a bank call, urgency first, then
+    whether money is to go to a different account, and so on. Questions it
+    does not list follow, the common ones first, in file order. Without
+    `ask`: the common questions, then the subject's."""
+    common = {q["id"]: q for q in onto["common_questions"]}
+    own = {q["id"]: q for q in (subject or {}).get("questions", [])}
+    sid = (subject or {}).get("id")
+    out, seen = [], set()
+    for ref in (subject or {}).get("ask") or []:
+        if ref.startswith("common/") and ref[7:] in common:
+            out.append((ref, common[ref[7:]]))
+        elif ref in own:
+            out.append(("%s/%s" % (sid, ref), own[ref]))
+        seen.add(ref)
+    out += [("common/" + k, q) for k, q in common.items()
+            if "common/" + k not in seen]
+    out += [("%s/%s" % (sid, k), q) for k, q in own.items() if k not in seen]
+    return out
+
+
 def classify(transcript, onto, quotes=True, knowledge=False, timeout=300):
     """Walk the tree for one call: the root question, then the common
     questions and the subject's, each follow-up straight after the answer
@@ -620,10 +675,7 @@ def classify(transcript, onto, quotes=True, knowledge=False, timeout=300):
     else:
         subject = next((s for s in onto["options"] if s["id"] == "other"), None)
     context = knowledge_context(subject) if knowledge and subject else ""
-    queue = [("common/" + q["id"], q) for q in onto["common_questions"]]
-    if subject:
-        queue += [("%s/%s" % (subject["id"], q["id"]), q)
-                  for q in subject["questions"]]
+    queue = question_order(onto, subject)
     i = 0
     while i < len(queue):
         path, q = queue[i]
@@ -1452,13 +1504,17 @@ def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
 def _show_call(res, onto):
     """One classified call, as the CLI prints it."""
     print("%s\n  -> %s" % (onto["prompt"], res["subject_text"] or "unreadable"))
+    total = res["answers"][0]["value"]
     for r in res["answers"][1:]:
+        total += r["value"]
         mark = ("" if r["quoted"] is None else "  quote ok" if r["quoted"]
                 else "  NO QUOTE FOUND - counted as not stated")
-        print("  %+.1f  %-44s %s%s" % (r["value"], r["path"][:44],
-                                       (r["text"] or "unreadable")[:60], mark))
+        depth = (len(r["path"].split("/")) - 2) // 2
+        print("  %+.1f  =%+5.1f  %s%-40s %s%s"
+              % (r["value"], total, "  " * depth, r["question"][:40 - 2 * depth],
+                 (r["text"] or "unreadable")[:56], mark))
         if r["quote"]:
-            print("        \"%s\"" % r["quote"][:90])
+            print("                \"%s\"" % r["quote"][:90])
     print("score %+.2f  ->  %s   (%d questions)"
           % (res["score"], res["verdict"], res["requests"]))
 

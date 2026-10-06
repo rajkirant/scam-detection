@@ -646,6 +646,16 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
 - **Follow-ups** are asked only when the option that opens them is chosen,
   such as what an ID number is for, once the caller has asked for one.
 
+The questions are asked in a nested order. The subject is asked first, then
+the questions in the order of that subject's `ask` list. A bank call is asked
+about urgency first, then whether the money is to go to a new or different
+account, then the other common questions, and who the caller says they are
+last. A follow-up comes straight after the answer that opens it. Every subject
+starts with urgency, then its own scored questions, then the remaining common
+questions, then its recorded questions. Edit an `ask` list to change the
+order: it names the subject's own question ids, and common questions as
+`common/<id>`.
+
 Every option has a **value** from -1 to 1: positive points toward scam,
 negative toward legitimate. *Not stated* and every option of a `recorded`
 question score 0. A recorded question, such as who the caller says they are,
@@ -663,8 +673,9 @@ as Not stated. Options marked `absence` ("no payment at all") need no quote.
 The result shows:
 - the verdict and the score,
 - the subject, with the probability on each,
-- every question asked, in order, with the answer, its value, the probability
-  the model put on it, and the quote.
+- the walk through the tree: every question asked, in order, nested under the
+  subject, with the answer, its value, the score so far, the probability the
+  model put on it, and the quote.
 
 *Show the subject's knowledge* adds the subject's legit contrast and its
 entries from `scam_ontology.json` and `scam_patterns.json` to each of its

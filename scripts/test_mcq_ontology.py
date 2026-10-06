@@ -308,6 +308,33 @@ check("absence options are marked for the model",
 check("the file's rules are in the prompt, worded for the model",
       ("choose the first one that fits" in STATE["payloads"][1]["prompt"],
        "not_mentioned" in STATE["payloads"][1]["prompt"]), (True, False))
+ordered = json.loads(json.dumps(TREE_ONTO))
+ordered["options"][0]["ask"] = ["common/pressure", "claimed"]
+check("a subject's ask list sets the order; unlisted questions follow, "
+      "follow-ups straight after their answer",
+      [a["path"] for a in M.classify(GIFT, M.normalise(ordered))["answers"]],
+      ["root", "common/pressure", "bank/claimed", "common/money",
+       "common/money/gift/buyer"])
+ordered["options"][0]["ask"] = ["common/pressure", "nope", "common/pressure"]
+check("an ask list naming an unknown question, or one twice, is refused",
+      sorted(p.split(":")[0] for p in M.check_ontology(ordered)),
+      ["bank", "bank"])
+check("the shipped file: a bank call is asked urgency, then where the money "
+      "goes", [p for p, _ in M.question_order(
+          shipped, shipped["options"][0])][:2],
+      ["common/pressure", "bank_account/money_movement"])
+
+
+def urgency_first_recorded_last(s):
+    order = [q.get("role") == "recorded" for _, q in M.question_order(shipped, s)]
+    n = sum(order)
+    return (M.question_order(shipped, s)[0][0] == "common/pressure"
+            and order == [False] * (len(order) - n) + [True] * n)
+
+
+check("... and every subject starts with urgency, recorded questions last",
+      [s["id"] for s in shipped["options"]
+       if not urgency_first_recorded_last(s)], [])
 r = M.classify(GIFT, tree, quotes=False)
 check("quotes off: the follow-up counts (+0.5) and no quote is asked for",
       (r["score"], 'Quote:' in STATE["payloads"][-1]["prompt"],
