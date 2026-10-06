@@ -1589,29 +1589,65 @@ def run_evaluate(args):
     return m
 
 
+def dumps(obj, width=180, indent=0):
+    """JSON for an ontology file, easy to read: anything that fits on one
+    line (an option, an ask list) is written on one line, the rest is
+    indented by two."""
+    flat = json.dumps(obj, ensure_ascii=False)
+    if len(flat) + indent <= width or not isinstance(obj, (dict, list)) \
+            or not obj:
+        return flat
+    pad = " " * (indent + 2)
+    if isinstance(obj, list):
+        items = [pad + dumps(v, width, indent + 2) for v in obj]
+        return "[\n" + ",\n".join(items) + "\n" + " " * indent + "]"
+    items = ["%s%s: %s" % (pad, json.dumps(k, ensure_ascii=False),
+                           dumps(v, width, indent + 2)) for k, v in obj.items()]
+    return "{\n" + ",\n".join(items) + "\n" + " " * indent + "}"
+
+
+# what an ontology file keeps: the questionnaire, and one line per training run
+_Q_KEYS = ("id", "role", "prompt", "options")
+_O_KEYS = ("id", "text", "value", "absence", "follow_up")
+_RUN_KEYS = ("dataset", "calls", "date", "added", "changed",
+             "training_calls_right_before", "training_calls_right_after")
+
+
 def to_file(onto):
-    """The tree as it is written to disk: empty follow_up and questions
-    lists left out, as in the hand-written file."""
+    """The tree as it is written to disk: only the questionnaire - questions,
+    options, values, ask orders - and a one-line summary of each training
+    run. Per-option training history stays in the run's log."""
     def q_out(q):
-        q = dict(q)
-        q["options"] = [o_out(o) for o in q["options"]]
-        return q
+        out = {k: q[k] for k in _Q_KEYS if k in q}
+        out["options"] = [o_out(o) for o in q["options"]]
+        return out
 
     def o_out(o):
-        o = dict(o)
-        if not o.get("follow_up"):
-            o.pop("follow_up", None)
+        out = {k: o[k] for k in _O_KEYS if k in o}
+        if o.get("follow_up"):
+            out["follow_up"] = [q_out(f) for f in o["follow_up"]]
         else:
-            o["follow_up"] = [q_out(f) for f in o["follow_up"]]
-        return o
-    out = dict(onto)
-    out["common_questions"] = [q_out(q) for q in onto["common_questions"]]
+            out.pop("follow_up", None)
+        return out
     subs = []
     for s in onto["options"]:
-        s = o_out(s)
-        s["questions"] = [q_out(q) for q in s.get("questions", [])]
-        subs.append(s)
-    out["options"] = subs
+        n = {"id": s["id"], "text": s["text"]}
+        if s.get("value"):
+            n["value"] = s["value"]
+        if s.get("ask"):
+            n["ask"] = s["ask"]
+        n["questions"] = [q_out(q) for q in s.get("questions", [])]
+        subs.append(n)
+    out = {"prompt": onto["prompt"], "options": subs,
+           "common_questions": [q_out(q) for q in onto["common_questions"]]}
+    runs = []
+    for t in onto.get("training") or []:
+        r = {k: t[k] for k in _RUN_KEYS if k in t}
+        if isinstance(r.get("added"), list):
+            r["added"] = len(r["added"])
+        runs.append(r)
+    if runs:
+        out["training"] = runs
     return out
 
 
@@ -1625,8 +1661,7 @@ def run_train(args):
                              args.prior, args.seed, not args.no_quotes)
     trained.setdefault("trained_from", str(args.ontology))
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(to_file(trained), indent=2, ensure_ascii=False)
-                   + "\n", encoding="utf-8")
+    out.write_text(dumps(to_file(trained)) + "\n", encoding="utf-8")
     t = trained["training"][-1]
     print("  %d options added, %d values changed" % (len(t["added"]),
                                                      t["changed"]))

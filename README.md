@@ -677,9 +677,17 @@ The result shows:
   model put on it, and the quote.
 
 There is no retrieval and no learned knowledge. The model sees the
-transcript, one question and its options, and the file's `how_to_ask` rules,
-worded for the model, and nothing else. The ontology file itself holds no scam
-patterns, no knowledge-base entries and no dataset evidence. Its values are
+transcript, one question and its options, and a few fixed rules, and nothing
+else. The rules are: choose the first option that fits, quote the transcript,
+and pick an absence option only when that part of the call is covered.
+
+**The file is only the questionnaire.** The root `prompt` and its `options`
+(the subjects) come first. Each subject has an `ask` order and its
+`questions`, and the `common_questions` follow. Every question has an `id`, a
+`prompt` and its options, and is marked `"role": "recorded"` where it scores
+0. Every option has an `id`, a `text` and a `value`, is marked
+`"absence": true` where that applies, and may carry `follow_up` questions.
+There are no descriptions, guidelines or evidence in it. Its values are
 hand-set starting points, and only training changes them.
 
 **Your own question about this call** sits under it, in the Ask tab. Type
@@ -753,12 +761,13 @@ The other tabs:
   4. Each question's options are put back in order, strongest scam sign
      first, because the model is told to choose the first option that fits.
 
-  Every changed option keeps a `training` history (dataset, counts, value
-  before and after). New options are marked `added`, with the answers they
-  came from. The file's `training` list records each run, including how many
-  of the training calls it got right before and after. Those are the calls it
-  learned from, so score a held-out set for a fair number. Training a trained
-  file adds to its history. A run takes about 12 × calls requests, plus a few
+  The trained file is the questionnaire, with its new options and values,
+  plus one line per training run. That line gives the dataset, calls, date,
+  options added, values changed, and how many of the training calls it got
+  right before and after. Those are the calls it learned from, so score a
+  held-out set for a fair number. The run's log has the detail: each new
+  option and the answers it came from, and each value before and after.
+  Training a trained file adds a line. A run takes about 12 × calls requests, plus a few
   for new options. It runs in the background and waits while another run is
   using the model.
 
