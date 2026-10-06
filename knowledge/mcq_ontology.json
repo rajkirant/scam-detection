@@ -55,7 +55,8 @@
     "follow_up": "When the chosen option has follow_up questions, ask them as well. A follow-up is asked only when its option was chosen.",
     "quotes": "Every answer needs a short verbatim quote from the transcript that supports it, except not_mentioned and options marked absence. An answer without a supporting quote counts as not_mentioned.",
     "absence": "Options marked absence say that something did not happen, such as no payment. There is nothing to quote, so they need no quote. Choose one only when the transcript covers the part of the call where it would have happened; for a call cut off early, answer not_mentioned.",
-    "retrieval": "After routing, the subject's knowledge entries can be retrieved and shown to the model as context with its questions: the scam_patterns.json patterns and the scam_ontology.json nodes listed under knowledge."
+    "retrieval": "After routing, the subject's knowledge entries can be retrieved and shown to the model as context with its questions: the scam_patterns.json patterns and the scam_ontology.json nodes listed under knowledge.",
+    "sequence": "Each subject's ask list is the order its calls are asked: urgency first, then the subject's own questions (for a bank call, whether money is to go to a different account), then the other common questions, and the recorded questions last. A follow-up comes straight after the answer that opens it. The call's score is the sum of the values of every answer chosen on the way."
   },
   "common_questions": [
     {
@@ -604,6 +605,17 @@
           "invoice_supplier_0002"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "money_movement",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -753,6 +765,18 @@
           "tech_support_0004"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "fix_cost",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity",
+        "problem"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -912,6 +936,18 @@
           "government_impersonation_0004"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "claim",
+        "requested_action",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1051,6 +1087,18 @@
           "bank_impersonation_0003"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "requested_action",
+        "parcel_expected",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1173,6 +1221,18 @@
           "order_confirmation"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "claim",
+        "resolution",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1330,6 +1390,17 @@
           "invoice_supplier_0001"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "claim",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1433,6 +1504,17 @@
           "bank_impersonation_0004"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "claim",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1512,6 +1594,18 @@
           "bank_impersonation_0003"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "entered",
+        "prize_cost",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1658,6 +1752,18 @@
           "warranty_vehicle"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "claim",
+        "requested_action",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1814,6 +1920,18 @@
           "prize_lottery_0001"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "payment_terms",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity",
+        "product"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -1951,6 +2069,18 @@
           "prize_lottery_0001"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "promise",
+        "upfront_payment",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -2047,6 +2177,19 @@
           "romance_relationship_0001"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "returns",
+        "where_invested",
+        "withdrawal",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -2155,6 +2298,18 @@
           "romance_relationship_0002"
         ]
       },
+      "ask": [
+        "common/pressure",
+        "story",
+        "identity_check",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification",
+        "claimed_identity"
+      ],
       "questions": [
         {
           "id": "claimed_identity",
@@ -2265,6 +2420,16 @@
         }
       ],
       "knowledge": {},
+      "ask": [
+        "common/pressure",
+        "after_mistake",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/payment_channel",
+        "common/remote_access",
+        "common/verification"
+      ],
       "questions": [
         {
           "id": "after_mistake",
@@ -2314,6 +2479,9 @@
         }
       ],
       "knowledge": {},
+      "ask": [
+        "common/pressure"
+      ],
       "questions": []
     }
   ],
