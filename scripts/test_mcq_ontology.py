@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
-Offline tests for mcq_ontology: the MCQ ontology LLM, one question - the
-call's category - out of a JSON file.
+Offline tests for mcq_ontology: the MCQ ontology LLM - a tree of questions
+out of a JSON file, each answer a value, the call's score their sum - and the
+own-question features of its page.
 
 No Ollama: llm_judge._post is replaced by a fake that answers the way Ollama's
 /api/generate does with logprobs on (and, for the fallback, the way an older
@@ -15,6 +16,7 @@ import csv
 import io
 import json
 import math
+import re
 import os
 import shutil
 import sys
@@ -50,13 +52,105 @@ BELIEF = {"SSNCALL": [0.85, 0.05, 0.08, 0.02],
           "GIBBERISH": None}
 STATE = {"logprobs": True, "calls": 0, "payloads": [], "lead": ""}
 
+# a small tree, and what the fake model answers about each kind of call
+TREE_ONTO = {
+    "id": "t", "prompt": "What is this call about?",
+    "options": [
+        {"id": "bank", "text": "A bank account",
+         "legit_contrast": "A real bank never asks for gift cards.",
+         "questions": [
+             {"id": "claimed", "role": "recorded",
+              "prompt": "Who do they say they are?",
+              "options": [{"id": "bank", "text": "A bank", "value": 0},
+                          {"id": "not_mentioned", "text": "Not stated",
+                           "value": 0}]}]},
+        {"id": "other", "text": "Something else", "questions": []}],
+    "common_questions": [
+        {"id": "money", "prompt": "How would money move?",
+         "options": [
+             {"id": "gift", "text": "Gift cards", "value": 1.0,
+              "follow_up": [
+                  {"id": "buyer", "prompt": "Who buys them?",
+                   "options": [{"id": "waits", "value": 0.5,
+                                "text": "The caller waits on the line while "
+                                        "they are bought"},
+                               {"id": "not_mentioned", "text": "Not stated",
+                                "value": 0}]}]},
+             {"id": "no_payment", "text": "No payment at all", "value": -0.3,
+              "absence": True},
+             {"id": "not_mentioned", "text": "Not stated", "value": 0}]},
+        {"id": "pressure", "prompt": "Is there pressure?",
+         "options": [{"id": "threat", "text": "A threat of arrest or loss",
+                      "value": 1.0},
+                     {"id": "calm", "text": "No time pressure", "value": -0.5,
+                      "absence": True},
+                     {"id": "not_mentioned", "text": "Not stated",
+                      "value": 0}]}]}
+GIFT = "GIFTCALL caller: buy gift cards now or be arrested. Your bank account is at risk."
+NEW = "NEWCALL caller: send the money via Western Union and act today."
+CALM = "CALMCALL caller: your parcel arrives Tuesday, no rush and nothing to pay."
+ZERO = "ZEROCALL caller: hello."
+BADROOT = "BADROOT caller: hm."
+# marker -> {question: (start of the option text it picks, quote)};
+# a question it has no rule for is answered Not stated
+TREE = {
+    "GIFTCALL": {"What is this call about?": ("A bank", None),
+                 "How would money move?": ("Gift cards", "buy gift cards now"),
+                 "Who buys them?": ("The caller waits", "stay on the line"),
+                 "Is there pressure?": ("A threat", "or be arrested"),
+                 "Who do they say they are?": ("A bank", None)},
+    "NEWCALL": {"What is this call about?": ("Something else", None),
+                "How would money move?": ("A money transfer", "via Western Union"),
+                "Is there pressure?": ("A threat", "act today")},
+    "CALMCALL": {"What is this call about?": ("Something else", None),
+                 "How would money move?": ("No payment", None),
+                 "Is there pressure?": ("No time pressure", None)},
+    "ZEROCALL": {"What is this call about?": ("Something else", None)},
+    "BADROOT": {"What is this call about?": (None, None)},
+}
+
+
+def fake_tree(prompt):
+    """One tree question, answered by the rules above; None when the
+    transcript is not one of these calls."""
+    tr = prompt.split("Transcript:\n", 1)[1].split("\n\n", 1)[0]
+    mark = next((m for m in TREE if m in tr), None)
+    if mark is None:
+        return None
+    q = prompt.split("\nQuestion: ", 1)[1].split("\n", 1)[0]
+    opts = re.findall(r"^([A-T]) - (.+)$", prompt, re.M)
+    want, quote = TREE[mark].get(q, ("Not stated", None))
+    if want is None:
+        return {"response": "The", "logprobs": [{"token": "The", "logprob": 0.0,
+                "top_logprobs": [{"token": "The", "logprob": 0.0}]}]}
+    pick = next((L for L, t in opts if t.startswith(want)), None)
+    if pick is None:
+        pick, quote = next(L for L, t in opts if t.startswith("Not stated")), None
+    rest = [L for L, _ in opts if L != pick]
+    alts = [{"token": pick, "logprob": math.log(0.8)}] + [
+        {"token": L, "logprob": math.log(0.2 / len(rest))} for L in rest]
+    text = pick
+    if 'write "Quote:"' in prompt:
+        text += "\nQuote: " + ('"%s"' % quote if quote else "none")
+    return {"response": text, "logprobs": [
+        {"token": pick, "logprob": alts[0]["logprob"], "top_logprobs": alts}]}
+
 
 def fake_post(path, payload, timeout):
     STATE["calls"] += 1
     STATE["payloads"].append(payload)
     prompt = payload["prompt"]
+    if "exactly one letter" in prompt and "\nQuestion: " in prompt:
+        out = fake_tree(prompt)                         # a tree question
+        if out is not None:
+            return out if STATE["logprobs"] else {"response": out["response"]}
+    if prompt.rstrip().endswith("New options:"):        # tree training
+        return {"response": " - A money transfer service such as Western "
+                            "Union\n- Gift cards"}
     if prompt.rstrip().endswith("Short answer:"):       # training, step 1
         tr = prompt.split("Transcript:\n", 1)[1]
+        if "NEWCALL" in tr:
+            return {"response": " Wire money via Western Union"}
         return {"response": " Their SSN.\nmore" if "SSNCALL" in tr
                 else " A delivery time" if "PARCEL" in tr else " not said"}
     if prompt.rstrip().endswith("Options:"):            # training, step 2
@@ -64,7 +158,8 @@ def fake_post(path, payload, timeout):
             return {"response": " I cannot group these."}
         return {"response": " - SSN (3)\n- A delivery time\n- not said\n"
                             "- a delivery time"}
-    if "\nQuestion: " in prompt:                        # an open question
+    if "\nQuestion: " in prompt and "exactly one letter" not in prompt:
+        # an open question
         return {"response": " They want the person's bank details.",
                 "done_reason": "stop"}
     belief = next(v for k, v in BELIEF.items() if k in prompt)
@@ -91,95 +186,190 @@ llm_judge._post = fake_post
 tmp = tempfile.mkdtemp()
 
 print("\nthe file")
-check("a good ontology has no problems", M.check_ontology(ONTO), [])
-bad = dict(ONTO, options=[dict(o, verdict="maybe") if i == 0 else o
-                          for i, o in enumerate(ONTO["options"])])
-check("a verdict that is not scam/legit is named",
-      any("verdict" in p for p in M.check_ontology(bad)))
-check("all-scam options are refused (every call would get one verdict)",
-      any("one option must be scam and one legit" in p for p in M.check_ontology(
-          dict(ONTO, options=[dict(o, verdict="scam") for o in ONTO["options"]]))))
-check("one option is not a question",
-      any("between 2 and" in p for p in M.check_ontology(
-          dict(ONTO, options=ONTO["options"][:1]))))
-check("13 options is too many",
-      any("between 2 and" in p for p in M.check_ontology(
-          dict(ONTO, options=ONTO["options"] * 4))))
-check("no prompt is named", any("prompt" in p for p in
-                                M.check_ontology(dict(ONTO, prompt=" "))))
-path = os.path.join(tmp, "onto.json")
-open(path, "w").write(json.dumps(ONTO))
-onto = M.load_ontology(path)
-check("load_ontology reads it", (onto["prompt"], len(onto["options"])),
-      (ONTO["prompt"], 4))
+check("a good tree has no problems", M.check_ontology(TREE_ONTO), [])
+
+
+def broken(change):
+    t = json.loads(json.dumps(TREE_ONTO))
+    change(t)
+    return M.check_ontology(t)
+
+
+money = lambda t: t["common_questions"][0]
+check("a value outside -1..1 is named",
+      any('"value" must be a number from -1 to 1' in p for p in broken(
+          lambda t: money(t)["options"][0].update(value=1.5))))
+check("not_mentioned must score 0",
+      any("not_mentioned must score 0" in p for p in broken(
+          lambda t: money(t)["options"][2].update(value=0.2))))
+check("a recorded question scores 0 on every option",
+      any("recorded question scores 0" in p for p in broken(
+          lambda t: t["options"][0]["questions"][0]["options"][0].update(value=0.4))))
+check("an option id used twice is named",
+      any("used twice" in p for p in broken(
+          lambda t: money(t)["options"][1].update(id="gift"))))
+check("21 options is too many",
+      any("between 2 and 20" in p for p in broken(
+          lambda t: money(t).update(options=[dict(money(t)["options"][0], id="o%d" % i)
+                                             for i in range(21)]))))
+check("a question with no prompt is named",
+      any("prompt" in p for p in broken(lambda t: money(t).update(prompt=""))))
+check("a broken follow-up is found, with its path",
+      any("common/money/gift/buyer" in p for p in broken(
+          lambda t: money(t)["options"][0]["follow_up"][0]["options"][0].update(
+              value="high"))))
+path = os.path.join(tmp, "tree.json")
+open(path, "w").write(json.dumps(TREE_ONTO))
+tree = M.load_ontology(path)
+check("load_ontology reads it, defaults filled",
+      (tree["prompt"], len(tree["options"]), tree["options"][1]["questions"],
+       tree["common_questions"][1]["options"][0]["follow_up"]),
+      (TREE_ONTO["prompt"], 2, [], []))
+check("every question has a path",
+      [p for p, _, _ in M.iter_questions(tree)],
+      ["common/money", "common/money/gift/buyer", "common/pressure",
+       "bank/claimed"])
 open(os.path.join(tmp, "broken.json"), "w").write('{"prompt": "x", ')
 try:
     M.load_ontology(os.path.join(tmp, "broken.json"))
     check("broken JSON is refused", False)
 except ValueError as e:
     check("broken JSON is refused, with where", "line" in str(e))
-check("the shipped ontology loads", len(M.load_ontology()["options"]) >= 2)
+shipped = M.load_ontology()
+check("the shipped tree loads: 15 subjects, 7 common questions, 50 in all",
+      (len(shipped["options"]), len(shipped["common_questions"]),
+       M.count_questions(shipped)), (15, 7, 50))
 check("other knowledge files are not mistaken for one",
       M.is_mcq_ontology(os.path.join(HERE, "..", "knowledge", "scam_ontology.json")),
       False)
+check("a saved question is not mistaken for one",
+      M.check_ontology({"kind": "question", "prompt": "x", "options": []}),
+      ["this is a saved question, not an ontology"])
+check("an older one-question file still loads",
+      M.check_ontology(ONTO), [])
+flat = M.normalise(ONTO)
+check("... each verdict a value on the root question",
+      [(o["id"], o["value"]) for o in flat["options"]],
+      [("ssn", 1.0), ("delivery", -1.0), ("refund", 1.0), ("wrong", -1.0)])
+check("... and a verdict that is not scam/legit is named",
+      any("verdict" in p for p in M.check_ontology(dict(ONTO, options=[
+          dict(o, verdict="maybe") if i == 0 else o
+          for i, o in enumerate(ONTO["options"])]))))
 
-print("\nthe question")
-q = M.build_prompt("SSNCALL transcript", onto)
-check("letters the options A-D", "\nA - Social Security problem\n" in q
-      and "\nD - Wrong number\n" in q)
-check("asks for one letter, A to D", q.rstrip().endswith(
-      "Answer with exactly one letter, A to D.\nAnswer:"))
-check("the transcript alone - no retrieval", "SSNCALL transcript" in q
-      and "REFERENCE" not in q)
-for tok, n, want in (("A", 4, "A"), (" B", 4, "B"), ("**C", 4, "C"),
-                     ("D)", 4, "D"), ("E", 4, None), ("The", 4, None),
-                     ("a", 4, "A")):
-    check("token %r among %d options reads as %r" % (tok, n, want),
-          M.answer_letter(tok, n), want)
+print("\nquotes")
+check("a quote found word for word, whatever the case and punctuation",
+      M.quote_found("Buy gift-cards NOW", "caller: buy gift cards now, or else"))
+check("a long quote may differ a little (80% of its words in a row)",
+      M.quote_found("you must buy the gift cards now today",
+                    "you must buy the gift cards now or else"))
+check("a quote that is not there is not found",
+      M.quote_found("stay on the line", "buy gift cards now"), False)
+check("a short quote must match exactly",
+      M.quote_found("gift card", "gift cards"), False)
+check("the quote is read from the answer",
+      (M.find_quote('B\nQuote: "buy gift cards now"'),
+       M.find_quote("C\nQuote: none"), M.find_quote("A")),
+      ("buy gift cards now", None, None))
 
-print("\njudging one call, from logprobs")
+print("\none call through the tree")
 STATE["calls"] = 0
-r = M.judge("SSNCALL transcript", onto)
-check("one request", STATE["calls"], 1)
-check("measured from logprobs", r["how"], "logprobs")
-check("the most likely category", (r["choice"], r["category"]), (0, "ssn"))
-check("P(scam) is the total on the scam options (0.85 + 0.08)",
-      round(r["p_scam"], 3), 0.93)
-check("verdict Fraud", r["verdict"], "Fraud")
-check("probabilities sum to 1", round(sum(r["probs"]), 6), 1.0)
-r = M.judge("PARCEL transcript", onto)
-check("a delivery call is legitimate", (r["category"], r["verdict"]),
-      ("delivery", "Normal"))
-r = M.judge("SPLIT transcript", onto)
-check("the top category can be scam while the total is legit",
-      (r["category"], round(r["p_scam"], 2), r["verdict"]),
-      ("ssn", 0.4, "Normal"))
-pl = STATE["payloads"][-1]
-check("a few tokens at temperature 0, logprobs asked for",
-      (pl["options"]["num_predict"], pl["options"]["temperature"],
-       pl["logprobs"]), (M.ANSWER_TOKENS, 0.0, True))
-STATE["lead"] = " "
-r = M.judge("SSNCALL transcript", onto)
-check("a token before the letter is skipped", (r["category"], r["how"]),
-      ("ssn", "logprobs"))
-STATE["lead"] = ""
-r = M.judge("GIBBERISH transcript", onto)
-check("no letter at all is unreadable", (r["verdict"], r["how"], r["p_scam"]),
-      (None, "unreadable", None))
+STATE["payloads"] = []
+r = M.classify(GIFT, tree)
+check("root, the common questions with their follow-ups, then the "
+      "subject's", [a["path"] for a in r["answers"]],
+      ["root", "common/money", "common/money/gift/buyer", "common/pressure",
+       "bank/claimed"])
+check("one request per question", (STATE["calls"], r["requests"]), (5, 5))
+check("the subject", (r["subject"], r["answers"][0]["value"]), ("bank", 0.0))
+check("a quote found in the transcript keeps the answer",
+      [(a["option"], a["quoted"], a["value"]) for a in r["answers"]
+       if a["path"] in ("common/money", "common/pressure")],
+      [("gift", True, 1.0), ("threat", True, 1.0)])
+buyer = r["answers"][2]
+check("a quote not in the transcript counts as Not stated, and says so",
+      (buyer["option"], buyer["quoted"], buyer["value"], buyer["picked"][:16]),
+      ("not_mentioned", False, 0.0, "The caller waits"))
+check("a recorded question needs no quote and scores 0",
+      (r["answers"][4]["option"], r["answers"][4]["quoted"],
+       r["answers"][4]["value"]), ("bank", None, 0.0))
+check("score = the sum of the values, verdict its sign",
+      (r["score"], r["verdict"]), (2.0, "scam"))
+check("the probabilities are kept with each answer",
+      (round(r["answers"][1]["p"], 2), round(sum(r["answers"][1]["probs"]), 3)),
+      (0.8, 1.0))
+check("asked with quotes: the letter, then a quote line, room for it",
+      ('write "Quote:"' in STATE["payloads"][1]["prompt"],
+       STATE["payloads"][1]["options"]["num_predict"]), (True, M.QUOTE_TOKENS))
+check("the root question asks for a letter only",
+      ('write "Quote:"' in STATE["payloads"][0]["prompt"],
+       STATE["payloads"][0]["options"]["num_predict"]), (False, M.ANSWER_TOKENS))
+check("absence options are marked for the model",
+      "B - No payment at all (absence)" in STATE["payloads"][1]["prompt"])
+check("the file's rules are in the prompt, worded for the model",
+      ("choose the first one that fits" in STATE["payloads"][1]["prompt"],
+       "not_mentioned" in STATE["payloads"][1]["prompt"]), (True, False))
+r = M.classify(GIFT, tree, quotes=False)
+check("quotes off: the follow-up counts (+0.5) and no quote is asked for",
+      (r["score"], 'Quote:' in STATE["payloads"][-1]["prompt"],
+       STATE["payloads"][-1]["options"]["num_predict"]),
+      (2.5, False, M.ANSWER_TOKENS))
+r = M.classify(CALM, tree)
+check("absence answers need no quote; a legitimate call scores below 0",
+      ([(a["option"], a["quoted"]) for a in r["answers"][1:]], r["score"],
+       r["verdict"], r["requests"]),
+      ([("no_payment", None), ("calm", None)], -0.8, "legit", 3))
+r = M.classify(ZERO, tree)
+check("nothing said: a score of exactly 0 is neutral",
+      (r["score"], r["verdict"]), (0.0, "neutral"))
+r = M.classify(BADROOT, tree)
+check("an unreadable subject: the common questions are still asked",
+      (r["answers"][0]["choice"], r["subject"], r["requests"]),
+      (None, "other", 3))
+STATE["payloads"] = []
+M.classify(GIFT, tree, knowledge=True)
+check("knowledge: the subject's entries go with its questions, not the root",
+      ("A real bank never asks" in STATE["payloads"][1]["prompt"],
+       "Background" in STATE["payloads"][0]["prompt"]), (True, False))
+check("explain() names the answers that moved the score",
+      M.explain(M.classify(GIFT, tree)),
+      "bank; score +2.00 (scam): gift +1.0, threat +1.0; 1 answer without a "
+      "quote counted as not stated")
+check("verdict and the 0-100 score at the edges",
+      (M.verdict_of(0.0), M.verdict_of(1e-9), M.verdict_of(-0.1),
+       round(M.pct(0.0)), round(M.pct(2.0))),
+      ("neutral", "neutral", "legit", 50, 88))
 
-print("\nan Ollama without logprobs")
+print("\nan older one-question file, through the same walk")
+r = M.classify("SSNCALL transcript", flat)
+check("one request, the verdict from the option's value",
+      (r["requests"], r["subject"], r["score"], r["verdict"]),
+      (1, "ssn", 1.0, "scam"))
+check("a legitimate option scores -1",
+      M.classify("PARCEL transcript", flat)["verdict"], "legit")
+
+print("\nreading the letter")
+STATE["lead"] = "**"
+a = M.ask("PARCEL transcript", {"prompt": flat["prompt"], "options": flat["options"]},
+          flat, root=True)
+STATE["lead"] = ""
+check("a token before the letter is skipped", (a["choice"], a["how"]),
+      (1, "logprobs"))
+a = M.ask("GIBBERISH transcript", {"prompt": flat["prompt"],
+                                   "options": flat["options"]}, flat, root=True)
+check("no letter at all is unreadable", (a["choice"], a["how"]),
+      (None, "unreadable"))
 STATE["logprobs"] = False
 M._LOGPROBS_OK = None
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    r = M.judge("PARCEL transcript", onto)
-    r2 = M.judge("SSNCALL transcript", onto)
-check("the answered letter stands in", (r["category"], r["how"], r["p_scam"]),
-      ("delivery", "letter", 0.0))
-check("and P(scam) is 1 for a scam letter", r2["p_scam"], 1.0)
-check("it says so, once", buf.getvalue().count("no logprobs"), 1)
+    a = M.ask("SSNCALL transcript", {"prompt": flat["prompt"],
+                                     "options": flat["options"]}, flat, root=True)
+    M.ask("SSNCALL transcript", {"prompt": flat["prompt"],
+                                 "options": flat["options"]}, flat, root=True)
 STATE["logprobs"] = True
-M._LOGPROBS_OK = None
+check("without logprobs the answered letter stands, at 100%",
+      (a["choice"], a["how"], a["probs"][0]), (0, "letter", 1.0))
+check("it says so, once", buf.getvalue().count("no logprobs"), 1)
 
 print("\nyour own question")
 for q, want in (
@@ -215,112 +405,34 @@ try:
 except ValueError as e:
     check("13 options are refused", "at most 12" in str(e))
 
-print("\noptions read from a dataset's transcripts")
-
-
-def write_ds(name, rows):
-    """rows of (label, transcript); a `type` column that says nothing true,
-    to show the build never reads it"""
-    path = os.path.join(tmp, name)
-    with open(path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["id", "label", "type", "text"])
-        for i, (lab, text) in enumerate(rows):
-            w.writerow([i, lab, "misleading_column", "%s number %d" % (text, i)])
-    return path
-
-
-ds = write_ds("ds.csv", [("scam", "SSNCALL")] * 3 + [("nonscam", "PARCEL")] * 3)
-STATE["calls"] = 0
-STATE["payloads"] = []
-b = M.build(ds, calls=6, max_options=5, log=lambda *_: None)
-check("2n+1 requests: a category per call, a grouping, the question per call",
-      STATE["calls"], 13)
-check("the model names each call's category, without judging it",
-      all("Name the category of this call" in x["prompt"]
-          and "Do not say whether it is a scam" in x["prompt"]
-          for x in STATE["payloads"][:6]))
-check("each call is then asked the category question",
-      all(x["prompt"].count(M.CATEGORY_QUESTION) == 1
-          and "\nA - SSN\n" in x["prompt"] for x in STATE["payloads"][7:]))
-check("options are the categories the model found, with verdicts",
-      [(o["text"], o["verdict"], o["calls"]) for o in b["options"]],
-      [("SSN", "scam", {"scam": 3, "legit": 0}),
-       ("A delivery time", "legit", {"scam": 0, "legit": 3})])
-check("a category no call landed on is dropped, and recorded",
-      b["built_from"]["dropped"], ["not said"])
-check("no column is read: nothing from the type column",
-      ("column" in b["built_from"], b["built_from"]["read_from"],
-       any("misleading" in o["text"].lower() for o in b["options"])),
-      (False, "transcripts", False))
-check("ids from the option text", [o["id"] for o in b["options"]],
-      ["ssn", "a_delivery_time"])
-check("what it builds is a valid ontology", M.check_ontology(b), [])
-check("the calls it read are kept with their category",
-      sorted((a["label"], a["option"]) for a in b["answers"])[:1],
-      [("legit", "B")])
-
-ds2 = write_ds("ds2.csv", [("scam", "SSNCALL")] * 2 + [("scam", "PARCEL")] * 2
-               + [("nonscam", "PARCEL")] * 4)
-b2 = M.build(ds2, calls=8, log=lambda *_: None)
-check("verdict = the label most of a category's calls carry; legit and "
-      "scam alternate", [(o["text"], o["verdict"]) for o in b2["options"]],
-      [("SSN", "scam"), ("A delivery time", "legit")])
-even = write_ds("even.csv", [("scam", "SSNCALL"), ("nonscam", "SSNCALL"),
-                             ("scam", "PARCEL"), ("nonscam", "PARCEL")])
-try:
-    M.build(even, calls=4, log=lambda *_: None)
-    check("categories that say nothing about the label are refused", False)
-except ValueError as e:
-    check("categories that say nothing about the label are refused, "
-          "pointing to training", ("as many scam calls as legitimate" in str(e),
-                                   "train it on this dataset" in str(e)),
-          (True, True))
-one = write_ds("one.csv", [("scam", "SSNCALL"), ("scam", "SSNCALL"),
-                           ("nonscam", "SSNCALL"), ("scam", "PARCEL"),
-                           ("scam", "PARCEL"), ("nonscam", "PARCEL")])
-try:
-    M.build(one, calls=6, log=lambda *_: None)
-    check("categories that all lean one way are refused", False)
-except ValueError as e:
-    check("categories that all lean one way are refused",
-          "mostly scam calls" in str(e))
-try:
-    M.build(ds, calls=1)
-    check("fewer than 2 calls is refused", False)
-except ValueError as e:
-    check("fewer than 2 calls is refused", "between 2 and 500" in str(e))
-path_b = os.path.join(tmp, "built.json")
-with contextlib.redirect_stdout(io.StringIO()):
-    rc = M.main(["build", "--csv", ds, "--out", path_b, "--calls", "6"])
-onto_b = M.load_ontology(path_b)
-check("build writes a file the classifier loads",
-      (rc, [o["id"] for o in onto_b["options"]]), (0, ["ssn", "a_delivery_time"]))
-check("and judges with it", M.judge("SSNCALL again", onto_b)["verdict"], "Fraud")
-
 print("\nscoring a dataset (the page's Score a dataset)")
 out = os.path.join(tmp, "run.metrics.json")
 ev = os.path.join(tmp, "ev.csv")
 with open(ev, "w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["id", "label", "text"])
-    w.writerows([[1, "scam", "SSNCALL one"], [2, "nonscam", "PARCEL two"],
-                 [3, "scam", "SPLIT three"], [4, "nonscam", "PARCEL four"]])
+    w.writerows([[1, "scam", GIFT], [2, "nonscam", CALM],
+                 [3, "scam", ZERO], [4, "scam", NEW]])
 import eval_common as EC                                       # noqa: E402
 EC.RESULTS_DIR = tmp
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     M.main(["evaluate", "--csv", ev, "--ontology", path, "--out", out])
 res = json.load(open(out))
-check("metrics.json carries the MCQ details",
-      (res["kind"], res["question"], len(res["options"]), res["measured"]),
-      ("mcq", ONTO["prompt"], 4, 4))
-check("accuracy over the calls (SPLIT is a missed scam)",
+check("metrics.json carries the tree's details",
+      (res["kind"], res["question"], res["neutral"], res["unquoted"],
+       res["quotes"]), ("mcq", TREE_ONTO["prompt"], 1, 1, True))
+check("neutral counts as not scam (ZEROCALL is a missed scam)",
       (res["metrics"]["tp"], res["metrics"]["fn"], res["metrics"]["tn"]),
-      (1, 1, 2))
-check("the category table counts where each call went",
+      (2, 1, 1))
+check("the subject table counts where each call went",
       [(o["id"], o["scam"], o["legit"]) for o in res["options"]],
-      [("ssn", 2, 0), ("delivery", 0, 2), ("refund", 0, 0), ("wrong", 0, 0)])
+      [("bank", 1, 0), ("other", 2, 1)])
+rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run.csv"))))
+check("the per-call CSV has the score and the three-way verdict",
+      [(r["score"], r["verdict3"]) for r in rows],
+      [("2.0", "scam"), ("-0.8", "legit"), ("0.0", "neutral"),
+       ("1.0", "scam")])
 
 print("\nthe benchmark runner")
 import evaluate_mcq_ontology as E                              # noqa: E402
@@ -343,6 +455,9 @@ check("per-call CSV columns for the Scores and Per-call tabs",
        "mcq_ontology__stripped_why"])
 check("the order is the benchmark's shuffled order (seed 42)",
       [r["text"] for r in rows], [t for t, _ in E.load(ev)])
+check("<system>_pct is the score on 0-100",
+      {r["text"][:8]: r["mcq_ontology__stripped_pct"] for r in rows}["GIFTCALL"],
+      "88.08")
 
 print("\na question trained on a dataset")
 tds = os.path.join(tmp, "train.csv")
@@ -449,7 +564,91 @@ for bad, why in (({"prompt": "x", "options": []}, "kind"),
 check("an ontology is not mistaken for a saved question",
       bool(M.check_question(ONTO)))
 
+print("\ntraining the tree on a dataset")
+tr_csv = os.path.join(tmp, "tree_train.csv")
+with open(tr_csv, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["id", "label", "text"])
+    for i in range(2):
+        w.writerow([i, "scam", GIFT + " %d" % i])
+        w.writerow([10 + i, "scam", NEW + " %d" % i])
+    for i in range(4):
+        w.writerow([20 + i, "nonscam", CALM + " %d" % i])
+STATE["payloads"] = []
+logged = []
+t = M.train_ontology(tr_csv, tree, calls=8, log=logged.append)
+qs = {p: q for p, q, _ in M.iter_questions(t)}
+check("the tree it started from is not changed",
+      len(tree["common_questions"][0]["options"]), 3)
+check("a new option where calls said Not stated but had an answer",
+      [(a["path"], a["text"]) for a in t["training"][-1]["added"]],
+      [("common/money", "A money transfer service such as Western Union")])
+check("... asked openly first, and the proposal named the existing options",
+      any(p["prompt"].rstrip().endswith("New options:")
+          and "- Gift cards" in p["prompt"] and "Western Union" in p["prompt"]
+          for p in STATE["payloads"]))
+check("... a duplicate of an existing option is dropped",
+      [o["text"] for o in qs["common/money"]["options"]].count("Gift cards"), 1)
+check("values move toward the labels: (4 x old + scam - legit) / (4 + n)",
+      {o["id"]: o["value"] for o in qs["common/money"]["options"]},
+      {"gift": 1.0, "a_money_transfer_service_such": 0.33,
+       "no_payment": -0.65, "not_mentioned": 0.0})
+check("... options put back in order, strongest scam sign first",
+      [o["id"] for o in qs["common/money"]["options"]],
+      ["gift", "a_money_transfer_service_such", "no_payment",
+       "not_mentioned"])
+check("pressure: threat 4 scam calls, calm 4 legit",
+      [(o["id"], o["value"]) for o in qs["common/pressure"]["options"]],
+      [("threat", 1.0), ("calm", -0.75), ("not_mentioned", 0.0)])
+check("an option no call landed on keeps its value (a failed quote is "
+      "Not stated)", qs["common/money/gift/buyer"]["options"][0]["value"], 0.5)
+check("recorded questions and the root are not given values",
+      ([o["value"] for o in qs["bank/claimed"]["options"]],
+       [s["value"] for s in t["options"]]), ([0.0, 0.0], [0.0, 0.0]))
+check("each changed option keeps its history",
+      qs["common/money"]["options"][2]["training"],
+      [{"dataset": tr_csv, "scam": 0, "legit": 4, "before": -0.3,
+        "after": -0.65}])
+tt = t["training"][-1]
+check("the training run is recorded",
+      (tt["calls"], tt["scam"], tt["legit"], tt["prior_weight"],
+       tt["training_calls_right_before"], tt["training_calls_right_after"]),
+      (8, 4, 4, 4.0, 1.0, 1.0))
+check("what it writes is a valid ontology", M.check_ontology(t), [])
+
+un_csv = os.path.join(tmp, "uneven.csv")
+with open(un_csv, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["id", "label", "text"])
+    w.writerows([[1, "scam", GIFT + " a"], [2, "scam", GIFT + " b"],
+                 [3, "nonscam", CALM]])
+u = M.train_ontology(un_csv, tree, calls=3, new_options=0, log=lambda *_: None)
+check("an uneven sample: each class counts half (2 scam, 1 legit)",
+      {o["id"]: o["value"] for o in u["common_questions"][0]["options"]}
+      ["no_payment"], round((4 * -0.3 - 1.5) / (4 + 1.5), 2))
+check("new options 0: none added", u["training"][-1]["added"], [])
+
+out_tree = os.path.join(tmp, "trained.json")
+with contextlib.redirect_stdout(io.StringIO()):
+    rc = M.main(["train", "--csv", tr_csv, "--ontology", path, "--out",
+                 out_tree, "--calls", "8"])
+text = open(out_tree).read()
+check("train writes a file that loads, without empty lists",
+      (rc, len(M.load_ontology(out_tree)["training"]),
+       '"follow_up": []' in text), (0, 1, False))
+try:
+    M.main(["train", "--csv", tr_csv, "--ontology", path, "--out", out_tree])
+    check("an existing file is not replaced without --force", False)
+except SystemExit as e:
+    check("an existing file is not replaced without --force",
+          "already exists" in str(e))
+with contextlib.redirect_stdout(io.StringIO()):
+    M.main(["train", "--csv", tr_csv, "--ontology", out_tree, "--out",
+            out_tree, "--calls", "8", "--force"])
+check("training a trained file adds to its history",
+      len(M.load_ontology(out_tree)["training"]), 2)
+
 shutil.rmtree(tmp, ignore_errors=True)
-print("\n" + ("all good - one question, the category, measured"
+print("\n" + ("all good - the tree, its quotes, its scores and its training"
               if not fails else "%d FAILED" % fails))
 sys.exit(1 if fails else 0)

@@ -74,7 +74,7 @@ BASELINES = [
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
-    ("mcq",      "MCQ ontology LLM",       "one question: the call's category (mcq_ontology.json)", True),
+    ("mcq",      "MCQ ontology LLM",       "a tree of questions, summed answer values (mcq_ontology.json)", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
 
@@ -2153,9 +2153,9 @@ class Handler(BaseHTTPRequestHandler):
                                  % (meta["id"], meta["model_name"],
                                     meta["dataset"]))
                 return self._send(200, meta)
-            if u.path == "/api/mcq/build":
-                meta = start_mcq_build_run(form)
-                sys.stderr.write("started %s  build %s from %s\n"
+            if u.path == "/api/mcq/train":
+                meta = start_mcq_train_onto_run(form)
+                sys.stderr.write("started %s  train %s on %s\n"
                                  % (meta["id"], meta["model_name"],
                                     meta["dataset"]))
                 return self._send(200, meta)
@@ -2298,6 +2298,10 @@ def start_eval_run(page, form):
         path = mcq_path(form.get("ontology"))
         mcq_ontology.load_ontology(path)          # refuse a broken file now
         flags += ["--ontology", "knowledge/" + path.name]
+        if form.get("quotes") is False:
+            flags.append("--no-quotes")
+        if form.get("knowledge"):
+            flags.append("--knowledge")
         name = path.stem
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
@@ -2532,8 +2536,9 @@ def mcq_config():
            "max_options": mcq_ontology.MAX_OPTIONS,
            "questions": mcq_ontology.list_questions(),
            "train_calls": mcq_ontology.TRAIN_CALLS,
-           "build_calls": mcq_ontology.BUILD_CALLS,
-           "build_options": mcq_ontology.BUILD_OPTIONS,
+           "onto_calls": mcq_ontology.TRAIN_ONTOLOGY_CALLS,
+           "onto_new_options": mcq_ontology.NEW_OPTIONS,
+           "onto_prior": mcq_ontology.PRIOR_WEIGHT,
            "train_options": mcq_ontology.TRAIN_OPTIONS}
     # ollama being down is a normal state for this page to be in
     try:
@@ -2562,7 +2567,7 @@ def mcq_read(rel):
 
 def mcq_save(form):
     """Write an ontology the editor sends. Refused - with every problem named
-    - unless it is a valid one-question ontology; and an existing knowledge
+    - unless it is a valid ontology; and an existing knowledge
     file that is not one of these (scam_ontology.json, scam_patterns.json) is
     never overwritten from here."""
     path = mcq_path(form.get("path"))
@@ -2578,35 +2583,38 @@ def mcq_save(form):
     if path.exists() and not mcq_ontology.is_mcq_ontology(path):
         raise ValueError("knowledge/%s is a different kind of knowledge file "
                          "- save under another name" % path.name)
-    path.write_text(json.dumps(obj, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
     return mcq_read("knowledge/" + path.name)
 
 
 def mcq_ask(form):
-    """Put the question to the model about one transcript."""
+    """Walk one transcript through the ontology's tree of questions."""
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
     path = mcq_path(form.get("ontology"))
     onto = mcq_ontology.load_ontology(path)
+    quotes = form.get("quotes", True) is not False
+    knowledge = bool(form.get("knowledge"))
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     t0 = time.time()
     try:
-        res = mcq_ontology.judge(text, onto)
+        res = mcq_ontology.classify(text, onto, quotes, knowledge)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
         LLM_LOCK.release()
-    prompt = mcq_ontology.build_prompt(text, onto)
     res.update({
         "ontology": "knowledge/" + path.name, "prompt": onto["prompt"],
-        "options": [dict(o, letter=mcq_ontology.LETTERS[i])
-                    for i, o in enumerate(onto["options"])],
-        "explain": mcq_ontology.explain(res, onto),
+        "subjects": [{"letter": mcq_ontology.LETTERS[i], "id": o["id"],
+                      "text": o["text"]}
+                     for i, o in enumerate(onto["options"])],
+        "explain": mcq_ontology.explain(res), "quotes": quotes,
+        "knowledge": knowledge, "pct": mcq_ontology.pct(res["score"]),
         "model": llm_judge.DEFAULT_MODEL, "words": len(text.split()),
-        "prompt_tokens_estimated": ollama_ctx.estimate_tokens(prompt),
         "elapsed_ms": int(1000 * (time.time() - t0))})
     return res
 
@@ -2745,25 +2753,36 @@ def start_mcq_train_run(form):
     return meta
 
 
-def start_mcq_build_run(form):
-    """Build the category question from a dataset's transcripts: the model
-    reads a sample of calls, names and groups their categories, and puts
-    each call back as the multiple choice to give every category a verdict.
-    Detached and logged like every other run."""
+def start_mcq_train_onto_run(form):
+    """Train an ontology on a dataset: walk a sample of its calls through
+    the tree, add options where calls answered Not stated but had something
+    to say, and move each option's value toward the labels of the calls
+    that chose it. Starts from the ontology picked on the page and writes a
+    new file. Detached and logged like every other run."""
     ds = form.get("dataset", "")
     if ds not in {d["path"] for d in mcq_datasets()}:
         raise ValueError("unknown dataset")
+    src = mcq_path(form.get("ontology"))
+    mcq_ontology.load_ontology(src)               # refuse a broken file now
     try:
-        calls = int(form.get("calls") or mcq_ontology.BUILD_CALLS)
-        nopt = int(form.get("options") or mcq_ontology.BUILD_OPTIONS)
+        calls = int(form.get("calls") or mcq_ontology.TRAIN_ONTOLOGY_CALLS)
+        new_opts = int(form.get("new_options")
+                       if form.get("new_options") not in (None, "")
+                       else mcq_ontology.NEW_OPTIONS)
+        prior = float(form.get("prior") if form.get("prior") not in (None, "")
+                      else mcq_ontology.PRIOR_WEIGHT)
     except (TypeError, ValueError):
-        raise ValueError("calls and options must be whole numbers")
+        raise ValueError("calls, new options and prior weight must be numbers")
     if not 2 <= calls <= 500:
-        raise ValueError("read between 2 and 500 calls")
-    if not 2 <= nopt <= mcq_ontology.MAX_OPTIONS:
-        raise ValueError("options must be between 2 and %d"
-                         % mcq_ontology.MAX_OPTIONS)
+        raise ValueError("train on between 2 and 500 calls")
+    if not 0 <= new_opts <= 5:
+        raise ValueError("new options per question must be between 0 and 5")
+    if not 0 <= prior <= 1000:
+        raise ValueError("the prior weight must be between 0 and 1000")
     path = mcq_path(form.get("name"))
+    if path == src:
+        raise ValueError("save the trained ontology under a new name - the one "
+                         "it starts from is kept as it is")
     if path.exists():
         if not mcq_ontology.is_mcq_ontology(path):
             raise ValueError("knowledge/%s is a different kind of knowledge "
@@ -2773,26 +2792,32 @@ def start_mcq_build_run(form):
                              "name, or tick replace" % path.name)
     running = [r for r in all_runs() if r["status"] == "running"]
     if running:
-        raise ValueError("a run is already going (%s) - building wants the "
+        raise ValueError("a run is already going (%s) - training wants the "
                          "model it is using. Stop it first, or wait."
                          % running[0]["id"])
 
-    flags = ["build", "--csv", ds, "--out", "knowledge/" + path.name,
-             "--calls", str(calls), "--options", str(nopt), "--force"]
+    flags = ["train", "--csv", ds, "--ontology", "knowledge/" + src.name,
+             "--out", "knowledge/" + path.name, "--calls", str(calls),
+             "--new-options", str(new_opts), "--prior", "%g" % prior,
+             "--force"]
+    if form.get("quotes") is False:
+        flags.append("--no-quotes")
+    if form.get("knowledge"):
+        flags.append("--knowledge")
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    run_id = time.strftime("%Y%m%d_%H%M%S") + "_mcqbuild_" + path.stem
+    run_id = time.strftime("%Y%m%d_%H%M%S") + "_mcqtrainonto_" + path.stem
     log = run_path(run_id, "log")
     quoted = " ".join(shlex.quote(f) for f in flags)
     body = [
-        "build() {",
+        "train() {",
         '  if [ -f venv/bin/activate ]; then . venv/bin/activate;',
         '  elif [ -f venv/Scripts/activate ]; then . venv/Scripts/activate;',
         '  else printf "  warn no venv/, using whatever python is on PATH\\n"; fi',
         '  PY=python; command -v python >/dev/null 2>&1 || PY=python3',
         '  "$PY" -u scripts/mcq_ontology.py ' + quoted
-        + ' || { printf "  fail build\\n"; return 1; }',
-        "}", "build",
+        + ' || { printf "  fail training\\n"; return 1; }',
+        "}", "train",
         'printf "\\n%s %%s\\n" "$?"' % EXIT_MARK,
     ]
     env = dict(os.environ)
@@ -2805,9 +2830,9 @@ def start_mcq_build_run(form):
             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, env=env,
             **DETACHED)
     LIVE[run_id] = proc
-    meta = {"id": run_id, "pid": proc.pid, "kind": "mcq_build",
-            "model_name": path.name, "label": "build options · " + path.name,
-            "dataset": ds, "baseline": "mcq_build:" + path.stem,
+    meta = {"id": run_id, "pid": proc.pid, "kind": "mcq_train_onto",
+            "model_name": path.name, "label": "train ontology · " + path.name,
+            "dataset": ds, "baseline": "mcq_train_onto:" + path.stem,
             "limit": str(calls), "model": llm_judge.DEFAULT_MODEL,
             "started": time.time(), "ontology": "knowledge/" + path.name}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
@@ -4210,7 +4235,7 @@ per held-out call, so it takes minutes, not seconds.</pre>
     <div class="sect">
       <div class="secthead">Ontology</div>
       <div class="hint" style="margin-top:0">the JSON file the classifier starts
-        from &middot; one question, a few options</div>
+        from &middot; a tree of questions</div>
       <select id="mcqfile" style="width:100%; margin-top:8px"></select>
       <div class="qp" id="mcqq" style="margin-top:12px"></div>
       <div id="mcqopts"></div>
@@ -4218,21 +4243,45 @@ per held-out call, so it takes minutes, not seconds.</pre>
     </div>
 
     <div class="sect">
-      <div class="secthead">Build options from a dataset</div>
-      <div class="hint" style="margin-top:0">The model reads a sample of the
-        dataset's calls, half scam and half not, names each one's category,
-        and groups those into a few categories. Each call is then asked the
-        category question, and each category's verdict is the label most of
-        its calls carry. No column of the dataset is used.</div>
+      <div class="secthead">Reading the answers</div>
+      <label class="inline" style="margin-top:6px">
+        <input type="checkbox" id="mcqquotes" checked>
+        <span><span class="name">Require a quote for each answer</span>
+        <span class="note">an answer whose quote is not in the transcript
+          counts as Not stated; off is faster, one letter per question</span></span>
+      </label>
+      <label class="inline">
+        <input type="checkbox" id="mcqknow">
+        <span><span class="name">Show the subject's knowledge</span>
+        <span class="note">its legit contrast and its entries from
+          scam_ontology.json and scam_patterns.json, with each question</span></span>
+      </label>
+      <div class="hint">Used by Classify, Score a dataset and Train.</div>
+    </div>
+
+    <div class="sect">
+      <div class="secthead">Train on a dataset</div>
+      <div class="hint" style="margin-top:0">Starts from the ontology picked
+        above and writes a new file. A sample of the dataset's calls is walked
+        through the tree. Where calls answered Not stated but have something to
+        say, the model proposes new options. Each option's value then moves
+        toward the labels of the calls that chose it. Train on a training set,
+        never on the calls you will score.</div>
 
       <label for="mcqbds">Dataset</label>
       <select id="mcqbds"></select>
       <div class="askrow" style="margin-top:8px">
         <label for="mcqbcalls" style="margin:0">Calls</label>
         <input type="text" id="mcqbcalls" class="num" spellcheck="false">
-        <label for="mcqbopts" style="margin:0">at most</label>
-        <input type="text" id="mcqbopts" class="num" spellcheck="false">
-        <span class="hint">options</span>
+        <label for="mcqbnew" style="margin:0">new options</label>
+        <input type="text" id="mcqbnew" class="num" spellcheck="false"
+               title="at most this many new options per question; 0 updates the values only">
+      </div>
+      <div class="askrow" style="margin-top:8px">
+        <label for="mcqbprior" style="margin:0">Prior weight</label>
+        <input type="text" id="mcqbprior" class="num" spellcheck="false"
+               title="how many calls' worth the old value counts for">
+        <span class="hint">calls' worth for the old value</span>
       </div>
       <div class="hint" id="mcqbcost"></div>
       <label for="mcqbname">Save as</label>
@@ -4243,18 +4292,17 @@ per held-out call, so it takes minutes, not seconds.</pre>
         <span><span class="name">Replace a file of that name</span>
         <span class="note">the old one is overwritten, not kept</span></span>
       </label>
-      <button class="go" id="mcqbgo">Build</button>
+      <button class="go" id="mcqbgo">Train</button>
       <div class="hint" id="mcqberr" style="color:var(--bad)"></div>
     </div>
 
     <div class="sect">
       <div class="secthead">What this is</div>
       <div class="hint" style="margin-top:0">The <code>mcq</code> baseline from
-        the Benchmark page, asked one call at a time. No retrieval: the
-        transcript, the one question and its options. The model answers one
-        letter, and the probability it puts on every letter is read back, so
-        the answer is a category and a P(scam) &mdash; the total on the scam
-        options.</div>
+        the Benchmark page, one call at a time. Each call is walked through the
+        ontology's tree of questions, and each answer carries a value from
+        -1 to 1. The call's score is the sum: above 0 is scam, below 0
+        legitimate, exactly 0 neutral.</div>
     </div>
   </div>
 
@@ -4268,10 +4316,10 @@ per held-out call, so it takes minutes, not seconds.</pre>
     </div>
 
     <div class="tabs" id="mcqtabs">
-      <button data-qtab="ask" class="on">Ask</button>
+      <button data-qtab="ask" class="on">Classify</button>
       <button data-qtab="eval">Score a dataset</button>
       <button data-qtab="edit">Edit the JSON</button>
-      <button data-qtab="build">Build output</button>
+      <button data-qtab="build">Training output</button>
       <button data-qtab="about">How it decides</button>
     </div>
 
@@ -4287,7 +4335,7 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <div class="askrow">
         <span class="hint" id="mcqsize"></span>
       </div>
-      <button class="go" id="mcqgo">Ask the question</button>
+      <button class="go" id="mcqgo">Classify this call</button>
       <div class="hint" id="mcqasker" style="color:var(--bad)"></div>
     </div>
     <div id="mcqanswer"></div>
@@ -4358,9 +4406,10 @@ per held-out call, so it takes minutes, not seconds.</pre>
         </div>
         <button class="go" id="mcqevgo">Score every call</button>
         <div class="hint" id="mcqeverr" style="color:var(--bad)"></div>
-        <div class="hint">One request per call, under the ontology picked on the
-          left. Set a limit for a first look: a thousand calls is a while on a
-          14B model.</div>
+        <div class="hint">About a dozen requests per call (one per question),
+          under the ontology picked on the left. Set a limit for a first look: a
+          thousand calls is a long while on a 14B model. A score of exactly 0
+          (neutral) counts as not scam.</div>
       </div>
       <div id="mcqevout"></div>
       <pre class="log" id="mcqevlog" hidden></pre>
@@ -4368,11 +4417,17 @@ per held-out call, so it takes minutes, not seconds.</pre>
 
     <div id="q-edit" hidden>
       <div class="card">
-        <div class="hint" style="margin-top:0">The file itself. <code>prompt</code>
-          is the question; each option needs a <code>text</code> (what the model
-          reads) and a <code>verdict</code>, <code>"scam"</code> or
-          <code>"legit"</code>. Between 2 and 12 options, at least one of each
-          verdict. Anything else in the file is kept but not read.</div>
+        <div class="hint" style="margin-top:0">The file itself.
+          <code>prompt</code> and <code>options</code> are the root question,
+          the subject; each subject has its own <code>questions</code>, and
+          <code>common_questions</code> are asked of every call. Every question
+          needs an <code>id</code>, a <code>prompt</code> and 2 to 20
+          <code>options</code>; every option an <code>id</code>, a
+          <code>text</code> (what the model reads) and a <code>value</code> from
+          -1 (legitimate) to 1 (scam). <code>not_mentioned</code> and every
+          option of a <code>"role": "recorded"</code> question score 0. An
+          option's <code>follow_up</code> questions are asked only when it is
+          chosen. Anything else in the file is kept but not read.</div>
         <textarea id="mcqjson" class="json" spellcheck="false"></textarea>
         <div class="askrow" style="margin-top:10px">
           <label for="mcqsavename" style="margin:0">Save as knowledge/</label>
@@ -4384,48 +4439,55 @@ per held-out call, so it takes minutes, not seconds.</pre>
     </div>
 
     <div id="q-build" hidden>
-      <pre class="log" id="mcqbuildlog">No build run yet.
+      <pre class="log" id="mcqbuildlog">No training run yet.
 
-Pick a dataset under "Build options from a dataset" on the left and press
-Build. The model reads a sample of its calls, names each one's category,
-groups those into a few categories, then asks each call the category
-question to give every category a verdict. Each call takes a few seconds.</pre>
+Pick a dataset under "Train on a dataset" on the left and press Train. Every
+sampled call is walked through the tree (about a dozen requests each), the
+calls that answered Not stated are asked openly to find new options, and each
+option's value moves toward the labels of the calls that chose it. The result
+is a new file; the ontology it started from is kept as it is.</pre>
     </div>
 
     <div id="q-about" hidden>
       <div class="card note">
-        <p><strong>One question.</strong> The ontology file holds one
-        multiple-choice question &mdash; which category the call belongs to
-        &mdash; and a few options. Every option carries a verdict, scam or
-        legitimate. The transcript goes to the model with the question and the
-        options lettered A, B, C&hellip;, and the model answers one letter. No
-        retrieval, no worked examples, no second question.</p>
+        <p><strong>A tree of questions.</strong> The root question asks what
+        the call is mainly about &mdash; the subject. It does not decide the
+        verdict, because scam and legitimate calls occur under every subject.
+        Every call then answers the common questions, and the questions of its
+        subject. Some answers open follow-up questions, asked only when that
+        answer is chosen. One request per question: the transcript, the
+        question and its options lettered A, B, C&hellip;, and the model
+        answers one letter.</p>
 
-        <p><strong>A distribution, not a pick.</strong> Ollama returns the
-        probability the model put on every letter. The category shown is the
-        most likely one; <strong>P(scam)</strong> is the total probability on the
-        scam options, and the verdict is scam when that is 50% or more. So a call
-        the model splits between two scam categories is still clearly a scam,
-        and one it splits between a scam and a legitimate category shows up as
-        uncertain rather than as a confident pick. On an Ollama too old to
-        return probabilities, the category is the letter it answered and
-        P(scam) is 100% or 0%.</p>
+        <p><strong>Values, summed.</strong> Every option has a value from -1
+        to 1: positive points toward scam, negative toward legitimate.
+        <em>Not stated</em> and the options of a <em>recorded</em> question
+        (who the caller says they are, say) score 0. The call's score is the
+        sum of the values of the options chosen: above 0 is scam, below 0
+        legitimate, and exactly 0 neutral, which counts as not scam when a
+        dataset is scored. The probability the model put on every letter is
+        kept with each answer.</p>
 
-        <p><strong>The options come from reading the transcripts.</strong>
-        Build has the model read a sample of a dataset's calls and name each
-        one's category in a few words, then group those names into a few
-        categories. Each sampled call is then asked the category question, and
-        each category gets the verdict most of the calls put in it carry. No
-        column of the dataset is used. Scam and legitimate options are
-        interleaved so that a preference for early letters cannot line up with
-        one verdict. Edit the file by hand afterwards if an option's text needs
-        it.</p>
+        <p><strong>Quotes.</strong> With quotes required, each answer must come
+        with a few words copied from the transcript. An answer whose quote is
+        not in the transcript counts as Not stated. Options that say something
+        did not happen (marked absence in the file) need no quote.</p>
 
-        <p><strong>Read the score with its source in mind.</strong> When the
-        options were built from the dataset being scored, some of the scored
-        calls set the verdicts. The content-deletion test on the Benchmark
-        page, and datasets the options were not built from, are the fairer
-        reads.</p>
+        <p><strong>Training.</strong> Train starts from an ontology and a
+        dataset and writes a new file. A sample of calls is walked through the
+        tree. Where calls answered Not stated, they are asked the question
+        openly; when they have something to say that no option covers, the
+        model proposes new options, and those calls are asked again. Then each
+        option's value moves toward the labels of the calls that chose it:
+        <code>value = (prior &times; old + scam &minus; legit) / (prior + scam +
+        legit)</code>, so an option chosen by few calls keeps most of its old
+        value. Each question's options are put back in order, strongest scam
+        sign first.</p>
+
+        <p><strong>Read the score with its source in mind.</strong> A file
+        trained on the dataset being scored has seen some of those calls.
+        Train on a training set and score a held-out one; the content-deletion
+        test on the Benchmark page is the other fair read.</p>
       </div>
     </div>
   </div>
@@ -6454,13 +6516,17 @@ function evalCard(d) {
   // The LLM was never fitted on anything, so none of the three applies to
   // it; what matters there is which prompt was used, which is below.
   if (d.kind === 'mcq') {
-    notes.push('Scored with <code>' + esc(d.ontology || '') + '</code>: <em>'
-      + esc(d.question || '') + '</em> P(scam) was measured from the model\'s '
-      + 'probabilities on ' + (d.measured ?? '?') + ' of ' + d.calls + ' calls.');
-    if (d.built_from && d.built_from.split('/').pop() === d.dataset.split('/').pop())
-      notes.push('<strong>These options were built from this dataset.</strong> '
-        + 'Some of the calls scored here set the options\' verdicts. Score a '
-        + 'dataset the options were not built from for the number worth quoting.');
+    notes.push('Scored with <code>' + esc(d.ontology || '') + '</code>: '
+      + (d.questions_asked ?? '?') + ' questions asked over ' + d.calls
+      + ' calls, quotes ' + (d.quotes === false ? 'off' : 'required')
+      + (d.unquoted ? ', ' + d.unquoted + ' answers without a quote counted as '
+         + 'Not stated' : '') + '. The verdict is the sign of the summed answer '
+      + 'values; a score of 0 is neutral and counted as not scam.');
+    if ((d.trained_on || []).some(t => t && t.split('/').pop()
+                                         === d.dataset.split('/').pop()))
+      notes.push('<strong>This ontology was trained on this dataset.</strong> '
+        + 'Some of the calls scored here set its options and values. Score a '
+        + 'held-out set for the number worth quoting.');
   } else if (d.kind === 'llm') {
     notes.push(d.profile
       ? 'Scored under the fitted prompt <code>models/' + esc(d.profile)
@@ -7157,11 +7223,14 @@ async function mcqBoot() {
   ).join('');
   $('mcqbds').innerHTML = cfg.datasets.map(d =>
     `<option value="${esc(d.path)}">${esc(d.name)}</option>`).join('');
-  $('mcqbcalls').value = cfg.build_calls;
-  $('mcqbopts').value = cfg.build_options;
+  const hf = cfg.datasets.find(d => d.name === 'huggingface_1600.csv');
+  if (hf) $('mcqbds').value = hf.path;
+  $('mcqbcalls').value = cfg.onto_calls;
+  $('mcqbnew').value = cfg.onto_new_options;
+  $('mcqbprior').value = cfg.onto_prior;
   $('mcqbds').onchange = mcqBuildForm;
   $('mcqbcalls').addEventListener('input', mcqBuildForm);
-  mcqBuildForm();
+  $('mcqbname').addEventListener('input', () => { $('mcqbname').dataset.typed = '1'; });
 
   $('mcqfile').onchange = () => mcqLoad($('mcqfile').value);
   $('mcqload').onclick = mcqLoadRow;
@@ -7182,10 +7251,11 @@ async function mcqBoot() {
   $('mcqtgo').onclick = mcqTrain;
   mcqSavedList(cfg.questions, null);
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
-    ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value});
+    ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value,
+    quotes: $('mcqquotes').checked, knowledge: $('mcqknow').checked});
   $('mcqsave').onclick = mcqSave;
   $('mcqjson').addEventListener('input', mcqJsonCheck);
-  $('mcqbgo').onclick = mcqBuild;
+  $('mcqbgo').onclick = mcqTrainOnto;
   for (const b of $('mcqtabs').querySelectorAll('button'))
     b.onclick = () => mcqTab(b.dataset.qtab);
   mcqFiles(cfg.ontologies, cfg.default);
@@ -7202,11 +7272,12 @@ function mcqTab(name) {
 async function mcqFiles(list, pick) {
   if (!list.length) {
     $('mcqfile').innerHTML = '<option value="">no ontology in knowledge/</option>';
-    $('mcqerr').textContent = 'knowledge/ holds no one-question ontology - build one';
+    $('mcqerr').textContent = 'knowledge/ holds no ontology - restore knowledge/mcq_ontology.json';
     return;
   }
   $('mcqfile').innerHTML = list.map(o => `<option value="${esc(o.path)}">`
-    + `${esc(o.name)} — ${o.options} options</option>`).join('');
+    + `${esc(o.name)} — ${o.options} subjects, ${o.questions} questions`
+    + `${o.trained ? ', trained' : ''}</option>`).join('');
   $('mcqfile').value = list.some(o => o.path === pick) ? pick : list[0].path;
   await mcqLoad($('mcqfile').value);
 }
@@ -7227,11 +7298,13 @@ async function mcqLoad(path) {
   $('mcqsavename').value = r.path.replace(/^knowledge\//, '');
   $('mcqsavemsg').textContent = '';
   mcqPaint(r);
+  mcqBuildForm();
 }
 
-function verdictPill(v) {
-  return `<span class="pill ${v === 'scam' ? 'truth-scam' : 'truth-legit'}">`
-       + `${v === 'scam' ? 'scam' : 'legit'}</span>`;
+// questions in a list, follow-ups included
+function mcqCountQ(qs) {
+  return (qs || []).reduce((n, q) => n + 1 + q.options.reduce(
+    (m, o) => m + mcqCountQ(o.follow_up), 0), 0);
 }
 
 function mcqPaint(r) {
@@ -7244,18 +7317,28 @@ function mcqPaint(r) {
     $('mcqopts').innerHTML = $('mcqbuilt').innerHTML = '';
     return;
   }
-  const nScam = o.options.filter(x => x.verdict === 'scam').length;
-  $('mcqsub').textContent = `${o.prompt} · ${o.options.length} options, `
-    + `${nScam} scam and ${o.options.length - nScam} legitimate`;
+  const common = mcqCountQ(o.common_questions);
+  const all = common + o.options.reduce((n, x) => n + mcqCountQ(x.questions), 0);
+  $('mcqsub').textContent = `${o.prompt} · ${o.options.length} subjects, `
+    + `${o.common_questions.length} common questions, ${all} questions in all `
+    + `(follow-ups included) · score = the sum of `
+    + 'the answer values: above 0 scam, below 0 legitimate, 0 neutral';
   $('mcqq').textContent = o.prompt;
   $('mcqopts').innerHTML = o.options.map((x, i) => `<div class="mcqopt">`
-    + `<b>${r.letters[i]}</b>${verdictPill(x.verdict)}<span>${esc(x.text)}</span></div>`
-  ).join('');
-  const b = o.built_from;
-  $('mcqbuilt').innerHTML = b && b.dataset
-    ? `built from <code>${esc(b.dataset)}</code>${b.column ? ', column <code>'
-      + esc(b.column) + '</code>' : b.read_from === 'transcripts'
-      ? `, read from ${b.calls} of its transcripts` : ''}` : '';
+    + `<b>${r.letters[i]}</b><span>${esc(x.text)}`
+    + `<span class="muted"> · ${mcqCountQ(x.questions)} questions${
+      x.value ? ` · value ${x.value > 0 ? '+' : ''}${x.value}` : ''}</span></span></div>`
+  ).join('') + `<div class="hint">and ${o.common_questions.length} common `
+    + `questions for every call (${common} with their follow-ups)</div>`;
+  const t = (o.training || [])[o.training ? o.training.length - 1 : 0];
+  $('mcqbuilt').innerHTML = t
+    ? `trained on <code>${esc(t.dataset)}</code>, ${t.calls} calls, ${esc(t.date || '')}`
+      + ` · ${t.added.length} options added, ${t.changed} values changed · `
+      + `training calls ${Math.round(100 * t.training_calls_right_before)}% → `
+      + `${Math.round(100 * t.training_calls_right_after)}% right`
+      + (o.training.length > 1 ? ` · trained ${o.training.length} times` : '')
+    : (o.converted_from ? 'an older one-question file: each verdict is a value '
+       + 'of +1 or -1 on the subject' : 'not trained');
 }
 
 function mcqSize() {
@@ -7283,12 +7366,13 @@ async function mcqAsk() {
   if (!mcqOnto) { $('mcqasker').textContent = 'pick an ontology that loads '
                                             + 'on the left first'; return; }
   $('mcqgo').disabled = true;
-  $('mcqgo').textContent = 'Asking…';
+  $('mcqgo').textContent = 'Classifying…';
   $('mcqanswer').innerHTML = '<div class="card muted">' + esc(MCQ.model)
-    + ' is reading the call…</div>';
-  const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile});
+    + ' is answering the questions, one request each…</div>';
+  const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
+    quotes: $('mcqquotes').checked, knowledge: $('mcqknow').checked});
   $('mcqgo').disabled = false;
-  $('mcqgo').textContent = 'Ask the question';
+  $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
     $('mcqasker').textContent = res.error;
     $('mcqanswer').innerHTML = '';
@@ -7297,31 +7381,56 @@ async function mcqAsk() {
   mcqPaintAnswer(res);
 }
 
-function mcqPaintAnswer(r) {
-  const unread = r.verdict === null || r.verdict === undefined;
-  const cls = unread ? 'uncertain' : (r.verdict === 'Fraud' ? 'scam' : 'legitimate');
-  const word = unread ? 'UNREADABLE' : (r.verdict === 'Fraud' ? 'SCAM' : 'LEGITIMATE');
-  const chosen = unread ? null : r.options[r.choice];
-  const notes = [];
-  if (r.how === 'letter') notes.push('This Ollama returned no probabilities, so '
-    + 'the category is the letter it answered and P(scam) is 100% or 0%. A '
-    + 'recent Ollama gives the full spread.');
-  if (unread) notes.push('The model did not answer with one of the letters ('
-    + esc(r.answered || 'nothing') + '). The benchmark scores such a call '
-    + 'legitimate; it is shown as unreadable here.');
-  if (!unread && chosen && (chosen.verdict === 'scam') !== (r.verdict === 'Fraud'))
-    notes.push('The most likely category is ' + chosen.verdict + ', but the '
-      + (chosen.verdict === 'scam' ? 'legitimate' : 'scam') + ' options '
-      + 'together carry more probability, and the verdict follows the total.');
+function mcqSigned(v) {
+  const c = v > 0 ? 'var(--bad)' : v < 0 ? 'var(--accent)' : 'var(--dim)';
+  return `<span style="color:${c}; font-family:var(--mono)">${v > 0 ? '+' : ''}`
+    + `${Number(v).toFixed(2)}</span>`;
+}
 
-  const rows = r.options.map((o, i) => {
-    const p = r.probs[i] || 0;
-    return `<tr class="${i === r.choice ? 'chosen' : ''}">
-      <td>${o.letter}</td><td>${verdictPill(o.verdict)}</td>
-      <td class="optname">${esc(o.text)}</td>
-      <td class="optbar"><div class="bar ${o.verdict === 'scam' ? 'scam' : ''}">`
-      + `<i style="width:${(100 * p).toFixed(1)}%"></i></div></td>
-      <td>${(100 * p).toFixed(1)}%</td></tr>`;
+function mcqPaintAnswer(r) {
+  const cls = r.verdict === 'scam' ? 'scam' : r.verdict === 'legit'
+    ? 'legitimate' : 'uncertain';
+  const word = r.verdict === 'scam' ? 'SCAM' : r.verdict === 'legit'
+    ? 'LEGITIMATE' : 'NEUTRAL';
+  const root = r.answers[0];
+  const subj = r.subjects.find(x => x.id === r.subject);
+  const notes = [];
+  if (r.answers.some(a => a.how === 'letter')) notes.push('This Ollama returned no '
+    + 'probabilities, so each answer is the letter it gave, at 100%. A recent '
+    + 'Ollama gives the full spread.');
+  if (root.choice === null) notes.push('The model gave no readable subject ('
+    + 'the root question), so only the common questions were asked'
+    + (r.subject ? ', with the subject "' + esc(r.subject) + '"' : '') + '.');
+  if (r.verdict === 'neutral') notes.push('The answer values sum to exactly 0, '
+    + 'so the call is neutral. Scoring a dataset counts neutral as not scam.');
+  const unq = r.answers.filter(a => a.quoted === false).length;
+  if (unq) notes.push(`${unq} answer${unq === 1 ? '' : 's'} came without a quote `
+    + 'found in the transcript, and counted as Not stated (struck through below).');
+
+  const subjRows = r.subjects.map((x, i) => ({x, p: root.probs[i] || 0}))
+    .filter(({p}, i) => p >= 0.01 || i === root.choice)
+    .sort((a, b) => b.p - a.p)
+    .map(({x, p}) => `<tr class="${x.id === r.subject ? 'chosen' : ''}">
+      <td>${x.letter}</td><td class="optname">${esc(x.text)}</td>
+      <td class="optbar"><div class="bar"><i style="width:${(100 * p).toFixed(1)}%"></i></div></td>
+      <td>${(100 * p).toFixed(1)}%</td></tr>`).join('');
+
+  const rows = r.answers.slice(1).map(a => {
+    const depth = Math.max(0, (a.path.split('/').length - 2) / 2);
+    const quote = a.quoted === false
+      ? `<span class="muted"><s>${esc(a.quote || 'no quote')}</s> · not in the `
+        + 'transcript</span>'
+      : a.quote ? `<em>“${esc(a.quote)}”</em>` : '';
+    return `<tr>
+      <td class="optname" style="padding-left:${8 + 18 * depth}px">${depth ? '↳ ' : ''}`
+      + `${esc(a.question)}<div class="muted" style="font-size:11px">${esc(a.path)}`
+      + `${a.role === 'recorded' ? ' · recorded, scores 0' : ''}</div></td>
+      <td class="optname">${a.text === null ? '<span class="muted">unreadable</span>'
+        : esc(a.text)}${a.picked ? `<div class="muted" style="font-size:11px">picked `
+        + `<s>${esc(a.picked)}</s></div>` : ''}</td>
+      <td>${mcqSigned(a.value)}</td>
+      <td>${a.p === null ? '—' : (100 * a.p).toFixed(0) + '%'}</td>
+      <td class="optname">${quote}</td></tr>`;
   }).join('');
 
   $('mcqanswer').innerHTML = `
@@ -7333,26 +7442,36 @@ function mcqPaintAnswer(r) {
         <div class="hint">${esc(r.model)}</div>
       </div>
       <div>
-        <div class="cap">P(scam)</div>
-        <div class="big">${unread ? '—' : (100 * r.p_scam).toFixed(1) + '%'}</div>
-        <div class="hint">the total on the scam options</div>
+        <div class="cap">Score</div>
+        <div class="big">${r.score > 0 ? '+' : ''}${Number(r.score).toFixed(2)}</div>
+        <div class="hint">the sum of the answer values; weighted by the
+          probabilities, ${r.expected > 0 ? '+' : ''}${Number(r.expected).toFixed(2)}</div>
       </div>
       <div style="flex:1; min-width:220px">
-        <div class="cap">Category</div>
-        <div style="font-weight:600">${chosen ? esc(chosen.letter + ' — ' + chosen.text) : '—'}</div>
-        <div class="hint">${chosen ? (100 * r.probs[r.choice]).toFixed(1)
-          + '% on this one option' : ''}</div>
+        <div class="cap">Subject</div>
+        <div style="font-weight:600">${subj ? esc(subj.letter + ' — ' + subj.text) : '—'}</div>
+        <div class="hint">${root.p === null ? 'unreadable' : (100 * root.p).toFixed(1)
+          + '% on this subject'}</div>
       </div>
     </div>
   </div>
   ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
   <div class="card">
     <div class="qp">${esc(r.prompt)}</div>
-    <div class="scroll"><table class="opts">${rows}</table></div>
+    <div class="scroll"><table class="opts">${subjRows}</table></div>
   </div>
-  <div class="card hint">${r.words} words · about ${r.prompt_tokens_estimated}
-    prompt tokens · answered <code>${esc(r.answered || '')}</code>
-    · ${r.elapsed_ms} ms · <code>${esc(r.ontology)}</code></div>`;
+  <div class="card">
+    <div class="qp">The answers, in the order they were asked</div>
+    <div class="scroll"><table class="opts">
+      <tr><th>question</th><th>answer</th><th>value</th><th>p</th><th>quote</th></tr>
+      ${rows}
+      <tr class="chosen"><td class="optname">score</td><td></td>
+        <td>${mcqSigned(r.score)}</td><td></td><td></td></tr>
+    </table></div>
+  </div>
+  <div class="card hint">${r.words} words · ${r.requests} questions asked, one
+    request each · quotes ${r.quotes ? 'required' : 'off'} · knowledge
+    ${r.knowledge ? 'shown' : 'off'} · ${r.elapsed_ms} ms · <code>${esc(r.ontology)}</code></div>`;
 }
 
 // Say, as it is typed, which kind of question this will be. A rough mirror
@@ -7555,17 +7674,18 @@ function mcqQuestionCard(r) {
 
 // which category the scored calls were put in, against their label
 function mcqCategoryCard(d) {
-  const rows = d.options.map(o => `<tr><td>${o.letter}</td>`
-    + `<td class="optname">${esc(o.id)}</td><td>${verdictPill(o.verdict)}</td>`
+  const rows = d.options.filter(o => o.scam || o.legit).map(o =>
+    `<tr><td>${o.letter}</td><td class="optname">${esc(o.id)}</td>`
     + `<td>${o.scam}</td><td>${o.legit}</td></tr>`).join('');
   return `<div class="card">
-    <div class="qp">Which category the model put each call in</div>
+    <div class="qp">Which subject each call was routed to</div>
     <div class="scroll"><table class="opts">
-      <tr><th></th><th>category</th><th>means</th><th>really scam</th>
+      <tr><th></th><th>subject</th><th>really scam</th>
           <th>really legitimate</th></tr>${rows}</table></div>
-    <div class="hint" style="margin-top:10px">A scam filed under a legitimate
-      category is a missed scam; read across a row to see what the model takes
-      each category to be.</div>
+    <div class="hint" style="margin-top:10px">The subject does not decide the
+      verdict - the answers to its questions do. ${d.neutral ?? 0} call${
+      d.neutral === 1 ? '' : 's'} scored exactly 0 (neutral) and counted as not
+      scam.</div>
   </div>`;
 }
 
@@ -7599,22 +7719,26 @@ async function mcqSave() {
 
 function mcqBuildForm() {
   const d = MCQ.datasets.find(x => x.path === $('mcqbds').value);
-  if (d) $('mcqbname').value = 'mcq_' + d.name.replace(/\.csv$/i, '')
-    .replace(/[^A-Za-z0-9_-]+/g, '_') + '.json';
+  const from = (mcqFile || 'knowledge/mcq_ontology.json').replace(/^knowledge\//, '')
+    .replace(/\.json$/, '').replace(/_trained_.*$/, '');
+  if (d && !$('mcqbname').dataset.typed)
+    $('mcqbname').value = from + '_trained_' + d.name.replace(/\.csv$/i, '')
+      .replace(/[^A-Za-z0-9_-]+/g, '_').slice(0, 30) + '.json';
   const n = parseInt($('mcqbcalls').value, 10) || 0;
-  $('mcqbcost').textContent = n ? `${2 * n + 1} requests: a category per call, `
-    + 'one to group them, and the question per call' : '';
+  $('mcqbcost').textContent = n ? `about ${12 * n} requests to walk the calls `
+    + '(a dozen each), and a few more per question for new options' : '';
 }
 
-async function mcqBuild() {
+async function mcqTrainOnto() {
   $('mcqberr').textContent = '';
   const name = $('mcqbname').value.trim();
-  const res = await api('/api/mcq/build', {
-    dataset: $('mcqbds').value, calls: $('mcqbcalls').value,
-    options: $('mcqbopts').value, name: 'knowledge/' + name,
-    overwrite: $('mcqbover').checked});
+  const res = await api('/api/mcq/train', {
+    ontology: mcqFile, dataset: $('mcqbds').value, calls: $('mcqbcalls').value,
+    new_options: $('mcqbnew').value, prior: $('mcqbprior').value,
+    quotes: $('mcqquotes').checked, knowledge: $('mcqknow').checked,
+    name: 'knowledge/' + name, overwrite: $('mcqbover').checked});
   if (res.error) { $('mcqberr').textContent = res.error; return; }
-  mcqBuildRun = {id: res.id, path: res.ontology};
+  mcqBuildRun = {id: res.id, path: 'knowledge/' + name};
   $('mcqbuildlog').textContent = 'starting…';
   mcqTab('build');
   mcqBuildPoll();

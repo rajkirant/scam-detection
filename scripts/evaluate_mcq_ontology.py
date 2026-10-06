@@ -3,11 +3,14 @@
 evaluate_mcq_ontology.py
 
 The benchmark's `mcq` baseline: the MCQ ontology LLM over a labelled
-transcript CSV. One question - the call's category - from the ontology JSON,
-one request per call; see mcq_ontology.py for how the answer becomes a
-category, a P(scam) and a verdict. The metric line matches combined_evaluate.py
-so the numbers drop straight into the benchmark table, and the per-call CSV
-carries <system>_pct (P(scam)) so the run's Scores tab plots it.
+transcript CSV. Each call is walked through the ontology's tree of questions
+(knowledge/mcq_ontology.json unless --ontology says otherwise) - about a
+dozen requests per call - and its score is the sum of the values of the
+answers chosen: scam above 0, legitimate below, neutral at 0 (counted as not
+scam). See mcq_ontology.py. The metric line matches combined_evaluate.py so
+the numbers drop straight into the benchmark table, and the per-call CSV
+carries <system>_pct (the score on 0-100, 50 at a score of 0) so the run's
+Scores tab plots it.
 
 Usage:
     python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_english_646.csv --limit 20 --debug
@@ -92,9 +95,14 @@ def main():
     ap.add_argument("--system", default="mcq_ontology",
                     help="column name in the per-call CSV (run_all.sh passes "
                          "mcq_ontology__stripped for the content-deletion pass)")
+    ap.add_argument("--no-quotes", action="store_true",
+                    help="do not require a supporting quote for each answer")
+    ap.add_argument("--knowledge", action="store_true",
+                    help="show the model the subject's knowledge entries")
     ap.add_argument("--debug", action="store_true",
-                    help="print every option's probability for the first calls")
+                    help="print every answer for the first calls")
     args = ap.parse_args()
+    quotes = not args.no_quotes
 
     try:
         onto = MCQ.load_ontology(args.ontology)
@@ -108,24 +116,29 @@ def main():
           % (len(data), n_fraud, len(data) - n_fraud))
     print("  dataset : %s" % args.csv)
     print("  ontology: %s" % args.ontology)
-    print("  question: %s  (%d options, one request per call)"
-          % (onto["prompt"], len(onto["options"])))
-    for i, o in enumerate(onto["options"]):
-        print("    %s %-5s %s" % (MCQ.LETTERS[i], o["verdict"], o["text"][:62]))
+    print("  tree    : %s - %d subjects, %d common questions, %d in all"
+          % (onto["prompt"], len(onto["options"]),
+             len(onto["common_questions"]), MCQ.count_questions(onto)))
+    print("  answers : quotes %s, knowledge %s"
+          % ("required" if quotes else "off",
+             "shown" if args.knowledge else "off"))
+    print("  verdict : the sign of the summed answer values (0 = neutral, "
+          "counted as not scam)")
     import ollama_ctx
     print("  model   : %s" % ollama_ctx.MODEL)
-    built = (onto.get("built_from") or {}).get("dataset")
-    if built and Path(built).name == Path(args.csv).name:
-        print("  NOTE the options were built from this dataset: some of the "
-              "calls scored here\n       set the options' verdicts - a "
-              "dataset they were not built from is the fairer read.")
+    trained = [t.get("dataset") for t in onto.get("training") or []]
+    if any(t and Path(t).name == Path(args.csv).name for t in trained):
+        print("  NOTE this ontology was trained on this dataset: some of the "
+              "calls scored here\n       set its options and values - a "
+              "held-out set is the fairer read.")
     print("  context window %s for the run"
-          % MCQ.presize([t for t, _ in data], onto))
+          % MCQ.presize([t for t, _ in data], onto, quotes, args.knowledge))
     print("=" * 74)
 
     rows, results = [], []
     t0 = time.time()
-    answers = MCQ.judge_all([t for t, _ in data], onto)
+    answers = MCQ.classify_all([t for t, _ in data], onto, quotes,
+                               args.knowledge)
     for i, (text, true) in enumerate(data, 1):
         try:
             res = next(answers)
@@ -135,15 +148,15 @@ def main():
             # Ollama went away: stop rather than score the rest as Normal
             print("    ! call %d failed: %s" % (i, exc))
             break
-        pred = res["verdict"] or "Normal"     # unreadable scores Normal, as
-        rows.append((pred, true))             # every other LLM system does
+        pred = "Fraud" if res["verdict"] == "scam" else "Normal"
+        rows.append((pred, true))
         results.append(res)
         if args.debug and i <= 3:
             print("\n  --- call %d (true: %s) ---" % (i, true))
-            for j, (o, p) in enumerate(zip(onto["options"], res["probs"])):
-                print("    %s %5.1f%%  %-5s %s" % (MCQ.LETTERS[j], 100 * p,
-                                               o["verdict"], o["id"]))
-            print("    " + MCQ.explain(res, onto))
+            for r in res["answers"]:
+                print("    %+.1f  %-40s %s" % (r["value"], r["path"][:40],
+                                             (r["text"] or "unreadable")[:50]))
+            print("    " + MCQ.explain(res))
         if i % 20 == 0:
             el = time.time() - t0
             print("    MCQ: %d/%d  (%.2fs a call)" % (i, len(data), el / i),
@@ -151,23 +164,23 @@ def main():
 
     elapsed = time.time() - t0
     m = metrics(rows)
-    hows = [r["how"] for r in results]
     print("\n" + "=" * 74)
     show("mcq_ontology", m)
     print("    (%.0fs, %.2fs per call)" % (elapsed, elapsed / max(1, len(rows))))
-    print("    P(scam) measured from logprobs on %d/%d calls%s"
-          % (hows.count("logprobs"), len(hows),
-             "; %d unreadable, scored Normal" % hows.count("unreadable")
-             if "unreadable" in hows else ""))
+    print("    %d calls neutral (score 0, counted as not scam); %d questions "
+          "asked, %d answers without a quote counted as not stated"
+          % (sum(1 for r in results if r["verdict"] == "neutral"),
+             sum(r["requests"] for r in results),
+             sum(1 for r in results for a in r["answers"]
+                 if a["quoted"] is False)))
     print()
-    for line in MCQ.category_table(onto, [r["choice"] for r in results],
-                                   [t == "Fraud" for _, t in rows]):
+    for line in MCQ.subject_table(onto, results,
+                                  [t == "Fraud" for _, t in rows]):
         print("    " + line)
     try:
         from combined_evaluate import show_score_ranges
         show_score_ranges(args.system, rows,
-                          [None if r["p_scam"] is None else 100 * r["p_scam"]
-                           for r in results])
+                          [MCQ.pct(r["score"]) for r in results])
     except ImportError:
         pass
 
@@ -183,9 +196,8 @@ def main():
         for idx, ((text, true), (pred, _), res) in enumerate(
                 zip(data, rows, results)):
             w.writerow([idx, true, text.replace("\n", " ")[:400], pred,
-                        "" if res["p_scam"] is None
-                        else round(100 * res["p_scam"], 2),
-                        res["category"] or "", MCQ.explain(res, onto)])
+                        round(MCQ.pct(res["score"]), 2),
+                        res["subject"] or "", MCQ.explain(res)])
     print("\n  per-call results: %s" % out)
     print("=" * 74)
 

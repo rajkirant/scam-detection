@@ -48,7 +48,7 @@ The ten baselines, in escalating order:
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
-| `mcq` | MCQ ontology LLM: one question, the call's category, from `knowledge/mcq_ontology.json`; P(scam) from the model's probabilities | yes |
+| `mcq` | MCQ ontology LLM: a tree of multiple-choice questions from `knowledge/mcq_ontology.json`; each answer has a value from -1 to 1, and the call's score is their sum (above 0 scam, below 0 legitimate, 0 neutral) | yes |
 | `bert` | fine-tuned BERT classifier, k-fold CV | no (but wants the GPU) |
 
 ---
@@ -629,34 +629,54 @@ Two things the page shows that the benchmark does not:
 ### MCQ ontology page
 
 The classifier after the LLM judge, and the `mcq` baseline from the Benchmark
-page asked one call at a time. It starts from a JSON file in `knowledge/`
-(picked under *Ontology* on the left; `mcq_ontology.json` by default) that
-holds **one question, the call's category**, and a few options. Each option is
-a category of call with a verdict, scam or legit. The options come from
-reading transcripts (see *Build* below). The shipped default file predates
-that: its eight options are the categories `huggingface_1600`'s `type` column
-files calls under (Social Security, refund, computer support and prize calls
-are scam; delivery, insurance, sales and wrong-number calls are legitimate).
-To replace it with one read from the transcripts, build on
-`huggingface_1600.csv`, save as `mcq_ontology.json`, and tick replace.
+page, one call at a time. It starts from a JSON file in `knowledge/` (picked
+under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
+**tree of multiple-choice questions**:
+- **The root question** asks what the call is mainly about: 15 subjects (bank
+  account, tech support, government, delivery, order or refund, bill or
+  subscription, utility, prize, insurance or health, sales, loan or debt,
+  investment, family or personal, wrong number, something else). It does not
+  decide the verdict, because scam and legitimate calls occur under every
+  subject.
+- **Common questions** (7) are asked of every call: recorded message or live
+  person, how the call came about, which details are asked for, how money
+  would move, remote access, whether the caller can be checked, and pressure.
+- **Subject questions** are asked of calls on that subject, such as what a
+  "bank" caller wants done with the money.
+- **Follow-ups** are asked only when the option that opens them is chosen,
+  such as what an ID number is for, once the caller has asked for one.
 
-**Ask** puts the transcript, the question and the lettered options to the
-model, with no retrieval. The model answers one letter, and the probability it
-put on every letter comes back, so the answer is a bar per option:
-- **Category:** the most likely option.
-- **P(scam):** the total on the scam options.
-- **Verdict:** scam at 50% or more.
+Every option has a **value** from -1 to 1: positive points toward scam,
+negative toward legitimate. *Not stated* and every option of a `recorded`
+question score 0. A recorded question, such as who the caller says they are,
+is kept to explain the verdict. The call's **score** is the sum of the values
+of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
+neutral.** When a dataset is scored, neutral counts as not scam. The 50
+questions, their values, and the evidence and notes behind each are in the
+file.
 
-So a call the model splits between two scam categories is still clearly a
-scam, and one split between a scam and a legitimate category shows up as
-uncertain.
+**Classify** walks the transcript through the tree, one request per question
+(about a dozen per call), with no retrieval. The model answers one letter.
+With *Require a quote* ticked, it also copies a few words from the transcript
+that support the answer. An answer whose quote is not in the transcript counts
+as Not stated. Options marked `absence` ("no payment at all") need no quote.
+The result shows:
+- the verdict and the score,
+- the subject, with the probability on each,
+- every question asked, in order, with the answer, its value, the probability
+  the model put on it, and the quote.
+
+*Show the subject's knowledge* adds the subject's legit contrast and its
+entries from `scam_ontology.json` and `scam_patterns.json` to each of its
+questions. The file's `how_to_ask` text is put in the prompts, worded for the
+model.
 
 **Your own question about this call** sits under it, in the Ask tab. Type
 any question about the loaded transcript:
 - **With options:** list them in the question, as `A) … B) …`, one per line
   (`1.` and `-` work too), or `options: very / a little / not at all`. The
   model picks one, and you see its probability on each option, as with the
-  category question.
+  ontology's questions.
 - **Without options:** the model answers in its own words, from the
   transcript and, where the transcript does not say, from what it knows.
 
@@ -692,42 +712,49 @@ another run is using the model. On the command line:
 then `python scripts/mcq_ontology.py question --saved knowledge/questions/asks.json --text "…"`.
 
 The other tabs:
-- **Score a dataset:** the shared run below. Its card adds a table of which
-  category the model put the scam and legitimate calls in.
-- **Edit the JSON:** the file itself. It is saved only if it is a valid
-  one-question ontology (2–12 options, each with a `text` and a `verdict`, at
-  least one of each verdict), and never over `scam_ontology.json` or
+- **Score a dataset:** the shared run below, about a dozen requests per call.
+  Its card adds a table of which subject the scam and legitimate calls were
+  routed to, and how many scored exactly 0.
+- **Edit the JSON:** the file itself. It is saved only if every question has
+  an `id`, a `prompt` and 2–20 options, and every option an `id`, a `text`
+  and a `value` from -1 to 1 (0 for `not_mentioned` and for recorded
+  questions). It is never saved over `scam_ontology.json` or
   `scam_patterns.json`. Save edits under your own name: the shipped file is
-  tracked by git.
-- **Build options from a dataset** (left): makes a new file by reading a
-  dataset's transcripts. No column of the dataset is used, so any dataset
-  works. Build takes three steps:
-  1. The model reads a balanced sample of calls (40 by default, half scam
-     and half not, seed 42). It names each call's category in a few words,
-     and is told not to say whether the call is a scam.
-  2. The model groups those names into a few categories (at most 8 by
-     default).
-  3. Each sampled call is asked the category question over those categories.
+  tracked by git. An older one-question file, with options that carry a
+  verdict instead of a value, still loads: each verdict becomes +1 or -1 on
+  the root question.
+- **Train on a dataset** (left): starts from the ontology picked above and
+  writes a new file, leaving the original as it is. It takes four steps:
+  1. A balanced sample of calls (40 by default, half scam and half not, seed
+     42) is walked through the tree.
+  2. **New options.** For each scored question, the calls that answered Not
+     stated are asked it openly, in a few words. When some of them have a
+     real answer, the model proposes up to 2 new options (by default) that
+     the existing options do not cover. Those calls are then asked the
+     question again with the new options in.
+  3. **New values.** Each option's value moves toward the labels of the calls
+     that chose it, with the old value counting as a few calls' worth (the
+     prior weight, 4 by default):
+     `value = (prior × old + scam − legit) / (prior + scam + legit)`.
+     When the sample is not balanced, each class counts as half. An option
+     no call chose keeps its value. `not_mentioned`, recorded questions and
+     the root's subjects stay at 0.
+  4. Each question's options are put back in order, strongest scam sign
+     first, because the model is told to choose the first option that fits.
 
-  Each category gets the verdict most of the calls put in it carry. A
-  category split exactly evenly leans scam, and is marked `mixed`. A category
-  no call landed on is dropped. Scam and legitimate options are interleaved,
-  so a preference for early letters cannot line up with one verdict. The file
-  keeps the calls it read and the category each one got.
+  Every changed option keeps a `training` history (dataset, counts, value
+  before and after). New options are marked `added`, with the answers they
+  came from. The file's `training` list records each run, including how many
+  of the training calls it got right before and after. Those are the calls it
+  learned from, so score a held-out set for a fair number. Training a trained
+  file adds to its history. A run takes about 12 × calls requests, plus a few
+  for new options. It runs in the background and waits while another run is
+  using the model.
 
-  Build refuses when the categories do not separate scam from legitimate
-  calls: every one holds as many of each, or every one leans the same way.
-  That is what happens on a dataset like `scambait_synthetic_196`, where each
-  scam call has a legitimate call on the same topic. There, train a question
-  the calls differ on instead.
-
-  Building takes 2 × calls + 1 requests to the model, runs in the background,
-  and waits while another run is using the model.
-
-**Read the score with its source in mind.** When the options were built from
-the dataset being scored, some of the scored calls set the verdicts, and the
-score card says so. Other datasets and the content-deletion test are the
-fairer reads.
+**Read the score with its source in mind.** Train on a training set and
+score a held-out one. When the ontology was trained on the dataset being
+scored, the score card says so. The content-deletion test is the other fair
+read.
 
 ### Scoring a whole dataset
 
@@ -910,7 +937,7 @@ python scripts/bert_baseline.py cv --csv datasets/scambait_synthetic_196.csv \
 for training on one dataset and evaluating on another, and `--cpu` to force the
 CPU.
 
-### 4. MCQ ontology LLM (one question, one call per transcript)
+### 4. MCQ ontology LLM (a tree of questions, about a dozen requests per call)
 
 ```bash
 python scripts/evaluate_mcq_ontology.py \
@@ -918,18 +945,27 @@ python scripts/evaluate_mcq_ontology.py \
   --limit 20 --debug                     # the benchmark's mcq step
 
 python scripts/mcq_ontology.py ask --text "Hello, this is the Social Security office..."
-python scripts/mcq_ontology.py build --csv datasets/huggingface_1600.csv \
-  --out knowledge/mcq_huggingface.json --calls 40   # categories read from its transcripts
+python scripts/mcq_ontology.py train --csv datasets/huggingface_1600.csv \
+  --out knowledge/mcq_trained.json --calls 40   # new options and values
+python scripts/export_folds.py --csv datasets/huggingface_1600.csv  # train/test folds
 python scripts/test_mcq_ontology.py      # offline: a fake Ollama
 ```
 
-The question and options come from `knowledge/mcq_ontology.json` (`--ontology`
-for another). The model answers one letter, and its probability on every
-letter gives the category and P(scam), the total on the scam options. See
-[the MCQ ontology page](#mcq-ontology-page). The run prints which category the
-scam and legitimate calls were put in, the P(scam) band table, and a per-call
-CSV with `mcq_ontology_pct` (plotted on the run's Scores tab) and
-`mcq_ontology_category`.
+The tree comes from `knowledge/mcq_ontology.json` (`--ontology` for another,
+such as a trained file). Each answer's value is summed into the call's score:
+above 0 scam, below 0 legitimate, 0 neutral (counted as not scam).
+`--no-quotes` skips the supporting quotes (faster: one letter per question).
+`--knowledge` shows the model the subject's knowledge entries. See
+[the MCQ ontology page](#mcq-ontology-page). The run prints which subject the
+scam and legitimate calls were routed to, how many were neutral, the score
+band table, and a per-call CSV with these columns:
+- `mcq_ontology_pct`: the score on 0–100, 50 at a score of 0, plotted on the
+  run's Scores tab.
+- `mcq_ontology_category`: the subject.
+- `mcq_ontology_why`: the answers that moved the score.
+
+Train on a training fold (`scripts/export_folds.py` writes them) and score the
+matching test fold.
 
 ### 5. Re-print the table for any past run
 
@@ -1022,8 +1058,8 @@ python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19
 python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19 --runs 5
 ```
 
-It runs the MCQ ontology LLM on that one call and prints the probability on
-every option. `--idx` uses the same shuffled order (seed 42) as
+It runs the MCQ ontology LLM on that one call and prints every question
+asked, the answer, its value and its quote, then the score. `--idx` uses the same shuffled order (seed 42) as
 `evaluate_mcq_ontology.py`, so idx 19 here is the same call as idx 19 in a
 prior `--limit 40` run.
 `--runs N` repeats the same transcript to show how much the verdict moves

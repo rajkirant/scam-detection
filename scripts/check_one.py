@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 check_one.py - run the MCQ ontology LLM on a single row from a dataset, and
-show the probability it put on every option.
+show every question it asked, the answer, its value and its quote.
 
 Usage:
     python scripts/check_one.py --csv datasets/paired_scam_legit_198.csv --idx 19
@@ -78,6 +78,10 @@ def main():
     ap.add_argument("--ontology", default=str(MCQ.DEFAULT_ONTOLOGY))
     ap.add_argument("--runs", type=int, default=1,
                     help="repeat the same transcript N times to check stability")
+    ap.add_argument("--no-quotes", action="store_true",
+                    help="do not require a supporting quote for each answer")
+    ap.add_argument("--knowledge", action="store_true",
+                    help="show the model the subject's knowledge entries")
     args = ap.parse_args()
 
     if args.idx is None and args.raw_row is None:
@@ -102,21 +106,17 @@ def main():
         onto = MCQ.load_ontology(args.ontology)
     except ValueError as e:
         sys.exit("ERROR %s" % e)
-    print(onto["prompt"])
 
     verdicts = []
     for i in range(args.runs):
         if args.runs > 1:
             print("\n--- run %d/%d ---" % (i + 1, args.runs))
-        result = MCQ.judge(text, onto)
-        for j, (o, p) in enumerate(zip(onto["options"], result["probs"])):
-            print("  %s %5.1f%%  %-5s  %s%s"
-                  % (MCQ.LETTERS[j], 100 * p, o["verdict"], o["text"][:64],
-                     "  <-" if j == result["choice"] else ""))
-        print(MCQ.explain(result, onto))
-        predicted = result["verdict"] or "Normal"
+        result = MCQ.classify(text, onto, not args.no_quotes, args.knowledge)
+        MCQ._show_call(result, onto)
+        predicted = "Fraud" if result["verdict"] == "scam" else "Normal"
         correct = predicted == true_label
         print("predicted:", predicted,
+              "(neutral: a score of 0)" if result["verdict"] == "neutral" else "",
               " correct" if correct else " WRONG (true: %s)" % true_label)
         verdicts.append(predicted)
 
