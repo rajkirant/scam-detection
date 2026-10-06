@@ -734,6 +734,12 @@ The other tabs:
 - **Score a dataset:** the shared run below, about a dozen requests per call.
   Its card adds a table of which subject the scam and legitimate calls were
   routed to, and how many scored exactly 0.
+- **Question tree:** a picture of the file. Pick a subject to see the
+  questions its calls are asked, in order: each question's options with their
+  values, red for scam and green for legitimate, and follow-ups branching off
+  the option that opens them. It ends with the range this path can score.
+  It follows the editor as you type, labelled as unsaved, once the JSON
+  parses, and is redrawn from the file when you save.
 - **Edit the JSON:** the file itself. It is saved only if every question has
   an `id`, a `prompt` and 2–20 options, and every option an `id`, a `text`
   and a `value` from -1 to 1 (0 for `not_mentioned` and for recorded
