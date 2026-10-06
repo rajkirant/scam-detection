@@ -1,41 +1,43 @@
 #!/usr/bin/env python3
 """
-mcq_ontology.py - the MCQ ontology LLM: one question, the call's category.
+mcq_ontology.py - the MCQ ontology LLM: a tree of multiple-choice questions.
 
 It starts from a JSON file (knowledge/mcq_ontology.json unless told
-otherwise) holding ONE multiple-choice question and a few options. Each option
-is a category of call and carries a verdict, scam or legit:
+otherwise) holding a tree of questions:
 
-    {"prompt": "Which category does this call belong to?",
-     "options": [{"id": "ssn", "text": "Social Security: ...", "verdict": "scam"},
-                 {"id": "delivery", "text": "Delivery: ...", "verdict": "legit"},
-                 ...]}
+  the root question    the subject of the call (bank, tech support,
+                       government ...). It does not decide the verdict.
+  common questions     asked of every call: how the call came about, which
+                       details are asked for, how money would move ...
+  subject questions    asked of calls on that subject
+  follow-ups           asked only when the option that opens them is chosen
 
-No retrieval of any kind. The transcript goes to the model on its own, with
-the question and the options lettered A, B, C ..., and the model answers one
-letter. Ollama returns the probability the model put on every letter, so the
-answer is a distribution over the categories rather than a single pick:
+Every option has a value from -1 to 1: positive points toward scam, negative
+toward legitimate, not_mentioned 0, and every option of a "recorded"
+question 0. One request per question - the transcript, the question and its
+options lettered A, B, C ... - and the model answers one letter, and where
+the answer needs it a short quote from the transcript. An answer whose quote
+is not in the transcript counts as Not stated. Ollama returns the
+probability on every letter, which is kept with each answer.
 
-  category   the option with the most probability
-  P(scam)    the total probability on the options whose verdict is scam
-  verdict    Fraud when P(scam) is 0.5 or more
+  score     the sum of the values of the options chosen
+  verdict   scam above 0, legitimate below 0, neutral at exactly 0
 
-One request per call, generating a token or two.
+About a dozen requests per call; no retrieval unless --knowledge shows the
+subject's entries from scam_ontology.json and scam_patterns.json.
 
-The options come from reading the transcripts, never from a column of the
-dataset. `build` has the model read a balanced sample of a dataset's calls:
-it names each call's category in a few words, groups those names into a few
-categories, and then puts each call back as this multiple choice. Each
-category's verdict is the label most of the calls it got carry. Edit the JSON
-by hand afterwards if an option's text needs it.
+`train` starts from an ontology and a dataset (a training fold) and writes a
+new file: it adds options where calls answered Not stated but had something
+to say, and moves each option's value toward the labels of the calls that
+chose it. See train_ontology().
 
-An Ollama too old to return logprobs still answers the letter: the category
-is then that letter, P(scam) 1 or 0, and the run says so.
+An older one-question file - options with a verdict instead of a value -
+still loads: each verdict becomes a value of +1 or -1 on the root question.
 
     python scripts/mcq_ontology.py ask --text "Hello, this is your bank ..."
-    python scripts/mcq_ontology.py evaluate --csv datasets/zhi_english_646.csv --limit 40
-    python scripts/mcq_ontology.py build --csv datasets/huggingface_1600.csv \\
-        --out knowledge/mcq_huggingface.json --calls 40
+    python scripts/mcq_ontology.py evaluate --csv datasets/huggingface_1600_test1.csv --limit 40
+    python scripts/mcq_ontology.py train --csv datasets/huggingface_1600_train1.csv \\
+        --out knowledge/mcq_trained_fold1.json
 
 Your own question can be trained on a dataset too: the model answers it in a
 few words about a sample of calls, groups the answers into a few options, and
@@ -73,8 +75,8 @@ KNOWLEDGE_DIR = PROJECT_DIR / "knowledge"
 DEFAULT_ONTOLOGY = KNOWLEDGE_DIR / "mcq_ontology.json"
 
 VERDICTS = ("scam", "legit")
-MAX_OPTIONS = 12                 # letters A-L: past that it stops being "a few"
-LETTERS = "ABCDEFGHIJKL"
+MAX_OPTIONS = 12                 # your own question: past that it is not "a few"
+LETTERS = "ABCDEFGHIJKLMNOPQRST"  # one per option; MAX_TREE_OPTIONS of them
 ANSWER_TOKENS = 3                # the letter, and room for a space before it
 TOP_LOGPROBS = 20
 
@@ -88,52 +90,178 @@ Transcript:
 _LOGPROBS_OK = None          # None = not tried yet; False = this Ollama has none
 
 
-# --------------------------------------------------------------- the file
+# ------------------------------------------------------------------- the file
+# The ontology is a tree (see knowledge/mcq_ontology.json):
+#
+#   prompt, options        the root question: the subject of the call. A
+#                          subject carries `questions` of its own, and may
+#                          carry a `value` (a file of the older one-question
+#                          kind does: its options' verdicts become +1 / -1).
+#   common_questions       asked of every call
+#   question               {id, prompt, role?, options}; role "recorded"
+#                          scores 0 on every option
+#   option                 {id, text, value -1..1, absence?, follow_up?}
+#                          follow_up questions are asked only when that
+#                          option is chosen; not_mentioned always scores 0
+#
+# A call's score is the sum of the values of the options chosen, and its
+# verdict is the sign of the score: above 0 scam, below 0 legitimate, 0
+# neutral.
+NOT_MENTIONED = "not_mentioned"
+MAX_TREE_OPTIONS = 20            # one letter each, all inside top_logprobs
+QUOTE_TOKENS = 60                # the letter, then "Quote: ..." on its own line
+ROLE_RECORDED = "recorded"
+
+
+def _is_flat(obj):
+    """A file of the older kind: one question whose options carry a
+    verdict, scam or legit, instead of a value."""
+    opts = obj.get("options") if isinstance(obj, dict) else None
+    return (isinstance(opts, list) and not obj.get("common_questions")
+            and any(isinstance(o, dict) and "verdict" in o for o in opts))
+
+
+def _from_flat(obj):
+    """The older one-question file as a tree: no other questions, and each
+    option's verdict as its value (+1 scam, -1 legit, 0 split evenly)."""
+    out = {k: v for k, v in obj.items() if k != "options"}
+    out["converted_from"] = "one question with verdicts"
+    out["common_questions"] = []
+    out["options"] = []
+    for o in obj["options"]:
+        o = dict(o)
+        v = o.get("verdict")
+        o["value"] = 0.0 if o.get("mixed") else (1.0 if v == "scam" else
+                                                  -1.0 if v == "legit" else
+                                                  o.get("value", 0.0))
+        o.setdefault("questions", [])
+        out["options"].append(o)
+    return out
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _check_question(q, where, probs, root=False):
+    if not isinstance(q, dict):
+        probs.append("%s is not an object" % where)
+        return
+    if not root and not str(q.get("id") or "").strip():
+        probs.append('%s has no "id"' % where)
+    if not str(q.get("prompt") or "").strip():
+        probs.append('%s: "prompt" - the question - is missing or empty' % where)
+    opts = q.get("options")
+    if not isinstance(opts, list):
+        probs.append('%s: "options" must be a list' % where)
+        return
+    if not 2 <= len(opts) <= MAX_TREE_OPTIONS:
+        probs.append("%s: there must be between 2 and %d options; there are %d"
+                     % (where, MAX_TREE_OPTIONS, len(opts)))
+    seen = set()
+    recorded = q.get("role") == ROLE_RECORDED
+    for i, o in enumerate(opts, 1):
+        ow = "%s, option %d" % (where, i)
+        if not isinstance(o, dict):
+            probs.append("%s is not an object" % ow)
+            continue
+        oid = str(o.get("id") or "")
+        if not oid:
+            probs.append('%s has no "id"' % ow)
+        elif oid in seen:
+            probs.append('%s: the id "%s" is used twice' % (ow, oid))
+        seen.add(oid)
+        if not str(o.get("text") or "").strip():
+            probs.append('%s has no "text"' % ow)
+        v = o.get("value", 0.0)
+        if not _num(v) or not -1.0 <= v <= 1.0:
+            probs.append('%s (%s): "value" must be a number from -1 to 1, not %r'
+                         % (ow, oid, v))
+        elif v and oid == NOT_MENTIONED:
+            probs.append("%s: not_mentioned must score 0" % ow)
+        elif v and recorded:
+            probs.append("%s (%s): a recorded question scores 0 on every "
+                         "option" % (ow, oid))
+        fu = o.get("follow_up", [])
+        if not isinstance(fu, list):
+            probs.append('%s: "follow_up" must be a list of questions' % ow)
+            continue
+        for j, f in enumerate(fu, 1):
+            _check_question(f, "%s/%s/%s" % (where, oid,
+                                             (isinstance(f, dict) and f.get("id"))
+                                             or "follow-up %d" % j), probs)
+
+
+def _check_list(qs, where, probs):
+    if not isinstance(qs, list):
+        probs.append('%s must be a list of questions' % where)
+        return
+    ids = set()
+    for i, q in enumerate(qs, 1):
+        qid = isinstance(q, dict) and q.get("id")
+        if qid in ids:
+            probs.append('%s: the question id "%s" is used twice' % (where, qid))
+        ids.add(qid)
+        _check_question(q, "%s/%s" % (where, qid or "question %d" % i), probs)
+
 
 def check_ontology(obj):
-    """Every problem with an ontology, as a list of sentences; [] if none."""
+    """Every problem with an ontology file, as a list of sentences; [] if
+    none. Takes the tree, or a file of the older one-question kind."""
     if not isinstance(obj, dict):
         return ["the file must hold one JSON object, {...}"]
+    if obj.get("kind") == "question":
+        return ["this is a saved question, not an ontology"]
+    if _is_flat(obj):
+        probs = []
+        for i, o in enumerate(obj["options"], 1):
+            if isinstance(o, dict) and o.get("verdict") not in VERDICTS:
+                probs.append('option %d: "verdict" must be "scam" or "legit", '
+                             'not %r' % (i, o.get("verdict")))
+        if probs:
+            return probs
+        obj = _from_flat(obj)
     probs = []
-    if not str(obj.get("prompt") or "").strip():
-        probs.append('"prompt" - the question - is missing or empty')
-    opts = obj.get("options")
-    if not isinstance(opts, list):
-        return probs + ['"options" must be a list of options']
-    if not 2 <= len(opts) <= MAX_OPTIONS:
-        probs.append("there must be between 2 and %d options; there are %d"
-                     % (MAX_OPTIONS, len(opts)))
-    seen = set()
-    for i, o in enumerate(opts, 1):
-        if not isinstance(o, dict):
-            probs.append("option %d is not an object" % i)
-            continue
-        if not str(o.get("text") or "").strip():
-            probs.append('option %d has no "text"' % i)
-        if o.get("verdict") not in VERDICTS:
-            probs.append('option %d: "verdict" must be "scam" or "legit", not %r'
-                         % (i, o.get("verdict")))
-        oid = str(o.get("id") or "opt%d" % i)
-        if oid in seen:
-            probs.append('option %d: the id "%s" is used twice' % (i, oid))
-        seen.add(oid)
-    verdicts = {o.get("verdict") for o in opts if isinstance(o, dict)}
-    if isinstance(opts, list) and len(opts) >= 2 and not set(VERDICTS) <= verdicts:
-        probs.append("at least one option must be scam and one legit - "
-                     "otherwise every call gets the same verdict")
+    _check_question(obj, "the root question", probs, root=True)
+    for o in obj.get("options") or []:
+        if isinstance(o, dict):
+            _check_list(o.get("questions", []), str(o.get("id")), probs)
+    _check_list(obj.get("common_questions", []), "common", probs)
     return probs
 
 
-def normalise(obj):
-    """The ontology with ids filled in and text trimmed. Assumes it checked."""
-    out = dict(obj)
-    out["prompt"] = str(obj["prompt"]).strip()
-    out["options"] = []
-    for i, o in enumerate(obj["options"], 1):
+def _norm_question(q):
+    q = dict(q)
+    q["prompt"] = " ".join(str(q["prompt"]).split())
+    opts = []
+    for o in q["options"]:
         o = dict(o)
-        o["id"] = str(o.get("id") or "opt%d" % i)
+        o["id"] = str(o["id"])
         o["text"] = " ".join(str(o["text"]).split())
-        out["options"].append(o)
+        o["value"] = float(o.get("value", 0.0))
+        o["follow_up"] = [_norm_question(f) for f in o.get("follow_up", [])]
+        opts.append(o)
+    q["options"] = opts
+    return q
+
+
+def normalise(obj):
+    """The tree with defaults filled in. Assumes it checked."""
+    if _is_flat(obj):
+        obj = _from_flat(obj)
+    out = dict(obj)
+    out["prompt"] = " ".join(str(obj["prompt"]).split())
+    out["common_questions"] = [_norm_question(q)
+                               for q in obj.get("common_questions", [])]
+    subs = []
+    for o in obj["options"]:
+        o = dict(o)
+        o["id"] = str(o["id"])
+        o["text"] = " ".join(str(o["text"]).split())
+        o["value"] = float(o.get("value", 0.0))
+        o["questions"] = [_norm_question(q) for q in o.get("questions", [])]
+        subs.append(o)
+    out["options"] = subs
     return out
 
 
@@ -149,7 +277,9 @@ def load_ontology(path=None):
                          % (path.name, e.msg, e.lineno, e.colno))
     probs = check_ontology(obj)
     if probs:
-        raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
+        raise ValueError("%s: %s" % (path.name, "; ".join(probs[:8])
+                                     + ("; and %d more" % (len(probs) - 8)
+                                        if len(probs) > 8 else "")))
     return normalise(obj)
 
 
@@ -162,8 +292,28 @@ def is_mcq_ontology(path):
         return False
 
 
+def iter_questions(onto):
+    """(path, question, subject id or None) for every question in the tree,
+    follow-ups included. Paths: common/<q>, <subject>/<q>, and
+    <parent path>/<option>/<q> for a follow-up."""
+    def walk(qs, prefix, subject):
+        for q in qs:
+            path = "%s/%s" % (prefix, q["id"])
+            yield path, q, subject
+            for o in q["options"]:
+                yield from walk(o["follow_up"], "%s/%s" % (path, o["id"]),
+                                subject)
+    yield from walk(onto["common_questions"], "common", None)
+    for s in onto["options"]:
+        yield from walk(s["questions"], s["id"], s["id"])
+
+
+def count_questions(onto):
+    return sum(1 for _ in iter_questions(onto))
+
+
 def list_ontologies():
-    """Every one-question ontology in knowledge/, the default first."""
+    """Every ontology in knowledge/, the default first."""
     out = []
     for p in sorted(KNOWLEDGE_DIR.glob("*.json")):
         if not is_mcq_ontology(p):
@@ -171,27 +321,14 @@ def list_ontologies():
         o = load_ontology(p)
         out.append({"path": "knowledge/" + p.name, "name": p.name,
                     "prompt": o["prompt"], "options": len(o["options"]),
+                    "questions": count_questions(o),
+                    "trained": len(o.get("training") or []),
                     "default": p.name == DEFAULT_ONTOLOGY.name})
     out.sort(key=lambda d: (not d["default"], d["name"]))
     return out
 
 
-# ------------------------------------------------------------- the question
-
-def question(onto):
-    """The question and its lettered options, as the model sees them."""
-    n = len(onto["options"])
-    lines = [onto["prompt"]]
-    lines += ["%s - %s" % (LETTERS[i], o["text"])
-              for i, o in enumerate(onto["options"])]
-    lines.append("Answer with exactly one letter, A to %s." % LETTERS[n - 1])
-    lines.append("Answer:")
-    return "\n".join(lines)
-
-
-def build_prompt(transcript, onto):
-    return HEAD.format(transcript=transcript) + question(onto)
-
+# ---------------------------------------------------------- asking a question
 
 def answer_letter(token, n):
     """The letter (A..) a token answers with among n options, or None."""
@@ -199,7 +336,7 @@ def answer_letter(token, n):
     return t if len(t) == 1 and t in LETTERS[:n] else None
 
 
-def generate(prompt, n_tokens, top=TOP_LOGPROBS, timeout=300):
+def generate(prompt, n_tokens, top=TOP_LOGPROBS, timeout=300, stop=None):
     """(text, [(token, [(alternative, logprob), ...]) per generated token]).
     The alternatives are empty when this Ollama returns no logprobs."""
     num_ctx = ollama_ctx.fit_num_ctx(prompt, n_tokens + 2, where="mcq")
@@ -209,6 +346,8 @@ def generate(prompt, n_tokens, top=TOP_LOGPROBS, timeout=300):
         "options": {"temperature": 0.0, "num_predict": n_tokens,
                     "num_ctx": int(num_ctx)},
     }
+    if stop:
+        payload["options"]["stop"] = list(stop)
     try:
         body = llm_judge._post("/api/generate", payload, timeout)
     except urllib.error.HTTPError as e:
@@ -232,34 +371,20 @@ def _note_no_logprobs():
     if _LOGPROBS_OK is None:
         _LOGPROBS_OK = False
         print("    NOTE this Ollama returns no logprobs (it needs a recent "
-              "version): the category is the letter it answered and P(scam) "
-              "is 1 or 0")
+              "version): each answer is the letter it gave, at 100%")
 
 
-def judge(transcript, onto):
-    """Ask the question about one transcript. One request.
-
-    Returns a dict:
-      probs     probability of each option, in order (sums to 1 when read)
-      choice    index of the most likely option, or None if unreadable
-      category  that option's id, text its text, category_verdict its verdict
-      p_scam    total probability on the scam options, or None
-      verdict   "Fraud" | "Normal" | None (None: no letter could be read)
-      how       "logprobs" (measured) | "letter" (no logprobs: the answer
-                alone) | "unreadable"
-      answered  what the model actually wrote
-    """
+def read_letter(text, steps, n):
+    """(probs, how) from one answer: the probability on each of n letters,
+    measured from the logprobs at the first letter the model wrote.
+    how: "logprobs" | "letter" (no logprobs: the answer alone, at 1.0) |
+    "unreadable" (probs all 0)."""
     global _LOGPROBS_OK
-    opts = onto["options"]
-    n = len(opts)
-    text, steps = generate(build_prompt(transcript, onto), ANSWER_TOKENS)
     has_lp = any(alts for _, alts in steps)
     if has_lp:
         _LOGPROBS_OK = True
     else:
         _note_no_logprobs()
-
-    probs, how = None, "unreadable"
     # the first token that is an option letter; a leading space or "**" may
     # come before it
     li = next((i for i, (tok, _) in enumerate(steps) if answer_letter(tok, n)),
@@ -270,85 +395,319 @@ def judge(transcript, onto):
             k = answer_letter(tok, n)
             if k:
                 mass[LETTERS.index(k)] += math.exp(lp)
-        total = sum(mass)
-        if has_lp and total > 0:
-            probs, how = [m / total for m in mass], "logprobs"
-        else:
-            probs, how = [0.0] * n, "letter"
-            probs[LETTERS.index(answer_letter(steps[li][0], n))] = 1.0
-    elif not steps:
-        k = answer_letter((text.split() or [""])[0], n)
+        if has_lp and sum(mass) > 0:
+            return [m / sum(mass) for m in mass], "logprobs"
+        probs = [0.0] * n
+        probs[LETTERS.index(answer_letter(steps[li][0], n))] = 1.0
+        return probs, "letter"
+    if not steps:
+        k = answer_letter((re.split(r"[\s\n]", text.strip()) or [""])[0], n)
         if k:
-            probs, how = [0.0] * n, "letter"
+            probs = [0.0] * n
             probs[LETTERS.index(k)] = 1.0
-
-    if probs is None:
-        return {"probs": [0.0] * n, "choice": None, "category": None,
-                "text": None, "category_verdict": None, "p_scam": None,
-                "verdict": None, "how": "unreadable", "answered": text}
-    choice = max(range(n), key=lambda i: probs[i])
-    p_scam = sum(p for p, o in zip(probs, opts) if o["verdict"] == "scam")
-    return {"probs": probs, "choice": choice, "category": opts[choice]["id"],
-            "text": opts[choice]["text"],
-            "category_verdict": opts[choice]["verdict"],
-            "p_scam": p_scam, "verdict": "Fraud" if p_scam >= 0.5 else "Normal",
-            "how": how, "answered": text}
+            return probs, "letter"
+    return [0.0] * n, "unreadable"
 
 
-def presize(transcripts, onto):
-    """Size the context window once, for the longest call in the run, so the
-    model is loaded once rather than reloaded each time a longer call turns
-    up (the window only grows - see ollama_ctx.STICKY)."""
-    if not transcripts:
+_QUOTE = re.compile(r"quote\s*:\s*(.+)", re.I)
+_WORDS = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+
+
+def find_quote(text):
+    """The quote after "Quote:" in an answer, or None."""
+    m = _QUOTE.search(text or "")
+    if not m:
         return None
-    longest = max(transcripts, key=lambda t: len(t or ""))
-    return ollama_ctx.fit_num_ctx(build_prompt(longest, onto),
-                                  ANSWER_TOKENS + 2, where="mcq")
+    q = m.group(1).strip().split("\n")[0].strip().strip("\"'“”").strip()
+    return None if not q or q.lower().rstrip(".") in ("none", "n/a", "-") else q
 
 
-def explain(res, onto):
-    """A short account of one answer: the category, then P(scam)."""
-    if res["choice"] is None:
-        return "unreadable answer: %r" % (res["answered"] or "")[:60]
-    o = onto["options"][res["choice"]]
-    return ("%s - %s (%s, %.0f%%); P(scam) %.0f%%%s"
-            % (LETTERS[res["choice"]], o["id"], o["verdict"],
-               100 * res["probs"][res["choice"]], 100 * res["p_scam"],
-               "" if res["how"] == "logprobs" else ", no logprobs"))
+def quote_found(quote, transcript):
+    """Is the quote in the transcript? Compared word by word, ignoring case
+    and punctuation; a quote of three words or more may differ a little - at
+    least 80% of its words must run on unbroken in the transcript."""
+    q = _WORDS.findall((quote or "").lower())
+    if not q:
+        return False
+    t = _WORDS.findall((transcript or "").lower())
+    if " %s " % " ".join(q) in " %s " % " ".join(t):
+        return True
+    if len(q) < 3:
+        return False
+    import difflib
+    m = difflib.SequenceMatcher(None, t, q, autojunk=False).find_longest_match(
+        0, len(t), 0, len(q))
+    return m.size >= 0.8 * len(q)
 
 
-def category_table(onto, chosen, truths):
-    """Which category the model put each call in, against the true label.
+def _rules(onto):
+    """The file's how_to_ask, worded for the model: it sees option texts,
+    never ids, so not_mentioned is "Not stated" to it."""
+    h = {k: (v.replace("not_mentioned", '"Not stated"')
+             if isinstance(v, str) else v)
+         for k, v in (onto.get("how_to_ask") or {}).items()}
+    return {
+        "route": h.get("route") or ("This question is only about the subject "
+                                    "of the call, not about whether it is a "
+                                    "scam."),
+        "order": h.get("order") or ("Options run from the strongest scam sign "
+                                    "to the strongest legitimate sign, with "
+                                    "Not stated last. When several options "
+                                    "fit, choose the first one that fits."),
+        "absence": h.get("absence") or ("An option that says something did not "
+                                        "happen needs no quote. Choose it only "
+                                        "when the transcript covers the part "
+                                        "of the call where it would have "
+                                        "happened."),
+    }
 
-    The one table that says what the model actually did: whether the scam
-    calls landed in scam categories, and which legitimate category a missed
-    scam was taken for. `chosen` holds option indexes (None = unreadable),
-    `truths` booleans (True = scam).
+
+def knowledge_context(subject):
+    """What the subject's knowledge entries say, for the prompt: its
+    legit_contrast, and the scam_ontology.json nodes and scam_patterns.json
+    patterns it lists. '' when it lists none."""
+    lines = []
+    if subject.get("legit_contrast"):
+        lines.append("What the legitimate version looks like: "
+                     + subject["legit_contrast"])
+    know = subject.get("knowledge") or {}
+    want_nodes = set(know.get("scam_ontology.json") or [])
+    want_pats = set(know.get("scam_patterns.json") or [])
+    try:
+        if want_nodes:
+            nodes = json.loads((KNOWLEDGE_DIR / "scam_ontology.json")
+                               .read_text(encoding="utf-8")).get("nodes", [])
+            for n in nodes:
+                if n.get("id") in want_nodes and n.get("legit_contrast"):
+                    lines.append("%s - the legitimate version: %s"
+                                 % (n.get("name") or n["id"],
+                                    n["legit_contrast"]))
+        if want_pats:
+            pats = json.loads((KNOWLEDGE_DIR / "scam_patterns.json")
+                              .read_text(encoding="utf-8")).get("patterns", [])
+            for p in pats:
+                if p.get("id") in want_pats:
+                    lines.append("Known scam pattern: %s %s"
+                                 % (p.get("behaviours", ""),
+                                    p.get("signals", "")))
+    except (OSError, ValueError):
+        pass
+    return "\n".join("- " + " ".join(l.split()) for l in lines)
+
+
+def question_prompt(transcript, q, onto, root=False, quotes=True,
+                    context=""):
+    """The prompt for one question about one call."""
+    n = len(q["options"])
+    rules = _rules(onto)
+    lines = []
+    if context:
+        lines += ["Background on calls of this kind:", context, ""]
+    lines.append("Question: " + q["prompt"])
+    # absence options are marked, as the file's own rule calls them
+    lines += ["%s - %s%s" % (LETTERS[i], o["text"],
+                             " (absence)" if o.get("absence") else "")
+              for i, o in enumerate(q["options"])]
+    lines.append("")
+    if root:
+        lines.append(rules["route"])
+    else:
+        lines.append(rules["order"])
+        if any(o.get("absence") for o in q["options"]):
+            lines.append(rules["absence"])
+    if quotes and not root and q.get("role") != ROLE_RECORDED:
+        lines.append("Answer with exactly one letter, A to %s. Then, on the "
+                     "next line, write \"Quote:\" and a few words copied "
+                     "exactly from the transcript that support the answer "
+                     "(\"Quote: none\" for Not stated, or for an option that "
+                     "says something did not happen)." % LETTERS[n - 1])
+    else:
+        lines.append("Answer with exactly one letter, A to %s."
+                     % LETTERS[n - 1])
+    lines.append("Answer:")
+    return HEAD.format(transcript=transcript) + "\n".join(lines)
+
+
+def _needs_quote(q, o, root, quotes):
+    return (quotes and not root and q.get("role") != ROLE_RECORDED
+            and o["id"] != NOT_MENTIONED and not o.get("absence"))
+
+
+def ask(transcript, q, onto, root=False, quotes=True, context="",
+        timeout=300):
+    """Put one question about one call to the model. One request.
+
+    Returns {"probs", "how", "choice": the option the model picked (None:
+    unreadable), "effective": the option that counts - not_mentioned when
+    the pick needs a quote and none was found in the transcript, "quote",
+    "quoted": True | False | None (no quote needed), "answered": the raw
+    reply}.
     """
-    opts = onto["options"]
-    c = Counter((ch, bool(t)) for ch, t in zip(chosen, truths))
-    lines = ["%-3s %-26s %-6s %7s %7s" % ("", "category the model chose",
-                                           "means", "scam", "legit")]
-    for i, o in enumerate(opts):
-        s, l = c[(i, True)], c[(i, False)]
-        if s or l:
-            lines.append("%-3s %-26s %-6s %7d %7d"
-                         % (LETTERS[i], o["id"][:26], o["verdict"], s, l))
-    s, l = c[(None, True)], c[(None, False)]
-    if s or l:
-        lines.append("%-3s %-26s %-6s %7d %7d" % ("", "(unreadable)", "", s, l))
-    return lines
+    n = len(q["options"])
+    quoting = quotes and not root and q.get("role") != ROLE_RECORDED
+    prompt = question_prompt(transcript, q, onto, root, quotes, context)
+    text, steps = generate(prompt, QUOTE_TOKENS if quoting else ANSWER_TOKENS,
+                           timeout=timeout,
+                           stop=["\n\n", "\nQuestion"] if quoting else None)
+    probs, how = read_letter(text, steps, n)
+    choice = None if how == "unreadable" else max(range(n),
+                                                  key=lambda i: probs[i])
+    effective, quote, quoted = choice, None, None
+    if choice is not None:
+        o = q["options"][choice]
+        if _needs_quote(q, o, root, quotes):
+            quote = find_quote(text)
+            quoted = bool(quote) and quote_found(quote, transcript)
+            if not quoted:
+                effective = next((i for i, x in enumerate(q["options"])
+                                  if x["id"] == NOT_MENTIONED), None)
+        elif quoting:
+            quote = find_quote(text)
+    return {"probs": probs, "how": how, "choice": choice,
+            "effective": effective, "quote": quote, "quoted": quoted,
+            "answered": text}
 
 
-def judge_all(transcripts, onto, parallel=None):
-    """judge() over many calls, in order. SCAM_LLM_PARALLEL (or `parallel`)
-    sends that many at once - which only helps if Ollama serves requests in
-    parallel (OLLAMA_NUM_PARALLEL) and the GPU has room for it."""
+# ------------------------------------------------------------ one whole call
+
+def verdict_of(score):
+    """The sign of the score: scam above 0, legit below, neutral at 0."""
+    s = round(score, 6)
+    return "scam" if s > 0 else "legit" if s < 0 else "neutral"
+
+
+def pct(score):
+    """The score on 0-100 for the Scores tab: 50 at 0, 73 at +1, 27 at -1."""
+    return 100.0 / (1.0 + math.exp(-score))
+
+
+def _answer_record(path, q, a, root=False):
+    opts = q["options"]
+    eff = a["effective"]
+    o = opts[eff] if eff is not None else None
+    return {"path": path, "question": q["prompt"], "role": q.get("role"),
+            "root": root,
+            "choice": a["choice"], "effective": eff,
+            # what the model picked, when a missing quote overruled it
+            "picked": (opts[a["choice"]]["text"]
+                       if a["choice"] is not None and a["choice"] != eff
+                       else None),
+            "option": o["id"] if o else None,
+            "text": o["text"] if o else None,
+            "value": o["value"] if o else 0.0,
+            "p": a["probs"][a["choice"]] if a["choice"] is not None else None,
+            "probs": [round(p, 4) for p in a["probs"]],
+            "expected": sum(p * x["value"] for p, x in zip(a["probs"], opts)),
+            "how": a["how"], "quote": a["quote"], "quoted": a["quoted"]}
+
+
+def classify(transcript, onto, quotes=True, knowledge=False, timeout=300):
+    """Walk the tree for one call: the root question, then the common
+    questions and the subject's, each follow-up straight after the answer
+    that opens it. One request per question.
+
+    Returns {"subject", "subject_text", "answers": [one record per question
+    asked, the root first], "score", "expected" (the same sum with each
+    answer weighted by its probabilities), "verdict": scam | legit |
+    neutral, "requests", "measured": answers read from logprobs}.
+    """
+    root = {"prompt": onto["prompt"], "options": onto["options"]}
+    a = ask(transcript, root, onto, root=True, quotes=quotes, timeout=timeout)
+    answers = [_answer_record("root", root, a, root=True)]
+    subject = None
+    if a["choice"] is not None:
+        subject = onto["options"][a["choice"]]
+    else:
+        subject = next((s for s in onto["options"] if s["id"] == "other"), None)
+    context = knowledge_context(subject) if knowledge and subject else ""
+    queue = [("common/" + q["id"], q) for q in onto["common_questions"]]
+    if subject:
+        queue += [("%s/%s" % (subject["id"], q["id"]), q)
+                  for q in subject["questions"]]
+    i = 0
+    while i < len(queue):
+        path, q = queue[i]
+        a = ask(transcript, q, onto, quotes=quotes, context=context,
+                timeout=timeout)
+        rec = _answer_record(path, q, a)
+        answers.append(rec)
+        if a["effective"] is not None:
+            o = q["options"][a["effective"]]
+            queue[i + 1:i + 1] = [("%s/%s/%s" % (path, o["id"], f["id"]), f)
+                                  for f in o["follow_up"]]
+        i += 1
+    return _summarise(answers, subject)
+
+
+def _summarise(answers, subject):
+    score = sum(r["value"] for r in answers)
+    return {"subject": subject["id"] if subject else None,
+            "subject_text": subject["text"] if subject else None,
+            "answers": answers, "score": round(score, 4),
+            "expected": round(sum(r["expected"] for r in answers), 4),
+            "verdict": verdict_of(score), "requests": len(answers),
+            "measured": sum(1 for r in answers if r["how"] == "logprobs")}
+
+
+def classify_all(transcripts, onto, quotes=True, knowledge=False,
+                 parallel=None):
+    """classify() over many calls, in order. SCAM_LLM_PARALLEL (or
+    `parallel`) sends that many calls at once - which only helps if Ollama
+    serves requests in parallel (OLLAMA_NUM_PARALLEL) and the GPU has room."""
     from concurrent.futures import ThreadPoolExecutor
     parallel = max(1, int(parallel or os.environ.get("SCAM_LLM_PARALLEL") or 1))
     with ThreadPoolExecutor(max_workers=parallel) as pool:
-        for res in pool.map(lambda t: judge(t, onto), transcripts):
+        for res in pool.map(lambda t: classify(t, onto, quotes, knowledge),
+                            transcripts):
             yield res
+
+
+def presize(transcripts, onto, quotes=True, knowledge=False):
+    """Size the context window once, for the longest call and the longest
+    question, so the model is loaded once rather than reloaded each time a
+    longer prompt turns up (the window only grows - see ollama_ctx.STICKY)."""
+    if not transcripts:
+        return None
+    longest = max(transcripts, key=lambda t: len(t or ""))
+    qs = [q for _, q, _ in iter_questions(onto)]
+    qs.append({"prompt": onto["prompt"], "options": onto["options"]})
+    biggest = max(qs, key=lambda q: len(q["prompt"]) + sum(
+        len(o["text"]) + 6 for o in q["options"]))
+    ctx = ""
+    if knowledge:
+        ctx = max((knowledge_context(s) for s in onto["options"]), key=len,
+                  default="")
+    return ollama_ctx.fit_num_ctx(
+        question_prompt(longest, biggest, onto, False, quotes, ctx),
+        QUOTE_TOKENS + 2, where="mcq")
+
+
+def explain(res):
+    """A short account of one call: subject, score, the answers that moved
+    it."""
+    moved = ["%s %+.1f" % (r["option"], r["value"]) for r in res["answers"]
+             if r["value"] and not r["root"]]
+    unq = sum(1 for r in res["answers"] if r["quoted"] is False)
+    return ("%s; score %+.2f (%s)%s%s"
+            % (res["subject"] or "no subject", res["score"], res["verdict"],
+               ": " + ", ".join(moved) if moved else "",
+               "; %d answer%s without a quote counted as not stated"
+               % (unq, "" if unq == 1 else "s") if unq else ""))
+
+
+def subject_table(onto, results, truths):
+    """Which subject each call was routed to, against the true label, with
+    how many of each the score called scam."""
+    c = Counter((r["subject"], bool(t)) for r, t in zip(results, truths))
+    lines = ["%-3s %-22s %6s %6s" % ("", "subject", "scam", "legit")]
+    for i, s in enumerate(onto["options"]):
+        a, b = c[(s["id"], True)], c[(s["id"], False)]
+        if a or b:
+            lines.append("%-3s %-22s %6d %6d" % (LETTERS[i], s["id"][:22], a, b))
+    a, b = c[(None, True)], c[(None, False)]
+    if a or b:
+        lines.append("%-3s %-22s %6d %6d" % ("", "(unreadable)", a, b))
+    return lines
 
 
 # ------------------------------------------------- your own question
@@ -425,29 +784,7 @@ def choose(transcript, stem, opts, timeout=300):
     n = len(opts)
     prompt = _mcq_prompt(transcript, stem, opts)
     text, steps = generate(prompt, ANSWER_TOKENS, timeout=timeout)
-    has_lp = any(alts for _, alts in steps)
-    if not has_lp:
-        _note_no_logprobs()
-    probs, how = None, "unreadable"
-    li = next((i for i, (tok, _) in enumerate(steps)
-               if answer_letter(tok, n)), None)
-    if li is not None:
-        mass = [0.0] * n
-        for tok, lp in steps[li][1]:
-            k = answer_letter(tok, n)
-            if k:
-                mass[LETTERS.index(k)] += math.exp(lp)
-        if has_lp and sum(mass) > 0:
-            probs, how = [x / sum(mass) for x in mass], "logprobs"
-        else:
-            probs, how = [0.0] * n, "letter"
-            probs[LETTERS.index(answer_letter(steps[li][0], n))] = 1.0
-    elif not steps:
-        k = answer_letter((text.split() or [""])[0], n)
-        if k:
-            probs, how = [0.0] * n, "letter"
-            probs[LETTERS.index(k)] = 1.0
-    probs = probs or [0.0] * n
+    probs, how = read_letter(text, steps, n)
     choice = (max(range(n), key=lambda i: probs[i])
               if how != "unreadable" else None)
     return probs, choice, how, text, prompt
@@ -631,8 +968,7 @@ def learn_options(sample, stem, listed=None, max_options=TRAIN_OPTIONS,
             "training only counts\n  which calls land on each" % len(opts))
     else:
         log("\n  step 1 of 3: the model %s in a few words"
-            % ("names each call's category" if stem == CATEGORY_QUESTION
-               else "answers the question about each call"))
+            % "answers the question about each call")
         for i, (text, y) in enumerate(sample, 1):
             answers[i - 1] = short_answer(text, stem, instruction)
             log("    %2d/%d  %-5s  %s" % (i, len(sample),
@@ -734,115 +1070,6 @@ def train_question(csv_path, question_text, calls=TRAIN_CALLS,
     }
 
 
-# ------------------------------------- the ontology, built from transcripts
-# The ontology's options are the categories the model finds when it reads a
-# dataset's calls - never a column of the dataset. It is the same three steps
-# as training a question: the model names each sampled call's category, groups
-# those names into a few categories, and puts each call back as a multiple
-# choice over them. Each category's verdict is then the label most of the
-# calls that landed on it carry.
-BUILD_CALLS = 40
-BUILD_OPTIONS = 8
-CATEGORY_QUESTION = "Which category does this call belong to?"
-CATEGORY_INSTRUCTION = (
-    "Name the category of this call in a few words - at most 8: what kind of "
-    "call it is, who is calling and what they want. Do not say whether it is "
-    "a scam or legitimate.")
-
-
-def _slug(text, taken):
-    base = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:30] or "option"
-    sid, k = base, 2
-    while sid in taken:
-        sid, k = "%s_%d" % (base, k), k + 1
-    taken.add(sid)
-    return sid
-
-
-def build(csv_path, calls=BUILD_CALLS, max_options=BUILD_OPTIONS, seed=42,
-          log=print):
-    """An ontology whose options are the categories the model reads in a
-    sample of a dataset's transcripts.
-
-    Each category's verdict is the label most of the sampled calls the model
-    put in it carry; one split exactly evenly is marked "mixed" and given
-    scam, the cautious side. A category no sampled call landed on has no
-    verdict to give and is dropped. Refused when what is left does not hold
-    at least one category of each verdict - then the categories the model
-    sees do not separate scam from legitimate calls in this dataset. Scam and
-    legitimate options are interleaved so that a preference for early
-    letters cannot line up with one verdict.
-    """
-    _check_training(calls, max_options)
-    sample = sample_calls(csv_path, calls, seed)
-    n_scam = sum(1 for _, y in sample if y)
-    log("  %d calls from %s (%d scam, %d not), seed %d; the model reads each "
-        "one" % (len(sample), csv_path, n_scam, len(sample) - n_scam, seed))
-    t0 = time.time()
-    learned = learn_options(sample, CATEGORY_QUESTION, None, max_options,
-                            CATEGORY_INSTRUCTION, log)
-
-    options, dropped, taken = [], [], set()
-    for text, c in zip(learned["options"], learned["counts"]):
-        if not c["scam"] + c["legit"]:
-            dropped.append(text)
-            continue
-        o = {"id": _slug(text, taken), "text": text,
-             "verdict": "scam" if c["scam"] >= c["legit"] else "legit",
-             "calls": dict(c)}
-        if c["scam"] == c["legit"]:
-            o["mixed"] = True
-        options.append(o)
-    log("\n  %-30s %-6s %5s %5s" % ("category", "verdict", "scam", "legit"))
-    for o in options:
-        log("  %-30s %-6s %5d %5d%s"
-            % (o["text"][:30], o["verdict"], o["calls"]["scam"],
-               o["calls"]["legit"], "  (split evenly)" if o.get("mixed")
-               else ""))
-    for d in dropped:
-        log("  %-30s dropped: no sampled call landed on it" % d[:30])
-    log("  %.0fs" % (time.time() - t0))
-
-    if len(options) < 2:
-        raise ValueError("the sampled calls landed on %d categor%s - a "
-                         "question needs at least two options. Try more calls"
-                         % (len(options), "y" if len(options) == 1 else "ies"))
-    if all(o.get("mixed") for o in options):
-        raise ValueError(
-            "every category the model found holds as many scam calls as "
-            "legitimate ones, so the category says nothing about the label "
-            "in this dataset. Ask the calls a question they differ on instead: "
-            "type it under \"Your own question\" and train it on this dataset")
-    if not {"scam", "legit"} <= {o["verdict"] for o in options}:
-        raise ValueError(
-            "every category the model found holds mostly %s calls, so every "
-            "call would get the same verdict - the categories do not separate "
-            "scam from legitimate calls in this dataset. Try more calls or "
-            "more options" % ("scam" if options[0]["verdict"] == "scam"
-                              else "legitimate"))
-
-    scam = [o for o in options if o["verdict"] == "scam"]
-    legit = [o for o in options if o["verdict"] == "legit"]
-    mixed = []
-    for i in range(max(len(scam), len(legit))):
-        mixed += scam[i:i + 1] + legit[i:i + 1]
-    built = _trained_on(csv_path, sample, seed, max_options, learned)
-    built.update({"read_from": "transcripts", "options_from": learned["source"],
-                  "dropped": dropped})
-    return {
-        "id": "call_category",
-        "prompt": CATEGORY_QUESTION,
-        "about": ("One question: the category of the call. The options are "
-                  "the categories the model found reading %d calls of %s; "
-                  "each verdict is the label most of the calls it put in that "
-                  "category carry. Scam and legitimate options alternate."
-                  % (len(sample), csv_path)),
-        "built_from": built,
-        "options": mixed,
-        "answers": _answers(sample, learned),
-    }
-
-
 def check_question(obj):
     """Every problem with a saved question, as sentences; [] if none."""
     if not isinstance(obj, dict) or obj.get("kind") != "question":
@@ -926,19 +1153,321 @@ def ask_saved(transcript, path, timeout=300):
     return res
 
 
+# ------------------------------------------------ training on a dataset
+# Training starts from an ontology (the baseline file, or one trained
+# before) and a balanced sample of a dataset's calls, and writes a new file:
+#
+#   1. every sampled call is walked through the tree, as classify() does
+#   2. new options: for each scored question, the calls that answered Not
+#      stated are asked it openly, in a few words; when some of them have a
+#      real answer, the model proposes up to N new options that the existing
+#      ones do not cover, and those calls are asked the question again with
+#      the new options in
+#   3. new values: each option's value moves toward what the calls that
+#      chose it say - +1 for every scam call, -1 for every legitimate one -
+#      with the old value counting as `prior` calls' worth:
+#
+#          value = (prior * old + scam - legit) / (prior + scam + legit)
+#
+#      (scam and legit are weighted so each class counts half when the
+#      sample is not balanced). not_mentioned and recorded questions stay 0.
+#      The root question's subjects are not given values unless they already
+#      carry them.
+#   4. each scored question's options are put back in order, strongest scam
+#      sign first and Not stated last, since the model is told to choose the
+#      first that fits
+TRAIN_ONTOLOGY_CALLS = 40
+NEW_OPTIONS = 2
+PRIOR_WEIGHT = 4.0
+PROBE_CALLS = 8          # Not-stated calls asked openly, per question
+_EMPTY_ANSWERS = ("not said", "not stated", "not mentioned", "none", "no",
+                  "n/a", "unknown", "nothing", "not specified", "unclear",
+                  "does not say", "doesn't say", "not applicable")
+
+
+def _scored(q):
+    return q.get("role") != ROLE_RECORDED
+
+
+def _root_scored(onto):
+    return any(s["value"] for s in onto["options"])
+
+
+def _substantive(answer):
+    a = " ".join((answer or "").lower().split()).strip(" .!\"'")
+    return bool(a) and a not in _EMPTY_ANSWERS and not any(
+        a.startswith(x) for x in ("not said", "not stated", "not mentioned",
+                                  "the transcript does not", "it does not say",
+                                  "no mention"))
+
+
+def propose_options(q, answers, k, timeout=300):
+    """Up to k new option texts for question q that cover `answers` (open
+    answers from calls that chose Not stated) and that its options do not
+    already cover. [] when the model says they are covered."""
+    existing = "\n".join("- " + o["text"] for o in q["options"]
+                         if o["id"] != NOT_MENTIONED)
+    listed = "\n".join("%d. %s" % (i, a) for i, a in enumerate(answers, 1))
+    prompt = (
+        "A multiple-choice question about phone calls:\n\n  %s\n\n"
+        "Its options are:\n%s\n- Not stated\n\n"
+        "For some calls the answer chosen was Not stated, but asked openly "
+        "the answers were:\n\n%s\n\n"
+        "Write up to %d new options that cover these answers and that none "
+        "of the existing options already covers. Each new option is a short "
+        "phrase of at most 15 words, written like the existing ones. Do not "
+        "say whether the call is a scam. If the existing options already "
+        "cover these answers, write NONE.\n"
+        "One option per line, each starting with \"- \", and nothing else.\n"
+        "New options:" % (q["prompt"], existing, listed, k))
+    num_ctx = ollama_ctx.fit_num_ctx(prompt, GROUP_TOKENS, where="mcq training")
+    out = llm_judge.generate(prompt, max_tokens=GROUP_TOKENS, num_ctx=num_ctx,
+                             timeout=timeout)
+    have = {o["text"].lower().rstrip(".") for o in q["options"]}
+    new = []
+    for line in (out.get("response") or "").split("\n"):
+        t = _clean_option(line)
+        low = t.lower().rstrip(".")
+        if (not t or low in have or low.startswith("none")
+                or low in ("not stated", "new options", "options")):
+            continue
+        have.add(low)
+        new.append(t)
+    return new[:k]
+
+
+def _slug(text, taken):
+    base = (re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:30]
+            .strip("_") or "option")
+    sid, k = base, 2
+    while sid in taken:
+        sid, k = "%s_%d" % (base, k), k + 1
+    taken.add(sid)
+    return sid
+
+
+def _insert_option(q, text, added):
+    """A new option, value 0, just before Not stated."""
+    o = {"id": _slug(text, {x["id"] for x in q["options"]}), "text": text,
+         "value": 0.0, "follow_up": [], "added": added}
+    at = next((i for i, x in enumerate(q["options"])
+               if x["id"] == NOT_MENTIONED), len(q["options"]))
+    q["options"].insert(at, o)
+    return o
+
+
+def _reorder(q):
+    """Strongest scam sign first, Not stated last; equal values keep their
+    order."""
+    nm = [o for o in q["options"] if o["id"] == NOT_MENTIONED]
+    rest = [o for o in q["options"] if o["id"] != NOT_MENTIONED]
+    rest.sort(key=lambda o: -o["value"])
+    q["options"] = rest + nm
+
+
+def _accuracy(results, labels):
+    right = sum(1 for r, y in zip(results, labels)
+                if r["verdict"] == ("scam" if y else "legit"))
+    neutral = sum(1 for r in results if r["verdict"] == "neutral")
+    return right / max(1, len(results)), neutral
+
+
+def train_ontology(csv_path, onto, calls=TRAIN_ONTOLOGY_CALLS,
+                   new_options=NEW_OPTIONS, prior=PRIOR_WEIGHT, seed=42,
+                   quotes=True, knowledge=False, log=print):
+    """Train an ontology on a dataset; returns the trained tree (a new
+    object - `onto` is not changed). See the comment above for the steps."""
+    if not 2 <= calls <= 500:
+        raise ValueError("train on between 2 and 500 calls")
+    if not 0 <= new_options <= 5:
+        raise ValueError("new options per question must be between 0 and 5")
+    if prior < 0:
+        raise ValueError("the prior weight cannot be negative")
+    onto = json.loads(json.dumps(onto))             # a copy to change
+    sample = sample_calls(csv_path, calls, seed)
+    labels = [y for _, y in sample]
+    n_scam = sum(labels)
+    n_legit = len(sample) - n_scam
+    log("  %d calls from %s (%d scam, %d not), seed %d"
+        % (len(sample), csv_path, n_scam, n_legit, seed))
+    log("  %d subjects, %d questions; quotes %s, knowledge %s"
+        % (len(onto["options"]), count_questions(onto),
+           "required" if quotes else "off", "shown" if knowledge else "off"))
+    t0 = time.time()
+    qmap = {path: q for path, q, _ in iter_questions(onto)}
+    root = {"prompt": onto["prompt"], "options": onto["options"]}
+    qmap["root"] = root
+
+    # 1. walk every call
+    log("\n  step 1 of 4: every call through the tree")
+    presize([t for t, _ in sample], onto, quotes, knowledge)
+    results = []
+    for i, ((text, y), res) in enumerate(zip(sample, classify_all(
+            [t for t, _ in sample], onto, quotes, knowledge)), 1):
+        results.append(res)
+        log("    %2d/%d  %-5s  %-20s score %+5.2f  %-7s (%d questions)"
+            % (i, len(sample), "scam" if y else "legit",
+               (res["subject"] or "-")[:20], res["score"], res["verdict"],
+               res["requests"]))
+    acc0, neu0 = _accuracy(results, labels)
+    log("    on these calls: %.0f%% right, %d neutral" % (100 * acc0, neu0))
+
+    # 2. new options from the calls that answered Not stated
+    added = []
+    if new_options:
+        log("\n  step 2 of 4: new options, from the calls that answered "
+            "Not stated")
+        rng = random.Random(seed)
+        stamp = {"dataset": str(csv_path), "date": time.strftime("%Y-%m-%d")}
+        for path, q in list(qmap.items()):
+            if path == "root" or not _scored(q):
+                continue
+            idle = [(ci, ai) for ci, r in enumerate(results)
+                    for ai, a in enumerate(r["answers"])
+                    if a["path"] == path and a["option"] == NOT_MENTIONED]
+            if len(idle) < 2:
+                continue
+            if len(q["options"]) >= MAX_TREE_OPTIONS:
+                continue
+            probe = rng.sample(idle, min(PROBE_CALLS, len(idle)))
+            heard = []
+            for ci, _ in probe:
+                a = short_answer(sample[ci][0], q["prompt"])
+                if _substantive(a):
+                    heard.append(a)
+            if len(heard) < 2:
+                continue
+            room = min(new_options, MAX_TREE_OPTIONS - len(q["options"]))
+            texts = propose_options(q, heard, room)
+            if not texts:
+                log("    %-40s %d open answers, all covered already"
+                    % (path[:40], len(heard)))
+                continue
+            for t in texts:
+                o = _insert_option(q, t, dict(stamp, heard=heard[:8]))
+                added.append({"path": path, "id": o["id"], "text": t})
+                log("    %-40s + %s" % (path[:40], t))
+            # ask this question again of every call that was asked it
+            for ci, r in enumerate(results):
+                for ai, a in enumerate(r["answers"]):
+                    if a["path"] != path:
+                        continue
+                    old = a["option"]
+                    ctx = ""
+                    if knowledge and r["subject"]:
+                        ctx = knowledge_context(next(
+                            s for s in onto["options"]
+                            if s["id"] == r["subject"]))
+                    new = _answer_record(path, q, ask(
+                        sample[ci][0], q, onto, quotes=quotes, context=ctx))
+                    r["answers"][ai] = new
+                    if new["option"] != old:
+                        # the old option's follow-ups no longer apply
+                        drop = "%s/%s/" % (path, old)
+                        r["answers"] = [x for x in r["answers"]
+                                        if not x["path"].startswith(drop)]
+                    break
+        if not added:
+            log("    none: the options already cover what the calls said")
+
+    # 3. new values
+    log("\n  step 3 of 4: new values from the calls that chose each option "
+        "(prior weight %g)" % prior)
+    ws = len(sample) / (2.0 * n_scam) if n_scam else 0.0
+    wl = len(sample) / (2.0 * n_legit) if n_legit else 0.0
+    counts = Counter()
+    for r, y in zip(results, labels):
+        for a in r["answers"]:
+            if a["option"] is not None:
+                counts[(a["path"], a["option"], y)] += 1
+    changed = []
+    for path, q in qmap.items():
+        if not _scored(q) or (path == "root" and not _root_scored(onto)):
+            continue
+        for o in q["options"]:
+            if o["id"] == NOT_MENTIONED:
+                continue
+            s, l = counts[(path, o["id"], True)], counts[(path, o["id"], False)]
+            if not s + l:
+                continue
+            before = o["value"]
+            after = (prior * before + ws * s - wl * l) / (prior + ws * s + wl * l)
+            after = round(max(-1.0, min(1.0, after)), 2)
+            o["value"] = after
+            o.setdefault("training", []).append(
+                {"dataset": str(csv_path), "scam": s, "legit": l,
+                 "before": before, "after": after})
+            if after != before:
+                changed.append({"path": path, "option": o["id"],
+                                "before": before, "after": after,
+                                "scam": s, "legit": l})
+    for c in sorted(changed, key=lambda c: -abs(c["after"] - c["before"]))[:25]:
+        log("    %-46s %+.2f -> %+.2f   (%d scam, %d legit)"
+            % (("%s %s" % (c["path"], c["option"]))[:46], c["before"],
+               c["after"], c["scam"], c["legit"]))
+    if len(changed) > 25:
+        log("    ... and %d more" % (len(changed) - 25))
+    if not changed:
+        log("    no value moved")
+
+    # 4. put the options back in order
+    for path, q in qmap.items():
+        if path != "root" and _scored(q):
+            _reorder(q)
+
+    # the same answers, scored with the new values
+    vals = {(path, o["id"]): o["value"] for path, q in qmap.items()
+            for o in q["options"]}
+    after = []
+    for r in results:
+        for a in r["answers"]:
+            a["value"] = vals.get((a["path"], a["option"]), 0.0) \
+                if a["option"] is not None else 0.0
+        after.append(_summarise(r["answers"], next(
+            (s for s in onto["options"] if s["id"] == r["subject"]), None)))
+    acc1, neu1 = _accuracy(after, labels)
+    log("\n  step 4 of 4: options put back in order, strongest scam sign "
+        "first")
+    log("\n  on the training calls: %.0f%% right before, %.0f%% after "
+        "(%d -> %d neutral)" % (100 * acc0, 100 * acc1, neu0, neu1))
+    log("  (these are the calls it learned from - score a held-out set for a "
+        "fair number)")
+    log("  %.0fs" % (time.time() - t0))
+
+    onto.setdefault("training", []).append({
+        "dataset": str(csv_path), "calls": len(sample), "scam": n_scam,
+        "legit": n_legit, "seed": seed, "prior_weight": prior,
+        "new_options_per_question": new_options, "quotes": quotes,
+        "knowledge": knowledge, "model": llm_judge.DEFAULT_MODEL,
+        "date": time.strftime("%Y-%m-%d %H:%M"),
+        "added": added, "changed": len(changed),
+        "training_calls_right_before": round(acc0, 4),
+        "training_calls_right_after": round(acc1, 4),
+        "neutral_before": neu0, "neutral_after": neu1})
+    return onto
+
+
 # ----------------------------------------------------------------------- CLI
+
+def _show_call(res, onto):
+    """One classified call, as the CLI prints it."""
+    print("%s\n  -> %s" % (onto["prompt"], res["subject_text"] or "unreadable"))
+    for r in res["answers"][1:]:
+        mark = ("" if r["quoted"] is None else "  quote ok" if r["quoted"]
+                else "  NO QUOTE FOUND - counted as not stated")
+        print("  %+.1f  %-44s %s%s" % (r["value"], r["path"][:44],
+                                       (r["text"] or "unreadable")[:60], mark))
+        if r["quote"]:
+            print("        \"%s\"" % r["quote"][:90])
+    print("score %+.2f  ->  %s   (%d questions)"
+          % (res["score"], res["verdict"], res["requests"]))
+
 
 def run_ask(args):
     onto = load_ontology(args.ontology)
-    res = judge(args.text, onto)
-    print(onto["prompt"])
-    for i, (o, p) in enumerate(zip(onto["options"], res["probs"])):
-        mark = "<-" if i == res["choice"] else ""
-        print("  %s %5.1f%%  %-5s  %s %s"
-              % (LETTERS[i], 100 * p, o["verdict"], o["text"][:70], mark))
-    print(explain(res, onto))
-    print("verdict  %s" % (res["verdict"] or "unreadable"))
-    return 0 if res["verdict"] else 1
+    res = classify(args.text, onto, not args.no_quotes, args.knowledge)
+    _show_call(res, onto)
+    return 0
 
 
 def run_question(args):
@@ -983,34 +1512,34 @@ def run_evaluate(args):
     """Score a whole dataset: what the MCQ page's Score a dataset tab runs."""
     import eval_common as EC
     onto = load_ontology(args.ontology)
+    quotes = not args.no_quotes
     print("Loading dataset")
     rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
-    built = (onto.get("built_from") or {}).get("dataset")
     print()
     print("==> score  %s over %d calls" % (args.ontology, len(rows)))
-    print("  %s  (%d options)" % (onto["prompt"], len(onto["options"])))
-    if built and Path(built).name == Path(args.csv).name:
-        print("  NOTE these options were built from this dataset: some of "
-              "the calls scored here\n       set the options' verdicts - a "
-              "dataset they were not built from is the fairer read.")
-    ctx = presize([r["text"] for r in rows], onto)
-    print("  one request per call, context window %s" % ctx)
+    print("  %s  (%d subjects, %d questions; quotes %s, knowledge %s)"
+          % (onto["prompt"], len(onto["options"]), count_questions(onto),
+             "required" if quotes else "off",
+             "shown" if args.knowledge else "off"))
+    trained = [t.get("dataset") for t in onto.get("training") or []]
+    if any(t and Path(t).name == Path(args.csv).name for t in trained):
+        print("  NOTE this ontology was trained on this dataset: some of the "
+              "calls scored here\n       set its options and values - a "
+              "held-out set is the fairer read.")
+    ctx = presize([r["text"] for r in rows], onto, quotes, args.knowledge)
+    print("  about a dozen requests per call, context window %s" % ctx)
 
     truths = [r["label"] for r in rows]
     prog = EC.Progress(len(rows), every=1)
-    preds, cats, probs, chosen, reasons = [], [], [], [], []
-    hows = Counter()
+    preds, results = [], []
     t0 = time.time()
     try:
-        for r, res in zip(rows, judge_all([r["text"] for r in rows], onto)):
-            hows[res["how"]] += 1
-            pred = None if res["verdict"] is None else int(res["verdict"] == "Fraud")
+        for r, res in zip(rows, classify_all([r["text"] for r in rows], onto,
+                                             quotes, args.knowledge)):
+            results.append(res)
+            # neutral (a score of exactly 0) is not called a scam
+            pred = int(res["verdict"] == "scam")
             preds.append(pred)
-            chosen.append(res["choice"])
-            cats.append(res["category"] or "")
-            probs.append("" if res["p_scam"] is None
-                         else round(res["p_scam"], 4))
-            reasons.append(explain(res, onto))
             prog.tick(r, pred)
     except RuntimeError as e:
         print("    ERROR %s" % e)
@@ -1020,41 +1549,83 @@ def run_evaluate(args):
 
     m = EC.metrics(truths, preds)
     base = EC.baselines(truths)
-    extra = ["P(scam) measured from logprobs on %d/%d calls"
-             % (hows["logprobs"], len(preds))]
-    extra += [""] + category_table(onto, chosen, truths)
+    neutral = sum(1 for r in results if r["verdict"] == "neutral")
+    asked = sum(r["requests"] for r in results)
+    unquoted = sum(1 for r in results for a in r["answers"]
+                   if a["quoted"] is False)
+    extra = ["%d of %d calls scored exactly 0 (neutral), counted as not scam"
+             % (neutral, len(results)),
+             "%d questions asked, %d answered from logprobs, %d answers "
+             "without a quote counted as not stated"
+             % (asked, sum(r["measured"] for r in results), unquoted)]
+    extra += [""] + subject_table(onto, results, truths)
     EC.report(m, base, elapsed, len(preds), extra)
     if args.out:
+        subj = Counter((r["subject"], bool(t)) for r, t in zip(results, truths))
         EC.write_results(args.out, Path(args.ontology).name, args.csv, rows,
                          preds, m, base, elapsed,
-                         {"category": cats, "prob_scam": probs,
-                          "reason": reasons},
+                         {"category": [r["subject"] or "" for r in results],
+                          "score": [r["score"] for r in results],
+                          "verdict3": [r["verdict"] for r in results],
+                          "prob_scam": [round(pct(r["score"]) / 100, 4)
+                                        for r in results],
+                          "reason": [explain(r) for r in results]},
                          {"kind": "mcq", "ontology": str(args.ontology),
-                          "question": onto["prompt"], "built_from": built,
-                          "options": [{"letter": LETTERS[i], "id": o["id"],
-                                       "verdict": o["verdict"],
-                                       "scam": sum(1 for c, t in zip(chosen, truths)
-                                                   if c == i and t),
-                                       "legit": sum(1 for c, t in zip(chosen, truths)
-                                                    if c == i and not t)}
-                                      for i, o in enumerate(onto["options"])],
-                          "measured": hows["logprobs"]})
+                          "question": onto["prompt"],
+                          "trained_on": trained,
+                          "options": [{"letter": LETTERS[i], "id": s["id"],
+                                       "scam": subj[(s["id"], True)],
+                                       "legit": subj[(s["id"], False)]}
+                                      for i, s in enumerate(onto["options"])],
+                          "neutral": neutral, "questions_asked": asked,
+                          "unquoted": unquoted, "quotes": quotes,
+                          "knowledge": args.knowledge,
+                          "measured": sum(r["measured"] for r in results)})
     return m
 
 
-def run_build(args):
+def to_file(onto):
+    """The tree as it is written to disk: empty follow_up and questions
+    lists left out, as in the hand-written file."""
+    def q_out(q):
+        q = dict(q)
+        q["options"] = [o_out(o) for o in q["options"]]
+        return q
+
+    def o_out(o):
+        o = dict(o)
+        if not o.get("follow_up"):
+            o.pop("follow_up", None)
+        else:
+            o["follow_up"] = [q_out(f) for f in o["follow_up"]]
+        return o
+    out = dict(onto)
+    out["common_questions"] = [q_out(q) for q in onto["common_questions"]]
+    subs = []
+    for s in onto["options"]:
+        s = o_out(s)
+        s["questions"] = [q_out(q) for q in s.get("questions", [])]
+        subs.append(s)
+    out["options"] = subs
+    return out
+
+
+def run_train(args):
     out = Path(args.out)
     if out.exists() and not args.force:
         raise SystemExit("%s already exists - pass --force to replace it" % out)
-    print("==> build the category question from the transcripts of %s"
-          % args.csv)
-    onto = build(args.csv, args.calls, args.options, args.seed)
+    onto = load_ontology(args.ontology)
+    print("==> train %s on %s" % (args.ontology, args.csv))
+    trained = train_ontology(args.csv, onto, args.calls, args.new_options,
+                             args.prior, args.seed, not args.no_quotes,
+                             args.knowledge)
+    trained.setdefault("trained_from", str(args.ontology))
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(onto, indent=2) + "\n", encoding="utf-8")
-    print("\n  %d options, scam and legitimate interleaved:"
-          % len(onto["options"]))
-    for i, o in enumerate(onto["options"]):
-        print("    %s  %-5s  %s" % (LETTERS[i], o["verdict"], o["text"][:70]))
+    out.write_text(json.dumps(to_file(trained), indent=2, ensure_ascii=False)
+                   + "\n", encoding="utf-8")
+    t = trained["training"][-1]
+    print("  %d options added, %d values changed" % (len(t["added"]),
+                                                     t["changed"]))
     print("  ok wrote %s" % out)
     return 0
 
@@ -1063,9 +1634,18 @@ def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    a = sub.add_parser("ask", help="one transcript")
+    def walk_flags(p):
+        p.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
+        p.add_argument("--no-quotes", action="store_true",
+                       help="do not require a supporting quote for each "
+                            "answer (faster: one letter per question)")
+        p.add_argument("--knowledge", action="store_true",
+                       help="show the model the subject's knowledge entries "
+                            "with its questions")
+
+    a = sub.add_parser("ask", help="one transcript through the tree")
     a.add_argument("--text", required=True)
-    a.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
+    walk_flags(a)
     a.set_defaults(func=run_ask)
 
     qq = sub.add_parser("question", help="your own question about one call")
@@ -1098,7 +1678,7 @@ def build_parser():
 
     ev = sub.add_parser("evaluate", help="score a whole dataset")
     ev.add_argument("--csv", required=True)
-    ev.add_argument("--ontology", default=str(DEFAULT_ONTOLOGY))
+    walk_flags(ev)
     ev.add_argument("--limit", type=int, default=None,
                     help="a class-balanced head of the dataset")
     ev.add_argument("--text-col", default=None)
@@ -1107,19 +1687,25 @@ def build_parser():
                     help="write <out>.json and a per-call CSV in results/")
     ev.set_defaults(func=run_evaluate)
 
-    b = sub.add_parser("build", help="the category options, read from a "
-                                     "dataset's transcripts")
-    b.add_argument("--csv", required=True)
-    b.add_argument("--out", required=True)
-    b.add_argument("--calls", type=int, default=BUILD_CALLS,
-                   help="calls the model reads, half scam half not "
-                        "(default %d)" % BUILD_CALLS)
-    b.add_argument("--options", type=int, default=BUILD_OPTIONS,
-                   help="at most this many categories (default %d)"
-                        % BUILD_OPTIONS)
-    b.add_argument("--seed", type=int, default=42)
-    b.add_argument("--force", action="store_true")
-    b.set_defaults(func=run_build)
+    t = sub.add_parser("train", help="add options and update values from a "
+                                     "dataset")
+    t.add_argument("--csv", required=True,
+                   help="a training set - a train fold, never the calls you "
+                        "will score")
+    t.add_argument("--out", required=True)
+    walk_flags(t)
+    t.add_argument("--calls", type=int, default=TRAIN_ONTOLOGY_CALLS,
+                   help="calls to train on, half scam half not (default %d)"
+                        % TRAIN_ONTOLOGY_CALLS)
+    t.add_argument("--new-options", type=int, default=NEW_OPTIONS,
+                   help="at most this many new options per question "
+                        "(default %d; 0 updates the values only)" % NEW_OPTIONS)
+    t.add_argument("--prior", type=float, default=PRIOR_WEIGHT,
+                   help="how many calls' worth the old value counts for "
+                        "(default %g)" % PRIOR_WEIGHT)
+    t.add_argument("--seed", type=int, default=42)
+    t.add_argument("--force", action="store_true")
+    t.set_defaults(func=run_train)
     return ap
 
 

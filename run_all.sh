@@ -81,7 +81,7 @@ BL_LABELS=(
   "Qwen-KB                   learns a KB from a held-out split, k-fold"
   "Hybrid                    Web-RAG + Qwen-KB over one shared KB"
   "Ontology RAG              scam_ontology.json"
-  "MCQ ontology LLM          one question, the call's category (mcq_ontology.json)"
+  "MCQ ontology LLM          a tree of questions, summed answer values (mcq_ontology.json)"
   "BERT                      fine-tuned classifier, no LLM"
 )
 

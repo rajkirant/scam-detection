@@ -173,9 +173,9 @@ _sent_j = []
 _real_jpost = J._post
 J._post = lambda path, payload, timeout: (_sent_j.append(payload) or
                                           {"response": "A", "logprobs": []})
-M.judge(LONG, M.load_ontology())
+M.ask(LONG, M.load_ontology()["common_questions"][0], M.load_ontology())
 J._post = _real_jpost
-check("mcq_ontology.judge (mcq)",
+check("mcq_ontology.ask (mcq)",
       _sent_j and _sent_j[-1]["options"].get("num_ctx", 0)
       >= ollama_ctx.estimate_tokens(LONG),
       _sent_j[-1]["options"] if _sent_j else "nothing sent")
