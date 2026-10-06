@@ -1630,6 +1630,16 @@ def run_train(args):
     return 0
 
 
+def run_build_gone():
+    raise SystemExit(
+        "ERROR `build` is gone: the ontology is a tree of questions now, and "
+        "`train` adds options and updates values from a dataset instead -\n"
+        "      python scripts/mcq_ontology.py train --csv <dataset> --out "
+        "knowledge/<name>.json\n"
+        "If this came from the web page, its server is still running the old "
+        "code: restart web_ui.sh and reload the page.")
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1710,6 +1720,12 @@ def build_parser():
 
 
 def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    # `build` was replaced by `train`. A web page still running the old code
+    # calls it, so say what to do rather than leave argparse to say
+    # "invalid choice".
+    if argv[:1] == ["build"]:
+        run_build_gone()
     args = build_parser().parse_args(argv)
     try:
         out = args.func(args)
