@@ -3110,6 +3110,38 @@ PAGE = r"""<!doctype html>
   .mcqopt { display:flex; gap:8px; align-items:baseline; padding:5px 0;
             border-bottom:1px solid var(--line); font-size:12.5px; }
   .mcqopt:last-child { border-bottom:none; }
+  /* ---- the question tree: one subject's questions in the order asked */
+  .tq-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  .tq-chips button { font:inherit; font-size:12.5px; padding:4px 10px;
+                     border:1px solid var(--line); border-radius:14px;
+                     background:var(--panel); color:var(--ink); cursor:pointer; }
+  .tq-chips button.on { border-color:var(--accent); color:var(--accent);
+                        font-weight:600; }
+  .tq-chips button .muted { font-weight:400; }
+  .tq-root { border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .tq-root b { display:block; margin-bottom:4px; }
+  .tq-flow { margin:0 0 0 14px; padding:6px 0 0 22px;
+             border-left:2px solid var(--line); }
+  .tq-step { position:relative; margin:12px 0; }
+  .tq-num { position:absolute; left:-36px; top:8px; width:26px; height:26px;
+            border-radius:50%; background:var(--panel); border:2px solid var(--line);
+            font:600 11.5px/22px var(--mono); text-align:center; color:var(--dim); }
+  .tq-card { border:1px solid var(--line); border-radius:8px; padding:9px 12px;
+             background:var(--panel); }
+  .tq-card.recorded { border-style:dashed; }
+  .tq-q { font-weight:600; }
+  .tq-tag { font-size:11px; color:var(--dim); margin-left:6px; font-weight:400; }
+  .tq-opt { display:flex; gap:10px; align-items:baseline; padding:3px 0;
+            font-size:13px; }
+  .tq-v { flex:none; min-width:48px; text-align:right; font:12px var(--mono);
+          padding:1px 6px; border-radius:4px; color:var(--dim); }
+  .tq-v.pos { color:var(--bad); background:color-mix(in srgb, var(--bad) 12%, transparent); }
+  .tq-v.neg { color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent); }
+  .tq-fu { margin:4px 0 6px 58px; padding-left:12px;
+           border-left:2px dashed var(--line); }
+  .tq-if { font-size:11px; color:var(--dim); margin:4px 0; }
+  .tq-end { border:1px solid var(--line); border-radius:8px; padding:9px 12px;
+            font-size:13px; }
   .mcqopt b { font-family:var(--mono); min-width:14px; }
   .mcqopt .pill { flex:none; }
   textarea.json { min-height:420px; }
@@ -4309,6 +4341,7 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <button data-qtab="ask" class="on">Classify</button>
       <button data-qtab="eval">Score a dataset</button>
       <button data-qtab="edit">Edit the JSON</button>
+      <button data-qtab="tree">Question tree</button>
       <button data-qtab="build">Training output</button>
       <button data-qtab="about">How it decides</button>
     </div>
@@ -4403,6 +4436,14 @@ per held-out call, so it takes minutes, not seconds.</pre>
       </div>
       <div id="mcqevout"></div>
       <pre class="log" id="mcqevlog" hidden></pre>
+    </div>
+
+    <div id="q-tree" hidden>
+      <div class="card">
+        <div class="hint" style="margin-top:0" id="mcqtreenote"></div>
+        <div class="tq-chips" id="mcqtreechips"></div>
+      </div>
+      <div class="card" id="mcqtree"></div>
     </div>
 
     <div id="q-edit" hidden>
@@ -7260,7 +7301,7 @@ async function mcqBoot() {
 function mcqTab(name) {
   for (const b of $('mcqtabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.qtab === name);
-  for (const t of ['ask', 'eval', 'edit', 'build', 'about'])
+  for (const t of ['ask', 'eval', 'edit', 'tree', 'build', 'about'])
     $('q-' + t).hidden = t !== name;
 }
 
@@ -7295,6 +7336,7 @@ async function mcqLoad(path) {
   $('mcqsavemsg').textContent = '';
   mcqPaint(r);
   mcqBuildForm();
+  mcqTree(r.ontology, null);
 }
 
 // questions in a list, follow-ups included
@@ -7696,9 +7738,11 @@ function mcqCategoryCard(d) {
 // say at once whether the text parses, before Save is pressed
 function mcqJsonCheck() {
   try {
-    JSON.parse($('mcqjson').value);
+    const obj = JSON.parse($('mcqjson').value);
     $('mcqsavemsg').textContent = '';
     $('mcqsavemsg').style.color = '';
+    // the tree follows the edit as soon as it parses
+    mcqTree(obj, 'Showing your unsaved edits. Save to keep them.');
   } catch (e) {
     $('mcqsavemsg').textContent = 'not valid JSON yet: ' + e.message;
     $('mcqsavemsg').style.color = 'var(--bad)';
@@ -7719,6 +7763,106 @@ async function mcqSave() {
     + (r.path === MCQ.default ? ' — this is the shipped file, which git '
        + 'tracks: if a later Update changes it too, Update will stop and ask. '
        + 'Saving under your own name avoids that.' : '');
+}
+
+// ---- the question tree tab
+let mcqTreeSubject = null;
+
+const mcqNum = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
+const mcqFmt = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2)
+  .replace(/0$/, '');
+
+// the questions a call on this subject is asked, in order - the same rule
+// as mcq_ontology.question_order: the ask list first, then the common
+// questions it left out, then the subject's own
+function mcqTreeOrder(o, subj) {
+  const common = new Map((o.common_questions || []).map(q => [q.id, q]));
+  const own = new Map(((subj && subj.questions) || []).map(q => [q.id, q]));
+  const out = [], seen = new Set();
+  for (const ref of (subj && subj.ask) || []) {
+    if (typeof ref !== 'string') continue;
+    if (ref.startsWith('common/') && common.has(ref.slice(7)))
+      out.push({q: common.get(ref.slice(7)), common: true});
+    else if (own.has(ref)) out.push({q: own.get(ref), common: false});
+    seen.add(ref);
+  }
+  for (const [k, q] of common) if (!seen.has('common/' + k)) out.push({q, common: true});
+  for (const [k, q] of own) if (!seen.has(k)) out.push({q, common: false});
+  return out;
+}
+
+// [lowest, highest] a question can add to the score, follow-ups included
+function mcqTreeRange(q) {
+  let lo = Infinity, hi = -Infinity;
+  for (const op of q.options || []) {
+    let a = mcqNum(op.value), b = a;
+    for (const f of op.follow_up || []) {
+      const [fl, fh] = mcqTreeRange(f); a += fl; b += fh;
+    }
+    lo = Math.min(lo, a); hi = Math.max(hi, b);
+  }
+  return lo === Infinity ? [0, 0] : [lo, hi];
+}
+
+function mcqTreeQ(q, tag) {
+  const rec = q.role === 'recorded';
+  const opts = (q.options || []).map(op => {
+    const v = mcqNum(op.value);
+    const fu = (op.follow_up || []).length
+      ? `<div class="tq-fu"><div class="tq-if">if “${esc(op.text || op.id)}” is chosen, also ask:</div>`
+        + op.follow_up.map(f => mcqTreeQ(f, 'follow-up')).join('') + '</div>' : '';
+    return `<div class="tq-opt"><span class="tq-v ${v > 0 ? 'pos' : v < 0 ? 'neg' : ''}">`
+      + `${mcqFmt(v)}</span><span>${esc(op.text || op.id || '?')}`
+      + `${op.absence ? '<span class="tq-tag">absence: no quote needed</span>' : ''}`
+      + `</span></div>${fu}`;
+  }).join('');
+  return `<div class="tq-card ${rec ? 'recorded' : ''}">
+    <div class="tq-q">${esc(q.prompt || '(no prompt)')}<span class="tq-tag">${esc(tag)}`
+    + `${rec ? ' · recorded, scores 0' : ''} · ${esc(q.id || '')}</span></div>
+    ${opts}</div>`;
+}
+
+// draw the tree of `o` (a parsed file, saved or being edited); note says
+// which of the two it is
+function mcqTree(o, note) {
+  if (!o || !Array.isArray(o.options) || !o.options.length) {
+    $('mcqtreenote').textContent = note ? 'The edit has no subjects to draw yet.'
+      : 'This file cannot be drawn: it has no subjects.';
+    $('mcqtreechips').innerHTML = $('mcqtree').innerHTML = '';
+    return;
+  }
+  const subs = o.options.filter(x => x && typeof x === 'object');
+  if (!subs.some(x => x.id === mcqTreeSubject))
+    mcqTreeSubject = (subs[0] || {}).id;
+  const count = x => mcqTreeOrder(o, x).length;
+  $('mcqtreenote').textContent = (note ? note + ' ' : '')
+    + 'Pick a subject to see the questions its calls are asked, in order, '
+    + 'with each option\'s value. Follow-ups branch off the option that opens '
+    + 'them.';
+  $('mcqtreechips').innerHTML = subs.map(x => `<button data-s="${esc(x.id)}"`
+    + ` class="${x.id === mcqTreeSubject ? 'on' : ''}">${esc(x.text || x.id)}`
+    + ` <span class="muted">${count(x)}</span></button>`).join('');
+  for (const b of $('mcqtreechips').querySelectorAll('button'))
+    b.onclick = () => { mcqTreeSubject = b.dataset.s; mcqTree(o, note); };
+
+  const subj = subs.find(x => x.id === mcqTreeSubject);
+  const order = mcqTreeOrder(o, subj);
+  let lo = mcqNum(subj.value), hi = lo;
+  for (const {q} of order) { const [a, b] = mcqTreeRange(q); lo += a; hi += b; }
+  const steps = order.map(({q, common}, i) => `<div class="tq-step">
+      <div class="tq-num">${i + 1}</div>${mcqTreeQ(q, common ? 'common' : 'subject')}</div>`
+  ).join('');
+  $('mcqtree').innerHTML = `
+    <div class="tq-root"><b>${esc(o.prompt || '(no root prompt)')}</b>
+      <span class="tq-v ${mcqNum(subj.value) > 0 ? 'pos' : mcqNum(subj.value) < 0 ? 'neg' : ''}">`
+      + `${mcqFmt(mcqNum(subj.value))}</span> ${esc(subj.text || subj.id)}
+      <span class="tq-tag">picks the subject; ${subs.length} to choose from</span></div>
+    <div class="tq-flow">${steps || '<div class="tq-step hint">no questions</div>'}
+      <div class="tq-step"><div class="tq-num">Σ</div><div class="tq-end">
+        <b>score</b> = the sum of the chosen values · above 0 scam, below 0
+        legitimate, 0 neutral · this path can score from
+        <b>${mcqFmt(lo)}</b> to <b>${mcqFmt(hi)}</b></div></div>
+    </div>`;
 }
 
 function mcqBuildForm() {
