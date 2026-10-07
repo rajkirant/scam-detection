@@ -741,6 +741,11 @@ The other tabs:
   the option that opens them. It ends with the range this path can score.
   It follows the editor as you type, labelled as unsaved, once the JSON
   parses, and is redrawn from the file when you save.
+  After you classify a call, it opens on that call's subject and shows the
+  path the call took. Each chosen answer is marked ✓, with its quote and the
+  score so far. The other options are dimmed, and questions that were not
+  asked are hidden. A link switches between the call's path and the whole
+  questionnaire.
 - **Edit the JSON:** the file itself. It is saved only if every question has
   an `id`, a `prompt` and 2–20 options, and every option an `id`, a `text`
   and a `value` from -1 to 1 (0 for `not_mentioned` and for recorded
