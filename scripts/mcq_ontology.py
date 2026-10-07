@@ -727,6 +727,142 @@ def subject_table(onto, results, truths):
     return lines
 
 
+# ------------------------------------------------------- personalisation
+# The same words can deserve a different label. Whether a call that asks
+# security questions is a scam depends on which bank the person is with, and
+# on whether they asked for the change being discussed - neither is in the
+# transcript. A bank file (knowledge/banks/<name>.json) holds that bank's
+# policy for calls, a few verification questions put to the call, and rules
+# that turn the answers plus the person's context into a label:
+#
+#   {"name", "policy", "applies_to": [subject ids],
+#    "questions": [questions, as in the ontology],
+#    "rules": [{"if": {<question id> | "asked": [option ids]},
+#               "label": "scam" | "legit" | "unsure", "why", "advice"?}]}
+#
+# The first rule whose every condition holds decides; when none does, the
+# verdict from the words stands. "asked" is whether this person asked for
+# the change: yes, no or unknown - from their own history, which in the
+# finished system stays on their phone.
+BANKS_DIR = KNOWLEDGE_DIR / "banks"
+LABELS = ("scam", "legit", "unsure")
+ASKED = ("yes", "no", "unknown")
+
+
+def check_bank(obj):
+    """Every problem with a bank file, as sentences; [] if none."""
+    if not isinstance(obj, dict):
+        return ["the file must hold one JSON object, {...}"]
+    probs = []
+    if not str(obj.get("name") or "").strip():
+        probs.append('"name" is missing')
+    qs = obj.get("questions")
+    _check_list(qs if isinstance(qs, list) else None, "questions", probs)
+    answers = {"asked": set(ASKED)}
+    for q in qs if isinstance(qs, list) else []:
+        if isinstance(q, dict) and isinstance(q.get("options"), list):
+            answers[q.get("id")] = {o.get("id") for o in q["options"]
+                                    if isinstance(o, dict)}
+    rules = obj.get("rules")
+    if not isinstance(rules, list) or not rules:
+        probs.append('"rules" must be a list of at least one rule')
+        rules = []
+    for i, r in enumerate(rules, 1):
+        where = "rule %d" % i
+        if not isinstance(r, dict) or not isinstance(r.get("if"), dict):
+            probs.append('%s needs an "if": {question id: [answers]}' % where)
+            continue
+        if r.get("label") not in LABELS:
+            probs.append('%s: "label" must be scam, legit or unsure, not %r'
+                         % (where, r.get("label")))
+        if not str(r.get("why") or "").strip():
+            probs.append('%s has no "why"' % where)
+        for k, v in r["if"].items():
+            if k not in answers:
+                probs.append('%s: "%s" is neither a question of this bank '
+                             'nor "asked"' % (where, k))
+            elif not isinstance(v, list) or not v:
+                probs.append('%s: "%s" must list the answers it accepts'
+                             % (where, k))
+            else:
+                bad = [x for x in v if x not in answers[k]]
+                if bad:
+                    probs.append("%s: %s has no answer %s"
+                                 % (where, k, ", ".join(map(str, bad))))
+    return probs
+
+
+def load_bank(path):
+    """A bank file, checked. ValueError naming every problem."""
+    path = Path(path)
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ValueError("no bank file at %s" % path)
+    except json.JSONDecodeError as e:
+        raise ValueError("%s is not valid JSON: %s (line %d, column %d)"
+                         % (path.name, e.msg, e.lineno, e.colno))
+    probs = check_bank(obj)
+    if probs:
+        raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
+    obj = dict(obj)
+    obj["questions"] = [_norm_question(q) for q in obj["questions"]]
+    return obj
+
+
+def list_banks():
+    """Every bank file in knowledge/banks/, by name."""
+    out = []
+    for p in sorted(BANKS_DIR.glob("*.json")) if BANKS_DIR.is_dir() else []:
+        try:
+            b = load_bank(p)
+        except ValueError:
+            continue
+        out.append({"path": "knowledge/banks/" + p.name, "name": b["name"],
+                    "policy": b.get("policy", "")})
+    return out
+
+
+def personalise(transcript, res, bank, asked="unknown", quotes=True,
+                timeout=300):
+    """The label for this person: a classified call (`res`, from classify)
+    put through one bank's questions and rules.
+
+    Returns {"bank", "policy", "asked", "applies": whether the call is on a
+    subject the bank's rules are for, "answers": the bank questions' answer
+    records, "label": scam | legit | unsure, or None when no rule applies,
+    "why", "advice", "final": the label, or the words' verdict when there is
+    none, "from": "bank" | "words"}.
+    """
+    if asked not in ASKED:
+        raise ValueError("asked must be one of %s" % ", ".join(ASKED))
+    out = {"bank": bank["name"], "policy": bank.get("policy", ""),
+           "asked": asked, "answers": [], "label": None, "advice": None}
+    applies = bank.get("applies_to")
+    if applies and res.get("subject") not in applies:
+        out.update(applies=False, final=res["verdict"], **{"from": "words"},
+                   why="This call is not on a subject %s's rules cover, so "
+                       "the verdict from the words stands." % bank["name"])
+        return out
+    out["applies"] = True
+    chosen = {"asked": asked}
+    for q in bank["questions"]:
+        a = ask(transcript, q, {}, quotes=quotes, timeout=timeout)
+        rec = _answer_record("bank/" + q["id"], q, a)
+        out["answers"].append(rec)
+        chosen[q["id"]] = rec["option"]
+    for i, rule in enumerate(bank["rules"], 1):
+        if all(chosen.get(k) in v for k, v in rule["if"].items()):
+            out.update(label=rule["label"], why=rule["why"], rule=i,
+                       advice=rule.get("advice"), final=rule["label"],
+                       **{"from": "bank"})
+            return out
+    out.update(final=res["verdict"], why="None of %s's rules applies, so the "
+               "verdict from the words stands." % bank["name"],
+               **{"from": "words"})
+    return out
+
+
 # ------------------------------------------------- your own question
 # Any question about one call, typed on the page. If the question lists its
 # own options - "A) ... B) ...", one per line, or "options: x / y / z" - it is
@@ -1483,6 +1619,16 @@ def run_ask(args):
     onto = load_ontology(args.ontology)
     res = classify(args.text, onto, not args.no_quotes)
     _show_call(res, onto)
+    if args.bank:
+        p = personalise(args.text, res, load_bank(args.bank), args.asked,
+                        not args.no_quotes)
+        print("\npersonalised for %s (%s); the person asked for the change: %s"
+              % (p["bank"], p["policy"], p["asked"]))
+        for r in p["answers"]:
+            print("  %-40s %s" % (r["question"][:40], r["text"] or "unreadable"))
+        print("-> %s  (%s)" % (p["final"], p["why"]))
+        if p["advice"]:
+            print("   %s" % p["advice"])
     return 0
 
 
@@ -1706,6 +1852,11 @@ def build_parser():
     a = sub.add_parser("ask", help="one transcript through the tree")
     a.add_argument("--text", required=True)
     walk_flags(a)
+    a.add_argument("--bank", default=None,
+                   help="a bank file (knowledge/banks/...) to personalise "
+                        "the label for")
+    a.add_argument("--asked", default="unknown", choices=ASKED,
+                   help="did this person ask for the change? (with --bank)")
     a.set_defaults(func=run_ask)
 
     qq = sub.add_parser("question", help="your own question about one call")

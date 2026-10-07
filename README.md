@@ -692,6 +692,56 @@ and pick an absence option only when that part of the call is covered.
 There are no descriptions, guidelines or evidence in it. Its values are
 hand-set starting points, and only training changes them.
 
+**Personalisation: the same words, a different label.** Whether a call that
+asks security questions is a scam depends on two things the transcript does
+not hold: which bank the person is with, and whether they asked for the
+change the caller is talking about. The *Personalisation* box above
+*Classify this call* holds two choices:
+- **Bank:** *no bank - the words alone*, or one of the files in
+  `knowledge/banks/`. The bank's policy for calls shows under it.
+- **This person asked for a change:** *not known*, *yes* or *no*. For now
+  you set it by hand. In the finished system it comes from the person's own
+  history, which stays on their phone.
+
+With a bank picked, the call is classified as usual, then the bank's own
+questions are put to it (two requests), and a **For this person** card shows
+the label, the rule that decided it, the advice, and the answers it rests on.
+The two files that ship, from the table in the project notes:
+
+| Bank | The call | Label |
+|------|----------|-------|
+| Danske Bank (UK): asks security questions on its calls | the person asked for the change | legitimate |
+| Danske Bank (UK) | the person asked for nothing, or it is not known | unsure: hang up and call the number on the card |
+| Barclays (UK): never asks for security answers by phone | security questions asked, even if the person asked for a change | scam |
+| any bank | the caller sends a link, asks for a code, or says they are a "new account manager" | scam |
+
+When no rule fits, or the call is not about a bank account, the verdict from
+the words stands. The policies are taken from that table, not from the banks'
+own pages. Banks change their rules, so check each file against the bank's
+current "we will never ask" page before relying on it.
+
+A bank file is short:
+
+```json
+{"name": "Barclays (UK)", "policy": "Never asks for security answers by phone.",
+ "applies_to": ["bank_account"],
+ "questions": [{"id": "security_questions", "prompt": "Does the caller ask ...?",
+                "options": [{"id": "yes", "text": "..."}, {"id": "no", "text": "...", "absence": true},
+                            {"id": "not_mentioned", "text": "Not stated"}]}],
+ "rules": [{"if": {"security_questions": ["yes"]}, "label": "scam", "why": "..."}]}
+```
+
+- `applies_to`: the subjects (root option ids) the rules are for.
+- `questions`: written like the ontology's, without values.
+- `rules`: each has an `if` and a `label`, which is `scam`, `legit` or
+  `unsure`, plus a `why` and an optional `advice`. The `if` maps a question
+  id, or `asked`, to the answers it accepts (`asked` takes `yes`, `no` or
+  `unknown`). The first rule whose every condition holds decides.
+
+Add a bank, such as Kiwibank, by saving another file in `knowledge/banks/`.
+It appears in the list on the next page load. On the command line:
+`python scripts/mcq_ontology.py ask --text "…" --bank knowledge/banks/danske_bank_uk.json --asked yes`.
+
 **Your own question about this call** sits under it, in the Ask tab. Type
 any question about the loaded transcript:
 - **With options:** list them in the question, as `A) … B) …`, one per line

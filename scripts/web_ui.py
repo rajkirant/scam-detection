@@ -2617,6 +2617,7 @@ def mcq_config():
            "letters": mcq_ontology.LETTERS,
            "max_options": mcq_ontology.MAX_OPTIONS,
            "questions": mcq_ontology.list_questions(),
+           "banks": mcq_ontology.list_banks(),
            "train_calls": mcq_ontology.TRAIN_CALLS,
            "onto_calls": mcq_ontology.TRAIN_ONTOLOGY_CALLS,
            "onto_new_options": mcq_ontology.NEW_OPTIONS,
@@ -2669,20 +2670,40 @@ def mcq_save(form):
     return mcq_read("knowledge/" + path.name)
 
 
+def mcq_bank_path(rel):
+    """knowledge/banks/<name>.json from the page, checked - or a ValueError."""
+    rel = str(rel or "").strip()
+    pre = "knowledge/banks/"
+    name = rel[len(pre):] if rel.startswith(pre) else rel
+    if not MCQ_FILE_RE.match(name):
+        raise ValueError("a bank is a .json file in knowledge/banks/")
+    return mcq_ontology.BANKS_DIR / name
+
+
 def mcq_ask(form):
-    """Walk one transcript through the ontology's tree of questions."""
+    """Walk one transcript through the ontology's tree of questions, and,
+    with a bank picked, personalise the label for this person."""
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
     path = mcq_path(form.get("ontology"))
     onto = mcq_ontology.load_ontology(path)
     quotes = form.get("quotes", True) is not False
+    bank = None
+    if form.get("bank"):
+        bank = mcq_ontology.load_bank(mcq_bank_path(form["bank"]))
+    asked = str(form.get("asked") or "unknown")
+    if asked not in mcq_ontology.ASKED:
+        raise ValueError("asked must be yes, no or unknown")
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     t0 = time.time()
     try:
         res = mcq_ontology.classify(text, onto, quotes)
+        if bank:
+            res["personal"] = mcq_ontology.personalise(text, res, bank, asked,
+                                                       quotes)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -3195,6 +3216,8 @@ PAGE = r"""<!doctype html>
             border-bottom:1px solid var(--line); font-size:12.5px; }
   .mcqopt:last-child { border-bottom:none; }
   /* ---- the question tree: one subject's questions in the order asked */
+  .persona { border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+             margin-top:12px; }
   .tq-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
   .tq-chips button { font:inherit; font-size:12.5px; padding:4px 10px;
                      border:1px solid var(--line); border-radius:14px;
@@ -4448,6 +4471,20 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <textarea id="mcqtranscript" placeholder="Paste a call transcript here, or load one from a dataset above."></textarea>
       <div class="askrow">
         <span class="hint" id="mcqsize"></span>
+      </div>
+      <div class="persona">
+        <div class="cap">Personalisation</div>
+        <div class="askrow" style="margin-top:6px">
+          <label for="mcqbank" style="margin:0">Bank</label>
+          <select id="mcqbank" style="width:auto; flex:1"></select>
+          <label for="mcqasked" style="margin:0">This person asked for a change</label>
+          <select id="mcqasked" style="width:auto">
+            <option value="unknown">not known</option>
+            <option value="yes">yes</option>
+            <option value="no">no</option>
+          </select>
+        </div>
+        <div class="hint" id="mcqbankpolicy"></div>
       </div>
       <button class="go" id="mcqgo">Classify this call</button>
       <div class="hint" id="mcqasker" style="color:var(--bad)"></div>
@@ -7446,6 +7483,18 @@ async function mcqBoot() {
   forgetRowOnEdit('mcqtranscript', 'mcqinfo');
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
+  $('mcqbank').innerHTML = '<option value="">no bank - the words alone</option>'
+    + (cfg.banks || []).map(b => `<option value="${esc(b.path)}">${esc(b.name)}</option>`).join('');
+  const bankPolicy = () => {
+    const b = (cfg.banks || []).find(x => x.path === $('mcqbank').value);
+    $('mcqbankpolicy').textContent = b ? `${b.name}: ${b.policy} Its rules, `
+      + `with whether this person asked for a change, decide the label. In `
+      + `the finished system that history stays on the person's phone.`
+      : 'Pick the person\'s bank to personalise the label: the same words can '
+        + 'be a scam at one bank and genuine at another.';
+  };
+  $('mcqbank').onchange = bankPolicy;
+  bankPolicy();
   $('mcqqgo').onclick = mcqQuestion;
   $('mcqquestion').addEventListener('input', mcqQuestionEdited);
   $('mcqqsaved').onchange = () => mcqSavedPick($('mcqqsaved').value);
@@ -7574,7 +7623,8 @@ async function mcqAsk() {
   $('mcqanswer').innerHTML = '<div class="card muted">' + esc(MCQ.model)
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
-    quotes: $('mcqquotes').checked});
+    quotes: $('mcqquotes').checked, bank: $('mcqbank').value,
+    asked: $('mcqasked').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -7589,6 +7639,42 @@ function mcqSigned(v) {
   const c = v > 0 ? 'var(--bad)' : v < 0 ? 'var(--accent)' : 'var(--dim)';
   return `<span style="color:${c}; font-family:var(--mono)">${v > 0 ? '+' : ''}`
     + `${Number(v).toFixed(2)}</span>`;
+}
+
+// the label for this person: the bank's rules on top of the words' verdict
+function mcqPersonalCard(r, wordsWord) {
+  const p = r.personal;
+  const big = {scam: 'SCAM', legit: 'LEGITIMATE', unsure: 'UNSURE',
+               neutral: 'NEUTRAL'}[p.final] || String(p.final).toUpperCase();
+  const cls = p.final === 'scam' ? 'scam' : p.final === 'legit' ? 'legitimate'
+    : 'uncertain';
+  const asked = {yes: 'asked for the change', no: 'asked for nothing',
+                 unknown: 'not known whether they asked'}[p.asked];
+  const rows = p.answers.map(a => `<div class="tq-opt tq-pick">`
+    + `<span>✓ ${a.text === null ? 'unreadable' : esc(a.text)}</span>`
+    + `<span class="tq-run">${a.p === null ? '' : (100 * a.p).toFixed(0) + '%'}</span></div>`
+    + `<div class="tq-asked" style="margin:0 0 4px 6px">${esc(a.question)}</div>`
+    + (a.quote && a.quoted !== false ? `<div class="tq-quote" style="margin-left:6px">“${esc(a.quote)}”</div>` : '')
+    + (a.quoted === false ? `<div class="tq-quote muted" style="margin-left:6px"><s>“${esc(a.quote || '')}”</s> `
+       + 'not in the transcript, so it counts as Not stated</div>' : '')).join('');
+  return `<div class="card">
+    <div class="verdict">
+      <div>
+        <div class="cap">For this person</div>
+        <div class="big ${cls}">${big}</div>
+        <div class="hint">${esc(p.bank)} · ${esc(asked)}</div>
+      </div>
+      <div style="flex:1; min-width:260px">
+        <div class="cap">Why</div>
+        <div>${esc(p.why)}</div>
+        ${p.advice ? `<div style="margin-top:6px; font-weight:600">${esc(p.advice)}</div>` : ''}
+        <div class="hint">${p.from === 'bank' ? 'decided by ' + esc(p.bank) + '\'s rule '
+          + p.rule + '; the words alone said ' + esc(wordsWord.toLowerCase())
+          : 'the words alone decide'} · ${esc(p.bank)}: ${esc(p.policy)}</div>
+      </div>
+    </div>
+    ${rows ? `<div class="qp" style="margin-top:10px">The bank's questions</div>${rows}` : ''}
+  </div>`;
 }
 
 function mcqPaintAnswer(r) {
@@ -7653,6 +7739,7 @@ function mcqPaintAnswer(r) {
       </div>
     </div>
   </div>
+  ${r.personal ? mcqPersonalCard(r, word) : ''}
   ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
   <div class="card">
     <div class="qp">The path this call took through the tree</div>

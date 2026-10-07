@@ -107,7 +107,25 @@ TREE = {
                  "Is there pressure?": ("No time pressure", None)},
     "ZEROCALL": {"What is this call about?": ("Something else", None)},
     "BADROOT": {"What is this call about?": (None, None)},
+    # bank calls, for personalisation: the same words, different banks
+    "SECQCALL": {"What is this call about?": ("A bank", None),
+                 "Does the caller do any of these?": ("None of these", None),
+                 "Does the caller ask the person security questions to confirm "
+                 "who they are?": ("Yes: security", "what is your date of birth")},
+    "LINKCALL": {"What is this call about?": ("A bank", None),
+                 "Does the caller do any of these?": ("Sends a link",
+                                                      "open the link I text you"),
+                 "Does the caller ask the person security questions to confirm "
+                 "who they are?": ("No security", None)},
+    "PLAINCALL": {"What is this call about?": ("A bank", None),
+                  "Does the caller do any of these?": ("None of these", None),
+                  "Does the caller ask the person security questions to confirm "
+                  "who they are?": ("No security", None)},
 }
+SECQ = ("SECQCALL caller: this is your bank about the change to your address. "
+        "Before I make it, what is your date of birth?")
+LINK = "LINKCALL caller: this is your bank. Please open the link I text you now."
+PLAIN = "PLAINCALL caller: this is your bank, your new card is on its way."
 
 
 def fake_tree(prompt):
@@ -371,6 +389,63 @@ check("verdict and the 0-100 score at the edges",
       (M.verdict_of(0.0), M.verdict_of(1e-9), M.verdict_of(-0.1),
        round(M.pct(0.0)), round(M.pct(2.0))),
       ("neutral", "neutral", "legit", 50, 88))
+
+print("\npersonalisation: the same words, a different label per bank")
+banks = {b["name"]: b for b in (M.load_bank(x["path"]) for x in M.list_banks())}
+check("the two shipped banks load",
+      sorted(banks), ["Barclays (UK)", "Danske Bank (UK)"])
+for b in banks.values():
+    b["applies_to"] = ["bank"]           # the test tree's bank subject
+danske, barclays = banks["Danske Bank (UK)"], banks["Barclays (UK)"]
+
+
+def label(text, bank, asked):
+    r = M.classify(text, tree)
+    p = M.personalise(text, r, bank, asked)
+    return p["final"], p["from"], p.get("advice")
+
+
+STATE["calls"] = 0
+r = M.classify(SECQ, tree)
+n0 = STATE["calls"]
+p = M.personalise(SECQ, r, danske, "yes")
+check("two more requests: the bank's two questions",
+      (STATE["calls"] - n0, [a["path"] for a in p["answers"]]),
+      (2, ["bank/red_flags", "bank/security_questions"]))
+check("Danske asks security questions, the person asked: legit",
+      label(SECQ, danske, "yes"), ("legit", "bank", None))
+check("Danske, the person asked for nothing: unsure, hang up and call back",
+      label(SECQ, danske, "no"),
+      ("unsure", "bank", "Hang up and call the number on the card."))
+check("Danske, not known whether they asked: unsure too",
+      label(SECQ, danske, "unknown")[0], "unsure")
+check("Barclays never asks for security answers: scam, even if they asked",
+      [label(SECQ, barclays, a)[:2] for a in ("yes", "no")],
+      [("scam", "bank"), ("scam", "bank")])
+check("a link is a scam at either bank, whatever the person asked",
+      [label(LINK, b, "yes")[0] for b in (danske, barclays)], ["scam", "scam"])
+check("Barclays, no security questions, no red flags: the words decide",
+      label(PLAIN, barclays, "yes")[1], "words")
+p = M.personalise(CALM, M.classify(CALM, tree), danske, "yes")
+check("a call not about the bank: its rules do not apply, no questions",
+      (p["applies"], p["answers"], p["final"]), (False, [], "legit"))
+try:
+    M.personalise(SECQ, M.classify(SECQ, tree), danske, "maybe")
+    check("an unknown 'asked' is refused", False)
+except ValueError:
+    check("an unknown 'asked' is refused", True)
+
+bad = json.loads(json.dumps({k: v for k, v in danske.items()
+                             if k != "applies_to"}))
+bad["rules"] = [{"if": {"red_flags": ["no_such"], "mood": ["x"]},
+                 "label": "maybe", "why": ""}]
+probs = M.check_bank(bad)
+check("a broken bank file names each problem",
+      [any(w in p for p in probs) for w in
+       ("no answer no_such", '"mood" is neither', "scam, legit or unsure",
+        'no "why"')], [True] * 4)
+check("a bank file needs rules",
+      any('"rules"' in p for p in M.check_bank(dict(bad, rules=[]))), True)
 
 print("\nan older one-question file, through the same walk")
 r = M.classify("SSNCALL transcript", flat)
