@@ -7426,10 +7426,6 @@ function mcqSigned(v) {
 }
 
 function mcqPaintAnswer(r) {
-  mcqTreeCall = r;
-  mcqTreeShowCall = true;
-  if (r.subject) mcqTreeSubject = r.subject;
-  mcqTree(mcqOnto, null);
   const cls = r.verdict === 'scam' ? 'scam' : r.verdict === 'legit'
     ? 'legitimate' : 'uncertain';
   const word = r.verdict === 'scam' ? 'SCAM' : r.verdict === 'legit'
@@ -7449,41 +7445,25 @@ function mcqPaintAnswer(r) {
   if (unq) notes.push(`${unq} answer${unq === 1 ? '' : 's'} came without a quote `
     + 'found in the transcript, and counted as Not stated (struck through below).');
 
-  // the path the call took: each answer, follow-ups nested under the answer
-  // that opened them, with the score so far
+  // the path the call took, drawn from the file it was classified with:
+  // each question asked, every option of it with the chosen one marked,
+  // follow-ups nested under the answer that opened them
+  const call = {answers: new Map(), run: new Map()};
   let running = root.value || 0;
-  const nodes = [], stack = [];
   for (const a of r.answers.slice(1)) {
     running += a.value;
-    const d = Math.max(0, (a.path.split('/').length - 2) / 2);
-    const n = {a, run: running, depth: d, kids: []};
-    stack.length = Math.min(stack.length, d);
-    (d && stack[d - 1] ? stack[d - 1].kids : nodes).push(n);
-    stack[d] = n;
+    call.answers.set(a.path, a);
+    call.run.set(a.path, running);
   }
-  const card = n => {
-    const a = n.a, rec = a.role === 'recorded';
-    const tag = n.depth ? 'follow-up' : a.path.startsWith('common/') ? 'common'
-      : 'subject';
-    const quote = a.quoted === false
-      ? `<div class="tq-quote muted"><s>“${esc(a.quote || 'no quote')}”</s> not in `
-        + `the transcript, so it counts as Not stated; the model picked `
-        + `<s>${esc(a.picked || '')}</s></div>`
-      : a.quote ? `<div class="tq-quote">“${esc(a.quote)}”</div>` : '';
-    const kids = n.kids.length ? `<div class="tq-fu"><div class="tq-if">because `
-      + `“${esc(a.text || '')}” was chosen, it asked:</div>`
-      + n.kids.map(card).join('') + '</div>' : '';
-    return `<div class="tq-card ${rec ? 'recorded' : ''}">
-      <div class="tq-asked">${esc(a.question)}<span class="tq-tag">${tag}${
-        rec ? ' · recorded, scores 0' : ''}</span></div>
-      <div class="tq-ans"><span class="tq-v ${a.value > 0 ? 'pos' : a.value < 0
-        ? 'neg' : ''}">${mcqFmt(a.value)}</span>
-        <b>${a.text === null ? 'unreadable' : esc(a.text)}</b>
-        <span class="tq-run">${a.p === null ? '' : (100 * a.p).toFixed(0) + '% · '}`
-      + `score ${mcqFmt(n.run)}</span></div>${quote}${kids}</div>`;
-  };
-  const path = nodes.map((n, i) => `<div class="tq-step"><div class="tq-num">`
-    + `${i + 1}</div>${card(n)}</div>`).join('');
+  const o = mcqOnto && r.ontology === mcqFile ? mcqOnto : null;
+  const osubj = o ? o.options.find(x => x.id === r.subject) || null : null;
+  let n = 0;
+  const path = o ? mcqTreeOrder(o, osubj).map(({q, common}) => {
+    const qp = (common ? 'common' : (osubj || {}).id) + '/' + q.id;
+    const html = mcqTreeQ(q, common ? 'common' : 'subject', qp, call);
+    return html ? `<div class="tq-step"><div class="tq-num">${++n}</div>${html}</div>` : '';
+  }).join('') : '<div class="tq-step hint">pick the ontology this call was '
+    + 'classified with to see its path</div>';
 
   $('mcqanswer').innerHTML = `
   <div class="card">
@@ -7509,8 +7489,10 @@ function mcqPaintAnswer(r) {
   </div>
   ${notes.map(n => `<div class="card hint">${n}</div>`).join('')}
   <div class="card">
-    <div class="qp">The path this call took through the tree
-      <button class="link" onclick="mcqTab('tree')">see it on the Question tree</button></div>
+    <div class="qp">The path this call took through the tree</div>
+    <div class="hint" style="margin-top:0">Each question it was asked, in order:
+      the chosen answer marked ✓ with its quote and the score so far, the other
+      options beneath it. Questions it was not asked are left out.</div>
     <div class="tq-root" style="margin-top:8px"><b>${esc(r.prompt)}</b>
       <span class="tq-v ${(root.value || 0) > 0 ? 'pos' : (root.value || 0) < 0
         ? 'neg' : ''}">${mcqFmt(root.value || 0)}</span>
@@ -7775,9 +7757,6 @@ async function mcqSave() {
 
 // ---- the question tree tab
 let mcqTreeSubject = null;
-// the last call classified on this page, drawn on the tree as the path it
-// took (mcqTreeShowCall), until the whole questionnaire is asked for
-let mcqTreeCall = null, mcqTreeShowCall = true;
 
 const mcqNum = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
 const mcqFmt = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2)
@@ -7816,9 +7795,9 @@ function mcqTreeRange(q) {
 }
 
 // one question, with its options and their follow-ups. With `call` (the
-// answers of a classified call, by path) only what that call was asked is
-// drawn: a question it was not asked is left out, its chosen answer is
-// marked, the other options are dimmed
+// answers of a classified call, by path - the Classify tab) only what that
+// call was asked is drawn: a question it was not asked is left out, its
+// chosen answer is marked, the other options are shown dimmed beneath
 function mcqTreeQ(q, tag, path, call) {
   const rec = q.role === 'recorded';
   const got = call ? call.answers.get(path) : null;
@@ -7863,36 +7842,11 @@ function mcqTree(o, note) {
   const subs = o.options.filter(x => x && typeof x === 'object');
   if (!subs.some(x => x.id === mcqTreeSubject))
     mcqTreeSubject = (subs[0] || {}).id;
-  // a classified call is drawn only on the saved file it was classified with,
-  // and only on its own subject
-  const r = mcqTreeCall;
-  const have = !note && r && r.ontology === mcqFile;
-  const show = have && mcqTreeShowCall && r.subject === mcqTreeSubject;
-  let call = null;
-  if (show) {
-    call = {answers: new Map(), run: new Map()};
-    let run = r.answers[0].value || 0;
-    for (const a of r.answers.slice(1)) {
-      run += a.value;
-      call.answers.set(a.path, a);
-      call.run.set(a.path, run);
-    }
-  }
   const count = x => mcqTreeOrder(o, x).length;
-  $('mcqtreenote').innerHTML = (note ? esc(note) + ' ' : '')
-    + (show ? `Showing the path of the call you classified: the questions it was `
-        + `asked, each chosen answer marked ✓. Final score <b>${mcqFmt(r.score)}</b>, `
-        + `${r.verdict === 'legit' ? 'legitimate' : esc(r.verdict)}. `
-        + `<button class="link" id="mcqtreemode">show the whole questionnaire</button>`
-      : 'Pick a subject to see the questions its calls are asked, in order, '
-        + 'with each option\'s value. Follow-ups branch off the option that opens '
-        + 'them.' + (have ? ` <button class="link" id="mcqtreemode">show the path `
-        + `of the call you classified</button>` : ''));
-  if ($('mcqtreemode')) $('mcqtreemode').onclick = () => {
-    mcqTreeShowCall = !show;
-    if (mcqTreeShowCall && r.subject) mcqTreeSubject = r.subject;
-    mcqTree(o, note);
-  };
+  $('mcqtreenote').textContent = (note ? note + ' ' : '')
+    + 'Pick a subject to see the questions its calls are asked, in order, '
+    + 'with each option\'s value. Follow-ups branch off the option that opens '
+    + 'them.';
   $('mcqtreechips').innerHTML = subs.map(x => `<button data-s="${esc(x.id)}"`
     + ` class="${x.id === mcqTreeSubject ? 'on' : ''}">${esc(x.text || x.id)}`
     + ` <span class="muted">${count(x)}</span></button>`).join('');
@@ -7903,27 +7857,19 @@ function mcqTree(o, note) {
   const order = mcqTreeOrder(o, subj);
   let lo = mcqNum(subj.value), hi = lo;
   for (const {q} of order) { const [a, b] = mcqTreeRange(q); lo += a; hi += b; }
-  let n = 0;
-  const steps = order.map(({q, common}) => {
-    const path = (common ? 'common' : subj.id) + '/' + q.id;
-    const html = mcqTreeQ(q, common ? 'common' : 'subject', path, call);
-    return html ? `<div class="tq-step"><div class="tq-num">${++n}</div>${html}</div>` : '';
-  }).join('');
-  const rootP = show && r.answers[0].p !== null
-    ? (100 * r.answers[0].p).toFixed(0) + '% on this subject' : '';
+  const steps = order.map(({q, common}, i) => `<div class="tq-step">
+      <div class="tq-num">${i + 1}</div>${mcqTreeQ(q, common ? 'common' : 'subject', '', null)}</div>`
+  ).join('');
   $('mcqtree').innerHTML = `
     <div class="tq-root"><b>${esc(o.prompt || '(no root prompt)')}</b>
       <span class="tq-v ${mcqNum(subj.value) > 0 ? 'pos' : mcqNum(subj.value) < 0 ? 'neg' : ''}">`
-      + `${mcqFmt(mcqNum(subj.value))}</span> ${show ? '✓ ' : ''}${esc(subj.text || subj.id)}
-      <span class="tq-tag">${show ? rootP : 'picks the subject; ' + subs.length
-        + ' to choose from'}</span></div>
+      + `${mcqFmt(mcqNum(subj.value))}</span> ${esc(subj.text || subj.id)}
+      <span class="tq-tag">picks the subject; ${subs.length} to choose from</span></div>
     <div class="tq-flow">${steps || '<div class="tq-step hint">no questions</div>'}
-      <div class="tq-step"><div class="tq-num">Σ</div><div class="tq-end">${show
-        ? `<b>final score ${mcqFmt(r.score)}</b> · ${r.verdict === 'legit'
-          ? 'legitimate' : esc(r.verdict)} · the sum of the values chosen on the way`
-        : `<b>score</b> = the sum of the chosen values · above 0 scam, below 0
+      <div class="tq-step"><div class="tq-num">Σ</div><div class="tq-end">
+        <b>score</b> = the sum of the chosen values · above 0 scam, below 0
         legitimate, 0 neutral · this path can score from
-        <b>${mcqFmt(lo)}</b> to <b>${mcqFmt(hi)}</b>`}</div></div>
+        <b>${mcqFmt(lo)}</b> to <b>${mcqFmt(hi)}</b></div></div>
     </div>`;
 }
 
