@@ -672,10 +672,11 @@ as Not stated. Options marked `absence` ("no payment at all") need no quote.
 The result shows:
 - the verdict and the score,
 - the path the call took through the tree. It starts at the chosen subject,
-  then lists each question asked in order, with the answer chosen, its value,
-  the probability on it, the score so far, and the quote. Follow-ups are
-  nested under the answer that opened them. Questions that were not asked are
-  not shown.
+  then shows each question asked, in order, with all its options and their
+  values. The chosen answer is marked ✓, with the probability on it, the score
+  so far and the quote, and the other options sit dimmed beneath it.
+  Follow-ups are nested under the answer that opened them. Questions that
+  were not asked are not shown.
 
 There is no retrieval and no learned knowledge. The model sees the
 transcript, one question and its options, and a few fixed rules, and nothing
@@ -741,11 +742,6 @@ The other tabs:
   the option that opens them. It ends with the range this path can score.
   It follows the editor as you type, labelled as unsaved, once the JSON
   parses, and is redrawn from the file when you save.
-  After you classify a call, it opens on that call's subject and shows the
-  path the call took. Each chosen answer is marked ✓, with its quote and the
-  score so far. The other options are dimmed, and questions that were not
-  asked are hidden. A link switches between the call's path and the whole
-  questionnaire.
 - **Edit the JSON:** the file itself. It is saved only if every question has
   an `id`, a `prompt` and 2–20 options, and every option an `id`, a `text`
   and a `value` from -1 to 1 (0 for `not_mentioned` and for recorded
