@@ -639,13 +639,17 @@ def stop_run(run_id):
     # "stopped" on the reply rather than a poll or two later. A step that
     # ignores SIGTERM - a CUDA teardown, a C extension mid-call - gets a
     # SIGKILL after a few seconds instead of leaving the run half alive.
+    # A scoring run writes its partial result on SIGTERM, after the shell
+    # wrapping it has already gone - so wait on the whole group, or the page
+    # would ask for the result before it is written.
+    gone = lambda: not _run_alive(run_id, pid) and not _group_alive(pgid)
     deadline = time.time() + 4
-    while time.time() < deadline and _run_alive(run_id, pid):
+    while time.time() < deadline and not gone():
         time.sleep(0.1)
-    if _run_alive(run_id, pid):
+    if not gone():
         _signal_run(pid, pgid, getattr(signal, "SIGKILL", signal.SIGTERM))
         deadline = time.time() + 3
-        while time.time() < deadline and _run_alive(run_id, pid):
+        while time.time() < deadline and not gone():
             time.sleep(0.1)
     # The wrapper was killed before it could write its exit marker. Write one
     # for it, so the run still reads as stopped after this server restarts and
@@ -667,6 +671,20 @@ def _signal_run(pid, pgid, sig):
             os.kill(pid, sig)
     except (OSError, ProcessLookupError):
         pass
+
+
+def _group_alive(pgid):
+    """Is any process of this group still there? False where groups are not
+    available (Windows), so the wait falls back to the wrapper alone."""
+    if pgid is None or not hasattr(os, "killpg"):
+        return False
+    try:
+        os.killpg(pgid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
 
 
 def _run_alive(run_id, pid):
@@ -794,6 +812,42 @@ LEDGER_LOCK = threading.Lock()
 # collect_results.py names two systems differently from the baseline menu
 SYSTEM_TO_BASELINE = {"ontology_rag": "ontology", "mcq_ontology": "mcq"}
 
+# A Score-a-dataset run is recorded as system "score:<page>", so it sits in
+# the ledger beside the benchmark's numbers without being mistaken for one:
+# it is a fitted model (or the MCQ ontology) put to a dataset, not a
+# cross-validated baseline.
+SCORE_LABELS = {"score:bert": "BERT · scored", "score:bow": "Bag of words · scored",
+                "score:length": "Length · scored", "score:llm": "LLM judge · scored",
+                "score:mcq": "MCQ ontology · scored"}
+
+
+def _score_entry(meta, finished):
+    """The ledger line for one Score-a-dataset run, from the metrics file it
+    wrote - a stopped run included, since it writes what it scored. None
+    when it wrote nothing."""
+    rid = meta["id"]
+    try:
+        d = json.loads(run_path(rid, "metrics.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    m = d.get("metrics") or {}
+    if not m:
+        return None
+    pct = lambda x: round(100.0 * x, 1) if isinstance(x, (int, float)) else None
+    e = {"run_id": rid, "finished": finished,
+         "dataset": meta.get("dataset", ""),
+         "system": "score:%s" % meta.get("page", ""),
+         "model": meta.get("model_name") or d.get("model") or "",
+         "limit": str(meta.get("limit", "")),
+         "calls": sum(m.get(k, 0) for k in ("tp", "fp", "fn", "tn")),
+         "acc": pct(m.get("acc")), "p": m.get("prec"), "r": m.get("rec"),
+         "f1": m.get("f1"), "stripped_test": False}
+    for k in ("tp", "fp", "fn", "tn"):
+        e[k] = m.get(k, 0)
+    if d.get("stopped"):
+        e["stopped"] = d["stopped"]
+    return e
+
 
 def ledger_read():
     """Every ledger line, in the order written. A line that will not parse is
@@ -828,8 +882,18 @@ def ledger_sync():
         new = []
         for meta in all_runs():
             rid = meta.get("id")
-            if (not rid or rid in seen or meta.get("kind")
-                    or meta.get("status") != "done"):
+            if not rid or rid in seen:
+                continue
+            if meta.get("kind") == "eval":
+                # a score: recorded once it is over, stopped ones too
+                if meta.get("status") in ("done", "stopped", "failed"):
+                    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(
+                        run_path(rid, "log").stat().st_mtime
+                        if run_path(rid, "log").exists() else time.time()))
+                    new.append(_score_entry(meta, when)
+                               or {"run_id": rid, "empty": True})
+                continue
+            if meta.get("kind") or meta.get("status") != "done":
                 continue
             res = results_of(rid) or {}
             systems = [x for x in res.get("systems", []) if x.get("ran")]
@@ -877,10 +941,28 @@ def ledger_view(dataset):
     picked = [e for e in rows if e["dataset"] == dataset] if dataset else []
     picked.sort(key=lambda e: (e.get("finished", ""), e.get("run_id", "")),
                 reverse=True)
-    order = [b[0] for b in BASELINES if b[0] != "all"]
+    order = [b[0] for b in BASELINES if b[0] != "all"] + list(SCORE_LABELS)
+    labels = {b[0]: b[1] for b in BASELINES}
+    labels.update(SCORE_LABELS)
     return {"dataset": dataset, "entries": picked,
             "datasets_recorded": counts, "system_order": order,
-            "labels": {b[0]: b[1] for b in BASELINES}}
+            "labels": labels}
+
+
+def eval_history(page, limit=15):
+    """The scores this page has recorded, newest first, for its Score a
+    dataset tab - so a score is still there after the page is reloaded."""
+    if page not in EVAL_PAGES:
+        raise ValueError("unknown page")
+    ledger_sync()
+    rows = [e for e in ledger_read()
+            if e.get("system") == "score:" + page and not e.get("empty")
+            and not e.get("hidden")]
+    rows.sort(key=lambda e: (e.get("finished", ""), e.get("run_id", "")),
+              reverse=True)
+    for e in rows[:limit]:
+        e["kept"] = run_path(e["run_id"], "metrics.json").exists()
+    return {"page": page, "entries": rows[:limit]}
 
 
 def ledger_hide(run_id, system):
@@ -1946,6 +2028,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"kb": kb_state()})
             if u.path == "/api/admin/version":
                 return self._send(200, version_info())
+            if u.path == "/api/eval/history":
+                return self._send(200, eval_history(q.get("page", [""])[0]))
             if u.path == "/api/ledger":
                 ledger_sync()
                 return self._send(200, ledger_view(q.get("dataset", [""])[0]))
@@ -4988,7 +5072,7 @@ function paintLedger() {
   // The summary row for a baseline is its most recent run over the whole
   // dataset, if it has one - a 40-call pilot is recorded, but it should not
   // stand in for the real number just because it happened to be later.
-  const full = e => !e.limit || e.limit === '0' || e.limit === '-';
+  const full = e => (!e.limit || e.limit === '0' || e.limit === '-') && !e.stopped;
   const pick = list => list.find(full) || list[0];
 
   const head = `<tr><th>Baseline</th><th>Acc</th><th>P</th><th>R</th><th>F1</th>`
@@ -4998,7 +5082,8 @@ function paintLedger() {
   const line = (e, sub) => `<tr class="${sub ? 'sub' : 'top'}"
       ${sub ? '' : `data-sys="${esc(e.system)}"`}>
     <td class="optname">${sub ? '' : `<strong>${esc(r.labels[e.system] || e.system)}</strong>`}
-      ${full(e) ? '' : '<span class="pill">pilot</span>'}</td>
+      ${e.stopped ? `<span class="pill">stopped ${e.stopped.scored}/${e.stopped.of}</span>`
+        : full(e) ? '' : '<span class="pill">pilot</span>'}</td>
     <td>${pct(e.acc)}</td><td>${f3(e.p)}</td><td>${f3(e.r)}</td><td>${f3(e.f1)}</td>
     ${anyStripped ? `<td>${pct(e.stripped_acc)}</td><td><strong>${pct(e.trusted)}</strong></td>` : ''}
     <td>${e.calls}</td>${anyModel ? `<td>${esc(e.model || '—')}</td>` : ''}
@@ -5909,6 +5994,7 @@ async function bertBoot() {
   $('berteds').innerHTML = BERT.datasets.map(d =>
     `<option value="${d.path}">${d.name} — ${d.rows === null ? '?' : d.rows} rows</option>`
   ).join('');
+  evalHistory('bert', evalIds('bert', 'm-eval'));
   $('bertevgo').onclick = () => evalRun('bert', evalIds('bert', 'm-eval'), {
     model: model, dataset: $('berteds').value, limit: $('bertevlimit').value,
     threshold: $('bertevthr').value, strip_tags: $('bertevstrip').checked,
@@ -6245,6 +6331,7 @@ async function bowBoot() {
     await api('/api/bow/unload', {}); await bowRefresh();
   };
   $('boweds').innerHTML = $('bowdataset').innerHTML;
+  evalHistory('bow', evalIds('bow', 'b-eval'));
   $('bowevgo').onclick = () => evalRun('bow', evalIds('bow', 'b-eval'), {
     model: bowModel, dataset: $('boweds').value, limit: $('bowevlimit').value,
     threshold: $('bowevthr').value, strip_tags: $('bowevstrip').checked,
@@ -6455,7 +6542,76 @@ async function evalRun(page, ids, body) {
   EVAL[page] = {run: res.id, ids: ids};
   $(ids.out).innerHTML = '<div class="card muted">scoring…</div>';
   $(ids.log).hidden = false;
+  evalStopButton(page, true);
   evalPoll(page);
+}
+
+// The Stop button sits under "Score every call" while a score is running.
+// Stopping keeps the calls scored so far: the run writes them out as a
+// partial result, which shows here and is recorded like any other.
+function evalStopButton(page, show) {
+  const st = EVAL[page];
+  if (!st) return;
+  const id = st.ids.go + 'stop';
+  let b = $(id);
+  if (!b) {
+    b = document.createElement('button');
+    b.id = id;
+    b.className = 'stop';
+    b.style.cssText = 'width:100%; margin-top:8px';
+    $(st.ids.go).insertAdjacentElement('afterend', b);
+  }
+  b.hidden = !show;
+  b.disabled = false;
+  b.textContent = 'Stop this run';
+  b.onclick = async () => {
+    b.disabled = true;
+    b.textContent = 'Stopping… keeping what is scored';
+    const r = await api('/api/stop', {id: EVAL[page].run});
+    if (r.error) { $(st.ids.err).textContent = 'could not stop: ' + r.error;
+                   b.disabled = false; b.textContent = 'Stop this run'; return; }
+    clearTimeout(EVAL[page].timer);
+    evalPoll(page);
+  };
+}
+
+// Earlier scores on this page, from the results ledger - a score is kept
+// after it finishes or is stopped, and can be opened again from here.
+async function evalHistory(page, ids) {
+  const hid = ids.out + 'hist';
+  let box = $(hid);
+  if (!box) {
+    box = document.createElement('div');
+    box.id = hid;
+    $(ids.log).insertAdjacentElement('afterend', box);
+  }
+  const r = await api('/api/eval/history?page=' + encodeURIComponent(page));
+  if (r.error || !r.entries.length) { box.innerHTML = ''; return; }
+  const pctf = x => x === null || x === undefined ? '—' : Number(x).toFixed(1) + '%';
+  box.innerHTML = `<div class="card"><div class="qp">Earlier scores on this page</div>
+    <div class="hint" style="margin-top:0">Every score that finished or was
+      stopped is kept here and in the Results tab of the Benchmark page
+      (<code>results/ledger.jsonl</code>). Click one to open it.</div>
+    <div class="scroll"><table class="opts">
+      <tr><th>when</th><th>dataset</th><th>model</th><th>calls</th><th>acc</th>
+          <th>F1</th><th></th></tr>
+      ${r.entries.map(e => `<tr ${e.kept ? `class="evhist" data-run="${esc(e.run_id)}"
+        style="cursor:pointer"` : ''}>
+        <td>${esc((e.finished || '').slice(5))}</td>
+        <td class="optname">${esc((e.dataset || '').replace(/^datasets\//, ''))}</td>
+        <td class="optname">${esc(e.model || '')}</td><td>${e.calls}</td>
+        <td><b>${pctf(e.acc)}</b></td><td>${e.f1 === undefined || e.f1 === null
+          ? '—' : Number(e.f1).toFixed(3)}</td>
+        <td>${e.stopped ? `<span class="pill">stopped ${e.stopped.scored}/${e.stopped.of}</span>` : ''}${
+          e.kept ? '' : ' <span class="muted">log deleted</span>'}</td></tr>`).join('')}
+    </table></div></div>`;
+  for (const tr of box.querySelectorAll('tr.evhist'))
+    tr.onclick = async () => {
+      const m = await api('/api/eval/result?id=' + encodeURIComponent(tr.dataset.run));
+      $(ids.out).innerHTML = m.ready ? evalCard(m)
+        : `<div class="card hint">Could not open that score: ${esc(m.error || m.why || '')}</div>`;
+      $(ids.out).scrollIntoView({behavior: 'smooth', block: 'start'});
+    };
 }
 
 async function evalPoll(page) {
@@ -6492,6 +6648,10 @@ async function evalPoll(page) {
   clearTimeout(st.timer);
   if (r.error || runOver(r)) {
     const m = await api(`/api/eval/result?id=${encodeURIComponent(st.run)}`);
+    if (!(!m.error && !m.ready && m.status === 'running')) {
+      evalStopButton(page, false);
+      evalHistory(page, st.ids);
+    }
     // the result endpoint knows whether the run is still going even when the
     // log could not be read, so a run that is merely unreachable keeps being
     // waited on rather than being declared over
@@ -6552,6 +6712,9 @@ function evalCard(d) {
   const floor = Math.max(b.always_scam.acc, b.never_scam.acc);
   const over = m.acc - floor;
   const notes = [];
+  if (d.stopped) notes.push(`<strong>Stopped after ${d.stopped.scored} of `
+    + `${d.stopped.of} calls.</strong> Every number here is over the ${d.stopped.scored} `
+    + 'calls scored before Stop; it is kept as a partial result.');
 
   // Which of three experiments this is. They are not comparable with each
   // other, and none of them is the Benchmark page's cross-validated figure -
@@ -6687,6 +6850,7 @@ async function lenBoot() {
     await api('/api/length/unload', {}); await lenRefresh();
   };
   $('leneds').innerHTML = $('lendataset').innerHTML;
+  evalHistory('length', evalIds('len', 'l-eval'));
   $('lenevgo').onclick = () => evalRun('length', evalIds('len', 'l-eval'), {
     model: lenModel, dataset: $('leneds').value, limit: $('lenevlimit').value,
     threshold: $('lenevthr').value, direction: $('lenevdir').value,
@@ -6961,6 +7125,7 @@ async function llmBoot() {
   ).join('');
   $('llmevlimit').addEventListener('input', llmEvalCost);
   $('llmeds').addEventListener('change', llmEvalCost);
+  evalHistory('llm', evalIds('llm', 'j-eval'));
   $('llmevgo').onclick = () => evalRun('llm', evalIds('llm', 'j-eval'), {
     model: llmProf,
     dataset: $('llmeds').value, limit: $('llmevlimit').value,
@@ -7294,6 +7459,7 @@ async function mcqBoot() {
   $('mcqtname').addEventListener('input', () => { $('mcqtname').dataset.typed = '1'; });
   $('mcqtgo').onclick = mcqTrain;
   mcqSavedList(cfg.questions, null);
+  evalHistory('mcq', evalIds('mcq', 'q-eval'));
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value,
     quotes: $('mcqquotes').checked});

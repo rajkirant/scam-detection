@@ -668,10 +668,19 @@ def classify_all(transcripts, onto, quotes=True, parallel=None):
     serves requests in parallel (OLLAMA_NUM_PARALLEL) and the GPU has room."""
     from concurrent.futures import ThreadPoolExecutor
     parallel = max(1, int(parallel or os.environ.get("SCAM_LLM_PARALLEL") or 1))
-    with ThreadPoolExecutor(max_workers=parallel) as pool:
-        for res in pool.map(lambda t: classify(t, onto, quotes),
-                            transcripts):
+    if parallel == 1:
+        # one at a time in this thread, so Stop (SIGTERM) interrupts the
+        # request in flight rather than waiting on a worker
+        for t in transcripts:
+            yield classify(t, onto, quotes)
+        return
+    pool = ThreadPoolExecutor(max_workers=parallel)
+    try:
+        for res in pool.map(lambda t: classify(t, onto, quotes), transcripts):
             yield res
+    finally:
+        # on Stop, drop the calls not started yet instead of finishing them
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 def presize(transcripts, onto, quotes=True):
@@ -1538,6 +1547,7 @@ def run_evaluate(args):
     truths = [r["label"] for r in rows]
     prog = EC.Progress(len(rows), every=1)
     preds, results = [], []
+    stopped = None
     t0 = time.time()
     try:
         for r, res in zip(rows, classify_all([r["text"] for r in rows], onto,
@@ -1549,9 +1559,12 @@ def run_evaluate(args):
             prog.tick(r, pred)
     except RuntimeError as e:
         print("    ERROR %s" % e)
+    except EC.Stopped:
+        stopped = EC.stopped_after(len(preds), len(rows))
     elapsed = time.time() - t0
     rows = rows[:len(preds)]
     truths = truths[:len(preds)]
+    results = results[:len(preds)]
 
     m = EC.metrics(truths, preds)
     base = EC.baselines(truths)
@@ -1585,6 +1598,7 @@ def run_evaluate(args):
                                       for i, s in enumerate(onto["options"])],
                           "neutral": neutral, "questions_asked": asked,
                           "unquoted": unquoted, "quotes": quotes,
+                          "stopped": stopped,
                           "measured": sum(r["measured"] for r in results)})
     return m
 

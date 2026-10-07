@@ -455,20 +455,26 @@ def run_evaluate(args):
 
     prog = EC.Progress(len(rows), every=max(1, len(rows) // 60))
     preds, probs, wins = [], [], []
+    stopped = None
     t0 = time.time()
-    for r in rows:
-        try:
-            out = clf.classify(r["text"], args.threshold, strip=args.strip_tags)
-            pred = 1 if out["verdict"] == "scam" else 0
-            probs.append("%.4f" % out["prob_scam"])
-            wins.append(out.get("windows"))
-        except ValueError:
-            pred = None
-            probs.append("")
-            wins.append("")
-        preds.append(pred)
-        prog.tick(r, pred)
+    try:
+        for r in rows:
+            try:
+                out = clf.classify(r["text"], args.threshold,
+                                   strip=args.strip_tags)
+                pred = 1 if out["verdict"] == "scam" else 0
+                probs.append("%.4f" % out["prob_scam"])
+                wins.append(out.get("windows"))
+            except ValueError:
+                pred = None
+                probs.append("")
+                wins.append("")
+            preds.append(pred)
+            prog.tick(r, pred)
+    except EC.Stopped:
+        stopped = EC.stopped_after(len(preds), len(rows))
     elapsed = time.time() - t0
+    rows = rows[:len(preds)]
 
     truths = [r["label"] for r in rows]
     m = EC.metrics(truths, preds)
@@ -478,6 +484,7 @@ def run_evaluate(args):
         EC.write_results(args.out, clf.name, args.csv, rows, preds, m, base,
                          elapsed, {"prob_scam": probs, "windows": wins},
                          {"kind": "bert", "trained_on": trained_on,
+                          "stopped": stopped,
                           "base_model": clf.meta.get("base_model"),
                           "threshold": args.threshold or clf.threshold,
                           "aggregate": clf.aggregate,
