@@ -796,6 +796,22 @@ All of them go through `scripts/eval_common.py`, deliberately: confusion
 matrices computed different ways could not be compared, and comparing them is
 the only reason to have several pages.
 
+**Stopping and keeping scores.** While a score runs, a **Stop this run**
+button sits under "Score every call". Stopping keeps the calls scored so far:
+the run writes them out as a partial result. Its card and log say "stopped
+after N of M calls", and every number is over those N.
+
+Every score that finishes or is stopped is kept in two places:
+- **On the tab:** an **Earlier scores** list under the log, which survives a
+  reload. Click a row to open its card again.
+- **In the results ledger** (`results/ledger.jsonl`): the Benchmark page's
+  Results tab lists it as "<page> · scored", separate from the benchmark's
+  cross-validated rows. A stopped score is marked and never stands as the
+  summary row.
+
+The run's own log stays in `results/logs/web/`, and its per-call CSV in
+`results/`.
+
 Three things the card shows that an accuracy on its own does not:
 
 - **What answering the same thing every time would get.** Always-scam and

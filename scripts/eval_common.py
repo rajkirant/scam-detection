@@ -21,6 +21,7 @@ anyone wants them.
 
 import csv
 import json
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -191,6 +192,37 @@ def say_which_experiment(trained_on, scoring, verb="fitted"):
     return "transfer"
 
 
+class Stopped(BaseException):
+    """The page's Stop button (SIGTERM) arrived during a scoring loop.
+
+    A BaseException, like KeyboardInterrupt, so no `except Exception` on the
+    way up swallows it. Each evaluate catches it around its loop, keeps the
+    calls it scored, and writes them out as a partial result."""
+
+
+def _on_stop(signum, frame):
+    # once only: a second Stop must not cut the partial result off half-way
+    # through being written (the page kills the run a few seconds later anyway)
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    raise Stopped()
+
+
+def catch_stop():
+    """From here on, SIGTERM - the page's Stop - raises Stopped instead of
+    killing the process with nothing written."""
+    try:
+        signal.signal(signal.SIGTERM, _on_stop)
+    except (ValueError, OSError):          # not the main thread
+        pass
+
+
+def stopped_after(scored, total):
+    """Say a run was stopped, and return what the results file records."""
+    print("\n  STOPPED from the page after %d of %d calls - the numbers below "
+          "are over those %d" % (scored, total, scored))
+    return {"scored": scored, "of": total}
+
+
 class Progress:
     """One line per call while a slow run is going, or a tick every so often
     while a fast one is.
@@ -201,6 +233,9 @@ class Progress:
     """
 
     def __init__(self, total, every=1, out=None):
+        # a Progress means a scoring loop is about to run: let Stop end it
+        # cleanly, so what was scored is kept
+        catch_stop()
         self.total, self.every = total, max(1, int(every))
         self.out = out or sys.stdout
         self.t0 = time.time()

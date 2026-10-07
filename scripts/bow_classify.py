@@ -386,18 +386,24 @@ def run_evaluate(args):
 
     prog = EC.Progress(len(rows), every=max(1, len(rows) // 40))
     preds, probs = [], []
+    stopped = None
     t0 = time.time()
-    for r in rows:
-        try:
-            out = clf.classify(r["text"], args.threshold, strip=args.strip_tags)
-            pred = 1 if out["verdict"] == "scam" else 0
-            probs.append("%.4f" % out["prob_scam"])
-        except ValueError:
-            pred = None
-            probs.append("")
-        preds.append(pred)
-        prog.tick(r, pred)
+    try:
+        for r in rows:
+            try:
+                out = clf.classify(r["text"], args.threshold,
+                                   strip=args.strip_tags)
+                pred = 1 if out["verdict"] == "scam" else 0
+                probs.append("%.4f" % out["prob_scam"])
+            except ValueError:
+                pred = None
+                probs.append("")
+            preds.append(pred)
+            prog.tick(r, pred)
+    except EC.Stopped:
+        stopped = EC.stopped_after(len(preds), len(rows))
     elapsed = time.time() - t0
+    rows = rows[:len(preds)]
 
     m = EC.metrics([r["label"] for r in rows], preds)
     base = EC.baselines([r["label"] for r in rows])
@@ -406,6 +412,7 @@ def run_evaluate(args):
         EC.write_results(args.out, clf.name, args.csv, rows, preds, m, base,
                          elapsed, {"prob_scam": probs},
                          {"kind": "bow", "trained_on": trained_on,
+                          "stopped": stopped,
                           "threshold": args.threshold or clf.threshold,
                           "same_dataset": bool(trained_on == args.csv)})
     return m

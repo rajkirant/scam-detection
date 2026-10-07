@@ -20,6 +20,7 @@ Exits non-zero on the first failure.
 
 import csv
 import json
+import time
 import sys
 import tempfile
 from pathlib import Path
@@ -188,6 +189,46 @@ with tempfile.TemporaryDirectory() as tmp:
                          EC.metrics([0] * 40, [1] * 40),
                          EC.baselines([0] * 40), 1.0)
     check("capped at ten", len(p["misses"]["false_scam"]), 10)
+
+head("Stop (SIGTERM) during a scoring loop keeps what was scored")
+# a scoring loop the way every evaluate runs one: Progress, then a loop, with
+# EC.Stopped caught around it and a partial result written
+LOOP = r"""
+import sys, time, json
+sys.path.insert(0, %r)
+import eval_common as EC
+rows = list(range(1000))
+prog = EC.Progress(len(rows), every=1000)
+preds, stopped = [], None
+print("started", flush=True)
+try:
+    for r in rows:
+        time.sleep(0.01)
+        preds.append(1)
+        prog.tick({"label": 1}, 1)
+except EC.Stopped:
+    stopped = EC.stopped_after(len(preds), len(rows))
+time.sleep(0.2)          # a second Stop while writing must not cut it off
+print(json.dumps({"scored": len(preds), "stopped": stopped}), flush=True)
+"""
+import signal as _signal
+import subprocess as _sp
+proc = _sp.Popen([sys.executable, "-c", LOOP % str(Path(__file__).parent)],
+                 stdout=_sp.PIPE, text=True)
+proc.stdout.readline()                   # "started": the loop is running
+time.sleep(0.3)
+proc.send_signal(_signal.SIGTERM)
+time.sleep(0.05)
+proc.send_signal(_signal.SIGTERM)        # the second is ignored
+out, _ = proc.communicate(timeout=20)
+last = json.loads(out.strip().splitlines()[-1])
+check("the process ends normally, not killed", proc.returncode, 0)
+check("it says it was stopped, and after how many",
+      "STOPPED from the page after %d of 1000" % last["scored"] in out, True)
+check("some calls were scored, not all",
+      0 < last["scored"] < 1000, True)
+check("the partial result records scored and planned",
+      last["stopped"], {"scored": last["scored"], "of": 1000})
 
 # ---------------------------------------------------------------------------
 print("\n" + "=" * 66)

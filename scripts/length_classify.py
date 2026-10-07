@@ -598,15 +598,21 @@ def run_evaluate(args):
 
     prog = EC.Progress(len(rows), every=max(1, len(rows) // 40))
     preds, words = [], []
+    stopped = None
     t0 = time.time()
-    for r in rows:
-        text = strip_tags(r["text"]) if args.strip_tags else r["text"]
-        w = word_count(text)
-        pred = predict(w, cut, way)
-        words.append(w)
-        preds.append(pred)
-        prog.tick(r, pred)
+    try:
+        for r in rows:
+            text = strip_tags(r["text"]) if args.strip_tags else r["text"]
+            w = word_count(text)
+            pred = predict(w, cut, way)
+            words.append(w)
+            preds.append(pred)
+            prog.tick(r, pred)
+    except EC.Stopped:
+        stopped = EC.stopped_after(len(preds), len(rows))
     elapsed = time.time() - t0
+    rows = rows[:len(preds)]
+    words = words[:len(preds)]
 
     truths = [r["label"] for r in rows]
     m = EC.metrics(truths, preds)
@@ -625,6 +631,7 @@ def run_evaluate(args):
         EC.write_results(args.out, clf.name, args.csv, rows, preds, m, base,
                          elapsed, {"words_counted": words},
                          {"kind": "length", "trained_on": trained_on,
+                          "stopped": stopped,
                           "threshold": cut, "direction": way,
                           "mirror": mirror,
                           "same_dataset": bool(trained_on == args.csv)})

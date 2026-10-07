@@ -478,37 +478,43 @@ def run_evaluate(args):
              ", bare llm_only prompt"))
     if profile and profile.get("dataset_hint") == args.csv:
         print("  NOTE this prompt was fitted on this dataset.")
-    print("  one generation per call, so this is not quick. Ctrl-C or Stop "
-          "leaves the\n  partial results in place.")
+    print("  one generation per call, so this is not quick. Stop on the page "
+          "keeps the\n  calls scored so far as a partial result.")
 
     truths = [r["label"] for r in rows]
     prog = EC.Progress(len(rows), every=1)
     preds, verdicts, reasons = [], [], []
     truncated = 0
+    stopped = None
     t0 = time.time()
-    for r in rows:
-        prompt = llm_judge.build_prompt(r["text"], None, profile)
-        ctx = ollama_ctx.fit_num_ctx(prompt, args.max_tokens,
-                                     cap=args.num_ctx, where="llm evaluate")
-        try:
-            out = llm_judge.judge(r["text"], model=args.model,
-                                  max_tokens=args.max_tokens, num_ctx=ctx,
-                                  temperature=args.temperature,
-                                  timeout=args.timeout, profile=profile)
-        except RuntimeError as e:
-            print("    ERROR %s" % e)
-            preds.append(None)
-            verdicts.append("error")
-            reasons.append(str(e)[:200])
-            prog.tick(r, None)
-            continue
-        pred = None if out["unreadable"] else int(out["scam"])
-        preds.append(pred)
-        verdicts.append(out["verdict"] or "unreadable")
-        reasons.append(" ".join((out["reason"] or "").split())[:300])
-        truncated += bool(out["prompt_truncated"])
-        prog.tick(r, pred)
+    try:
+        for r in rows:
+            prompt = llm_judge.build_prompt(r["text"], None, profile)
+            ctx = ollama_ctx.fit_num_ctx(prompt, args.max_tokens,
+                                         cap=args.num_ctx, where="llm evaluate")
+            try:
+                out = llm_judge.judge(r["text"], model=args.model,
+                                      max_tokens=args.max_tokens, num_ctx=ctx,
+                                      temperature=args.temperature,
+                                      timeout=args.timeout, profile=profile)
+            except RuntimeError as e:
+                print("    ERROR %s" % e)
+                preds.append(None)
+                verdicts.append("error")
+                reasons.append(str(e)[:200])
+                prog.tick(r, None)
+                continue
+            pred = None if out["unreadable"] else int(out["scam"])
+            preds.append(pred)
+            verdicts.append(out["verdict"] or "unreadable")
+            reasons.append(" ".join((out["reason"] or "").split())[:300])
+            truncated += bool(out["prompt_truncated"])
+            prog.tick(r, pred)
+    except EC.Stopped:
+        stopped = EC.stopped_after(len(preds), len(rows))
     elapsed = time.time() - t0
+    rows = rows[:len(preds)]
+    truths = truths[:len(preds)]
 
     m = EC.metrics(truths, preds)
     base = EC.baselines(truths)
@@ -525,7 +531,7 @@ def run_evaluate(args):
                           "profile": args.profile,
                           "shots": len((profile or {}).get("shots") or []),
                           "rubric": bool((profile or {}).get("rubric")),
-                          "truncated": truncated})
+                          "truncated": truncated, "stopped": stopped})
     return m
 
 
