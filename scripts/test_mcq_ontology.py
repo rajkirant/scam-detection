@@ -91,6 +91,9 @@ NEW = "NEWCALL caller: send the money via Western Union and act today."
 CALM = "CALMCALL caller: your parcel arrives Tuesday, no rush and nothing to pay."
 ZERO = "ZEROCALL caller: hello."
 BADROOT = "BADROOT caller: hm."
+CHARGE_Q = ("Does the caller say a tax, duty or customs charge (such as VAT, "
+            "GST or import tax) must be paid before a parcel is delivered?")
+VALUE_Q = "What is in the parcel, and what is it worth?"
 # marker -> {question: (start of the option text it picks, quote)};
 # a question it has no rule for is answered Not stated
 TREE = {
@@ -107,25 +110,31 @@ TREE = {
                  "Is there pressure?": ("No time pressure", None)},
     "ZEROCALL": {"What is this call about?": ("Something else", None)},
     "BADROOT": {"What is this call about?": (None, None)},
-    # bank calls, for personalisation: the same words, different banks
-    "SECQCALL": {"What is this call about?": ("A bank", None),
-                 "Does the caller do any of these?": ("None of these", None),
-                 "Does the caller ask the person security questions to confirm "
-                 "who they are?": ("Yes: security", "what is your date of birth")},
-    "LINKCALL": {"What is this call about?": ("A bank", None),
-                 "Does the caller do any of these?": ("Sends a link",
-                                                      "open the link I text you"),
-                 "Does the caller ask the person security questions to confirm "
-                 "who they are?": ("No security", None)},
-    "PLAINCALL": {"What is this call about?": ("A bank", None),
-                  "Does the caller do any of these?": ("None of these", None),
-                  "Does the caller ask the person security questions to confirm "
-                  "who they are?": ("No security", None)},
+    # parcel calls, for personalisation: the same words, different
+    # countries. SHOETAX is the call in datasets/personalisation_2.csv
+    "SHOETAX": {"What is this call about?": ("Something else", None),
+                CHARGE_Q: ("Yes: a tax", "import tax of 18.40 to pay"),
+                VALUE_Q: ("Worth 1,000 New Zealand dollars or less",
+                          "a pair of shoes worth 80")},
+    "TVTAX": {"What is this call about?": ("Something else", None),
+              CHARGE_Q: ("Yes: a tax", "a customs charge to pay"),
+              VALUE_Q: ("Worth more than", "a television worth 2,400")},
+    "WINETAX": {"What is this call about?": ("Something else", None),
+                CHARGE_Q: ("Yes: a tax", "duty to pay"),
+                VALUE_Q: ("Alcohol", "a case of wine")},
+    "BOXTAX": {"What is this call about?": ("Something else", None),
+               CHARGE_Q: ("Yes: a tax", "import tax to pay")},
 }
-SECQ = ("SECQCALL caller: this is your bank about the change to your address. "
-        "Before I make it, what is your date of birth?")
-LINK = "LINKCALL caller: this is your bank. Please open the link I text you now."
-PLAIN = "PLAINCALL caller: this is your bank, your new card is on its way."
+with open(os.path.join(HERE, "..", "datasets", "personalisation_2.csv"),
+          newline="", encoding="utf-8") as f:
+    PERSONAL_ROWS = list(csv.DictReader(f))
+SHOE = "SHOETAX\n" + PERSONAL_ROWS[0]["text"]
+TV = ("TVTAX caller: your parcel, a television worth 2,400, is here. There is "
+      "a customs charge to pay before we deliver it.")
+WINE = ("WINETAX caller: your parcel, a case of wine, is here. There is duty "
+        "to pay before we deliver it.")
+BOX = ("BOXTAX caller: your parcel is here. There is import tax to pay before "
+       "we deliver it.")
 
 
 def fake_tree(prompt):
@@ -390,62 +399,71 @@ check("verdict and the 0-100 score at the edges",
        round(M.pct(0.0)), round(M.pct(2.0))),
       ("neutral", "neutral", "legit", 50, 88))
 
-print("\npersonalisation: the same words, a different label per bank")
-banks = {b["name"]: b for b in (M.load_bank(x["path"]) for x in M.list_banks())}
-check("the two shipped banks load",
-      sorted(banks), ["Barclays (UK)", "Danske Bank (UK)"])
-for b in banks.values():
-    b["applies_to"] = ["bank"]           # the test tree's bank subject
-danske, barclays = banks["Danske Bank (UK)"], banks["Barclays (UK)"]
+print("\npersonalisation: the same words, a different label per country")
+countries = {c["name"]: M.load_country(c["path"]) for c in M.list_countries()}
+check("the two shipped countries load",
+      sorted(countries), ["Ireland", "New Zealand"])
+ie, nz = countries["Ireland"], countries["New Zealand"]
+check("the dataset: the same words twice, labelled by country",
+      (len({r["text"] for r in PERSONAL_ROWS}),
+       {r["country"]: r["label"] for r in PERSONAL_ROWS}),
+      (1, {"Ireland": "nonscam", "New Zealand": "scam"}))
 
 
-def label(text, bank, asked):
+def label(text, country):
     r = M.classify(text, tree)
-    p = M.personalise(text, r, bank, asked)
+    p = M.personalise(text, r, country)
     return p["final"], p["from"], p.get("advice")
 
 
-STATE["calls"] = 0
-r = M.classify(SECQ, tree)
-n0 = STATE["calls"]
-p = M.personalise(SECQ, r, danske, "yes")
-check("two more requests: the bank's two questions",
-      (STATE["calls"] - n0, [a["path"] for a in p["answers"]]),
-      (2, ["bank/red_flags", "bank/security_questions"]))
-check("Danske asks security questions, the person asked: legit",
-      label(SECQ, danske, "yes"), ("legit", "bank", None))
-check("Danske, the person asked for nothing: unsure, hang up and call back",
-      label(SECQ, danske, "no"),
-      ("unsure", "bank", "Hang up and call the number on the card."))
-check("Danske, not known whether they asked: unsure too",
-      label(SECQ, danske, "unknown")[0], "unsure")
-check("Barclays never asks for security answers: scam, even if they asked",
-      [label(SECQ, barclays, a)[:2] for a in ("yes", "no")],
-      [("scam", "bank"), ("scam", "bank")])
-check("a link is a scam at either bank, whatever the person asked",
-      [label(LINK, b, "yes")[0] for b in (danske, barclays)], ["scam", "scam"])
-check("Barclays, no security questions, no red flags: the words decide",
-      label(PLAIN, barclays, "yes")[1], "words")
-p = M.personalise(CALM, M.classify(CALM, tree), danske, "yes")
-check("a call not about the bank: its rules do not apply, no questions",
+r = M.classify(SHOE, tree)
+asked = []
+for c in (ie, nz):
+    n0 = STATE["calls"]
+    p = M.personalise(SHOE, r, c)
+    asked.append((STATE["calls"] - n0, [a["path"] for a in p["answers"]]))
+check("one more request in Ireland, two in New Zealand",
+      asked, [(1, ["country/import_charge"]),
+              (2, ["country/import_charge", "country/parcel"])])
+check("the dataset's call: each row's label, from its country's law",
+      [label(SHOE, countries[row["country"]])[0] for row in PERSONAL_ROWS],
+      ["scam" if row["label"] == "scam" else "legit" for row in PERSONAL_ROWS])
+check("New Zealand, import tax on shoes worth 80: scam, don't pay",
+      label(SHOE, nz), ("scam", "country", "Don't pay. Track the parcel on "
+                        "the courier's own website, typed in yourself."))
+check("Ireland: VAT on all goods from outside the EU, so legit",
+      label(SHOE, ie)[:2], ("legit", "country"))
+check("New Zealand, worth over NZ$1,000 or alcohol: the charge is real",
+      [label(t, nz)[:2] for t in (TV, WINE)],
+      [("legit", "country"), ("legit", "country")])
+check("New Zealand, the value not stated: unsure, check what you paid",
+      label(BOX, nz)[0], "unsure")
+check("no import charge: no rule applies, the words decide in both",
+      [label(CALM, c)[1] for c in (ie, nz)], ["words", "words"])
+p = M.personalise(CALM, M.classify(CALM, tree), dict(nz, applies_to=["bank"]))
+check("a call not on a subject the rules cover: no questions asked",
       (p["applies"], p["answers"], p["final"]), (False, [], "legit"))
+check("a country by name, by file name or by path",
+      [M.find_country(x).name for x in ("New Zealand", "new_zealand",
+                                         "knowledge/countries/ireland.json")],
+      ["new_zealand.json", "new_zealand.json", "ireland.json"])
 try:
-    M.personalise(SECQ, M.classify(SECQ, tree), danske, "maybe")
-    check("an unknown 'asked' is refused", False)
-except ValueError:
-    check("an unknown 'asked' is refused", True)
+    M.find_country("Atlantis")
+    check("an unknown country is refused, naming the ones there", False)
+except ValueError as e:
+    check("an unknown country is refused, naming the ones there",
+          "Ireland, New Zealand" in str(e))
 
-bad = json.loads(json.dumps({k: v for k, v in danske.items()
-                             if k != "applies_to"}))
-bad["rules"] = [{"if": {"red_flags": ["no_such"], "mood": ["x"]},
+bad = json.loads(json.dumps(nz))
+bad["rules"] = [{"if": {"parcel": ["no_such"], "mood": ["x"]},
                  "label": "maybe", "why": ""}]
-probs = M.check_bank(bad)
-check("a broken bank file names each problem",
+probs = M.check_country(bad)
+check("a broken country file names each problem",
       [any(w in p for p in probs) for w in
-       ("no answer no_such", '"mood" is neither', "scam, legit or unsure",
+       ("no answer no_such", '"mood" is not a question', "scam, legit or unsure",
         'no "why"')], [True] * 4)
-check("a bank file needs rules",
-      any('"rules"' in p for p in M.check_bank(dict(bad, rules=[]))), True)
+check("a country file needs rules",
+      any('"rules"' in p for p in M.check_country(dict(bad, rules=[]))), True)
 
 print("\nan older one-question file, through the same walk")
 r = M.classify("SSNCALL transcript", flat)

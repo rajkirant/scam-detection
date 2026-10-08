@@ -728,29 +728,27 @@ def subject_table(onto, results, truths):
 
 
 # ------------------------------------------------------- personalisation
-# The same words can deserve a different label. Whether a call that asks
-# security questions is a scam depends on which bank the person is with, and
-# on whether they asked for the change being discussed - neither is in the
-# transcript. A bank file (knowledge/banks/<name>.json) holds that bank's
-# policy for calls, a few verification questions put to the call, and rules
-# that turn the answers plus the person's context into a label:
+# The same words can deserve a different label. A courier asking for import
+# tax on a parcel worth 80 is normal in Ireland, where VAT is due on all goods
+# from outside the EU, and can only be a scam in New Zealand, where nothing is
+# collected at the border below NZ$1,000. Where the person lives is not in
+# the transcript. A country file (knowledge/countries/<name>.json) holds that
+# country's law, a few questions put to the call, and rules that turn the
+# answers into a label:
 #
-#   {"name", "policy", "applies_to": [subject ids],
-#    "questions": [questions, as in the ontology],
-#    "rules": [{"if": {<question id> | "asked": [option ids]},
+#   {"name", "law", "source", "applies_to"?: [subject ids],
+#    "questions": [questions, as in the ontology, without values],
+#    "rules": [{"if": {<question id>: [option ids]},
 #               "label": "scam" | "legit" | "unsure", "why", "advice"?}]}
 #
 # The first rule whose every condition holds decides; when none does, the
-# verdict from the words stands. "asked" is whether this person asked for
-# the change: yes, no or unknown - from their own history, which in the
-# finished system stays on their phone.
-BANKS_DIR = KNOWLEDGE_DIR / "banks"
+# verdict from the words stands.
+COUNTRIES_DIR = KNOWLEDGE_DIR / "countries"
 LABELS = ("scam", "legit", "unsure")
-ASKED = ("yes", "no", "unknown")
 
 
-def check_bank(obj):
-    """Every problem with a bank file, as sentences; [] if none."""
+def check_country(obj):
+    """Every problem with a country file, as sentences; [] if none."""
     if not isinstance(obj, dict):
         return ["the file must hold one JSON object, {...}"]
     probs = []
@@ -758,7 +756,7 @@ def check_bank(obj):
         probs.append('"name" is missing')
     qs = obj.get("questions")
     _check_list(qs if isinstance(qs, list) else None, "questions", probs)
-    answers = {"asked": set(ASKED)}
+    answers = {}
     for q in qs if isinstance(qs, list) else []:
         if isinstance(q, dict) and isinstance(q.get("options"), list):
             answers[q.get("id")] = {o.get("id") for o in q["options"]
@@ -769,7 +767,8 @@ def check_bank(obj):
         rules = []
     for i, r in enumerate(rules, 1):
         where = "rule %d" % i
-        if not isinstance(r, dict) or not isinstance(r.get("if"), dict):
+        if not isinstance(r, dict) or not isinstance(r.get("if"), dict) \
+                or not r["if"]:
             probs.append('%s needs an "if": {question id: [answers]}' % where)
             continue
         if r.get("label") not in LABELS:
@@ -779,8 +778,8 @@ def check_bank(obj):
             probs.append('%s has no "why"' % where)
         for k, v in r["if"].items():
             if k not in answers:
-                probs.append('%s: "%s" is neither a question of this bank '
-                             'nor "asked"' % (where, k))
+                probs.append('%s: "%s" is not a question of this country'
+                             % (where, k))
             elif not isinstance(v, list) or not v:
                 probs.append('%s: "%s" must list the answers it accepts'
                              % (where, k))
@@ -792,17 +791,17 @@ def check_bank(obj):
     return probs
 
 
-def load_bank(path):
-    """A bank file, checked. ValueError naming every problem."""
+def load_country(path):
+    """A country file, checked. ValueError naming every problem."""
     path = Path(path)
     try:
         obj = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise ValueError("no bank file at %s" % path)
+        raise ValueError("no country file at %s" % path)
     except json.JSONDecodeError as e:
         raise ValueError("%s is not valid JSON: %s (line %d, column %d)"
                          % (path.name, e.msg, e.lineno, e.colno))
-    probs = check_bank(obj)
+    probs = check_country(obj)
     if probs:
         raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
     obj = dict(obj)
@@ -810,55 +809,70 @@ def load_bank(path):
     return obj
 
 
-def list_banks():
-    """Every bank file in knowledge/banks/, by name."""
+def list_countries():
+    """Every country file in knowledge/countries/ that loads, by file name."""
     out = []
-    for p in sorted(BANKS_DIR.glob("*.json")) if BANKS_DIR.is_dir() else []:
+    for p in sorted(COUNTRIES_DIR.glob("*.json")) if COUNTRIES_DIR.is_dir() \
+            else []:
         try:
-            b = load_bank(p)
+            c = load_country(p)
         except ValueError:
             continue
-        out.append({"path": "knowledge/banks/" + p.name, "name": b["name"],
-                    "policy": b.get("policy", "")})
+        out.append({"path": "knowledge/countries/" + p.name, "name": c["name"],
+                    "law": c.get("law", ""), "source": c.get("source", "")})
     return out
 
 
-def personalise(transcript, res, bank, asked="unknown", quotes=True,
-                timeout=300):
-    """The label for this person: a classified call (`res`, from classify)
-    put through one bank's questions and rules.
+def find_country(name):
+    """A country file by path, or by its name ("New Zealand") or file name
+    ("new_zealand") - what a dataset's country column holds."""
+    for p in (Path(name), PROJECT_DIR / str(name)):
+        if p.is_file():
+            return p
+    key = re.sub(r"[\s_-]+", " ", str(name)).strip().lower()
+    for c in list_countries():
+        stem = Path(c["path"]).stem.replace("_", " ").lower()
+        if key in (c["name"].lower(), stem):
+            return PROJECT_DIR / c["path"]
+    raise ValueError("no country file for %r - the ones there are: %s"
+                     % (name, ", ".join(c["name"] for c in list_countries())
+                        or "none"))
 
-    Returns {"bank", "policy", "asked", "applies": whether the call is on a
-    subject the bank's rules are for, "answers": the bank questions' answer
+
+def personalise(transcript, res, country, quotes=True, timeout=300):
+    """The label for a person in this country: a classified call (`res`, from
+    classify) put through the country's questions and rules.
+
+    Returns {"country", "law", "source", "applies": whether the call is on a
+    subject the country's rules are for, "answers": its questions' answer
     records, "label": scam | legit | unsure, or None when no rule applies,
-    "why", "advice", "final": the label, or the words' verdict when there is
-    none, "from": "bank" | "words"}.
+    "why", "advice", "rule", "final": the label, or the words' verdict when
+    there is none, "from": "country" | "words"}.
     """
-    if asked not in ASKED:
-        raise ValueError("asked must be one of %s" % ", ".join(ASKED))
-    out = {"bank": bank["name"], "policy": bank.get("policy", ""),
-           "asked": asked, "answers": [], "label": None, "advice": None}
-    applies = bank.get("applies_to")
+    out = {"country": country["name"], "law": country.get("law", ""),
+           "source": country.get("source", ""), "answers": [], "label": None,
+           "advice": None, "rule": None}
+    applies = country.get("applies_to")
     if applies and res.get("subject") not in applies:
         out.update(applies=False, final=res["verdict"], **{"from": "words"},
                    why="This call is not on a subject %s's rules cover, so "
-                       "the verdict from the words stands." % bank["name"])
+                       "the verdict from the words stands." % country["name"])
         return out
     out["applies"] = True
-    chosen = {"asked": asked}
-    for q in bank["questions"]:
+    chosen = {}
+    for q in country["questions"]:
         a = ask(transcript, q, {}, quotes=quotes, timeout=timeout)
-        rec = _answer_record("bank/" + q["id"], q, a)
+        rec = _answer_record("country/" + q["id"], q, a)
         out["answers"].append(rec)
         chosen[q["id"]] = rec["option"]
-    for i, rule in enumerate(bank["rules"], 1):
+    for i, rule in enumerate(country["rules"], 1):
         if all(chosen.get(k) in v for k, v in rule["if"].items()):
             out.update(label=rule["label"], why=rule["why"], rule=i,
                        advice=rule.get("advice"), final=rule["label"],
-                       **{"from": "bank"})
+                       **{"from": "country"})
             return out
     out.update(final=res["verdict"], why="None of %s's rules applies, so the "
-               "verdict from the words stands." % bank["name"],
+               "verdict from the words stands." % country["name"],
                **{"from": "words"})
     return out
 
@@ -1619,11 +1633,11 @@ def run_ask(args):
     onto = load_ontology(args.ontology)
     res = classify(args.text, onto, not args.no_quotes)
     _show_call(res, onto)
-    if args.bank:
-        p = personalise(args.text, res, load_bank(args.bank), args.asked,
+    if args.country:
+        p = personalise(args.text, res,
+                        load_country(find_country(args.country)),
                         not args.no_quotes)
-        print("\npersonalised for %s (%s); the person asked for the change: %s"
-              % (p["bank"], p["policy"], p["asked"]))
+        print("\npersonalised for a person in %s: %s" % (p["country"], p["law"]))
         for r in p["answers"]:
             print("  %-40s %s" % (r["question"][:40], r["text"] or "unreadable"))
         print("-> %s  (%s)" % (p["final"], p["why"]))
@@ -1852,11 +1866,10 @@ def build_parser():
     a = sub.add_parser("ask", help="one transcript through the tree")
     a.add_argument("--text", required=True)
     walk_flags(a)
-    a.add_argument("--bank", default=None,
-                   help="a bank file (knowledge/banks/...) to personalise "
-                        "the label for")
-    a.add_argument("--asked", default="unknown", choices=ASKED,
-                   help="did this person ask for the change? (with --bank)")
+    a.add_argument("--country", default=None,
+                   help="where the person lives: a country name (\"New "
+                        "Zealand\") or file in knowledge/countries/, whose "
+                        "law personalises the label")
     a.set_defaults(func=run_ask)
 
     qq = sub.add_parser("question", help="your own question about one call")

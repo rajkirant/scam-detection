@@ -1,0 +1,45 @@
+{
+  "name": "New Zealand",
+  "law": "Duty and GST are only collected at the border on parcels worth over NZ$1,000. Below that, the overseas shop charges GST at checkout and nothing is collected at the border, except on alcohol and tobacco.",
+  "source": "New Zealand Customs Service",
+  "questions": [
+    {
+      "id": "import_charge",
+      "prompt": "Does the caller say a tax, duty or customs charge (such as VAT, GST or import tax) must be paid before a parcel is delivered?",
+      "options": [
+        {"id": "yes", "text": "Yes: a tax, duty or customs charge to pay before delivery"},
+        {"id": "no", "text": "No such charge", "absence": true},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
+    },
+    {
+      "id": "parcel",
+      "prompt": "What is in the parcel, and what is it worth?",
+      "options": [
+        {"id": "alcohol_tobacco", "text": "Alcohol or tobacco"},
+        {"id": "over_1000", "text": "Worth more than 1,000 New Zealand dollars"},
+        {"id": "up_to_1000", "text": "Worth 1,000 New Zealand dollars or less"},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "if": {"import_charge": ["yes"], "parcel": ["up_to_1000"]},
+      "label": "scam",
+      "why": "New Zealand collects duty and GST at the border only on parcels worth over NZ$1,000. Below that the overseas shop charges GST at checkout and nothing is collected at the border, so this tax doesn't exist and the payment page is a trap.",
+      "advice": "Don't pay. Track the parcel on the courier's own website, typed in yourself."
+    },
+    {
+      "if": {"import_charge": ["yes"], "parcel": ["over_1000", "alcohol_tobacco"]},
+      "label": "legit",
+      "why": "New Zealand collects duty and GST at the border on parcels worth over NZ$1,000, and on alcohol and tobacco whatever their value, so a charge before delivery is expected."
+    },
+    {
+      "if": {"import_charge": ["yes"], "parcel": ["not_mentioned"]},
+      "label": "unsure",
+      "why": "In New Zealand a charge at the border is real only on parcels worth over NZ$1,000, or on alcohol and tobacco, and the call doesn't say what this parcel is or what it's worth.",
+      "advice": "Check what you paid for it: at NZ$1,000 or less, nothing is due at the border."
+    }
+  ]
+}

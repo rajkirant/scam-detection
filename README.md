@@ -692,55 +692,64 @@ and pick an absence option only when that part of the call is covered.
 There are no descriptions, guidelines or evidence in it. Its values are
 hand-set starting points, and only training changes them.
 
-**Personalisation: the same words, a different label.** Whether a call that
-asks security questions is a scam depends on two things the transcript does
-not hold: which bank the person is with, and whether they asked for the
-change the caller is talking about. The *Personalisation* box above
-*Classify this call* holds two choices:
-- **Bank:** *no bank - the words alone*, or one of the files in
-  `knowledge/banks/`. The bank's policy for calls shows under it.
-- **This person asked for a change:** *not known*, *yes* or *no*. For now
-  you set it by hand. In the finished system it comes from the person's own
-  history, which stays on their phone.
+**Personalisation: the same words, a different label.** The same call can be
+normal in one country and a scam in another, because the law there makes the
+caller's claim untrue. Take a courier calling about import tax on a pair of
+shoes worth 80, to be paid on its website before delivery. In Ireland that is
+legitimate: since 1 July 2021, VAT is due on all goods from outside the EU,
+whatever their value. In New Zealand it can only be a scam: duty and GST are
+collected at the border only on parcels worth over NZ$1,000. Nothing in the
+call is a usual red flag, and where the person lives is not in the
+transcript.
 
-With a bank picked, the call is classified as usual, then the bank's own
-questions are put to it (two requests), and a **For this person** card shows
-the label, the rule that decided it, the advice, and the answers it rests on.
-The two files that ship, from the table in the project notes:
+The *Personalisation* box above *Classify this call* has one choice, **The
+person lives in**: *no country - the words alone*, or one of the files in
+`knowledge/countries/`. The country's law and its source show under it.
+Loading a dataset row that has a `country` column picks that country.
 
-| Bank | The call | Label |
+With a country picked, the call is classified as usual. Then the country's
+own questions are put to it, one request each: whether a tax, duty or customs
+charge must be paid before delivery and, in New Zealand, what the parcel is
+and what it is worth. A **For this person** card shows the label, the rule
+that decided it, the advice, what the words alone said, and the answers it
+rests on. The two files that ship:
+
+| Country | The call asks for a charge before delivery, and the parcel is | Label |
 |------|----------|-------|
-| Danske Bank (UK): asks security questions on its calls | the person asked for the change | legitimate |
-| Danske Bank (UK) | the person asked for nothing, or it is not known | unsure: hang up and call the number on the card |
-| Barclays (UK): never asks for security answers by phone | security questions asked, even if the person asked for a change | scam |
-| any bank | the caller sends a link, asks for a code, or says they are a "new account manager" | scam |
+| Ireland | anything | legitimate: VAT is due on all goods from outside the EU |
+| New Zealand | worth NZ$1,000 or less | scam: the tax doesn't exist. Don't pay |
+| New Zealand | worth over NZ$1,000, or alcohol or tobacco | legitimate: duty and GST are collected |
+| New Zealand | of no stated value | unsure: check what you paid |
 
-When no rule fits, or the call is not about a bank account, the verdict from
-the words stands. The policies are taken from that table, not from the banks'
-own pages. Banks change their rules, so check each file against the bank's
-current "we will never ask" page before relying on it.
+When no rule fits, such as a call with no charge in it, the verdict from the
+words stands. The laws are as checked against Revenue and the New Zealand
+Customs Service. Laws change, so a file is right only for the date it was
+checked. In the US, for example, parcels worth $800 or less came in
+duty-free until that exemption was suspended on 29 August 2025.
 
-A bank file is short:
+A country file is short:
 
 ```json
-{"name": "Barclays (UK)", "policy": "Never asks for security answers by phone.",
- "applies_to": ["bank_account"],
- "questions": [{"id": "security_questions", "prompt": "Does the caller ask ...?",
-                "options": [{"id": "yes", "text": "..."}, {"id": "no", "text": "...", "absence": true},
+{"name": "New Zealand", "law": "Duty and GST are only collected ...", "source": "New Zealand Customs Service",
+ "questions": [{"id": "parcel", "prompt": "What is in the parcel, and what is it worth?",
+                "options": [{"id": "up_to_1000", "text": "Worth 1,000 New Zealand dollars or less"},
                             {"id": "not_mentioned", "text": "Not stated"}]}],
- "rules": [{"if": {"security_questions": ["yes"]}, "label": "scam", "why": "..."}]}
+ "rules": [{"if": {"parcel": ["up_to_1000"]}, "label": "scam", "why": "...", "advice": "..."}]}
 ```
 
-- `applies_to`: the subjects (root option ids) the rules are for.
 - `questions`: written like the ontology's, without values.
-- `rules`: each has an `if` and a `label`, which is `scam`, `legit` or
-  `unsure`, plus a `why` and an optional `advice`. The `if` maps a question
-  id, or `asked`, to the answers it accepts (`asked` takes `yes`, `no` or
-  `unknown`). The first rule whose every condition holds decides.
+- `rules`: each has an `if`, which maps question ids to the answers they
+  accept, and a `label`: `scam`, `legit` or `unsure`. It also has a `why` and
+  an optional `advice`. The first rule whose every condition holds decides.
+- `applies_to` (optional): the subjects (root option ids) the rules are for.
+  A call on another subject is not asked the country's questions.
 
-Add a bank, such as Kiwibank, by saving another file in `knowledge/banks/`.
-It appears in the list on the next page load. On the command line:
-`python scripts/mcq_ontology.py ask --text "…" --bank knowledge/banks/danske_bank_uk.json --asked yes`.
+Add a country by saving another file in `knowledge/countries/`. It appears in
+the list on the next page load. On the command line:
+`python scripts/mcq_ontology.py ask --text "…" --country "New Zealand"`.
+
+The same call, labelled for each country, is in
+`datasets/personalisation_2.csv`.
 
 **Your own question about this call** sits under it, in the Ask tab. Type
 any question about the loaded transcript:
@@ -1640,6 +1649,7 @@ Names in brackets are the ones used in the paper.
 | `scambait_bank_422.csv` | 422 | 211 / 211 | Real calls: scam transcripts from YouTube scam-baiting videos paired with legitimate calls from the HarperValleyBank corpus. Both sides are real recorded speech, but from different recording set-ups, so the two sides can be told apart by transcription style alone. |
 | `scamai_full_1000.csv` | 1000 | 500 / 500 | Honeypot-captured calls with rich metadata (`opening_type`, `ending_type`, `asks`, `signals`, `n_turns`, `duration_s`). |
 | `everything_7013.csv` | 7013 | 2756 / 4257 | Everything pooled, multilingual and **not balanced**, with `language`, `script`, `country`, `call_type` and `scam_type` columns for slicing. Sources: KorCCViD (2,882 rows), HarperValleyBank (1,446), scamai_honeypot (1,000), NCSU_Robocall (834), International_Robocall (334), YouTube_ScamBaiting (243), BeatScams_UCI (184), CallHome_Spanish (89), CABNC_British (1). |
+| `personalisation_2.csv` | 2 | 1 / 1 | The same words, a different label: one call, labelled once for a person in Ireland (`nonscam`) and once for a person in New Zealand (`scam`), with `pair_id`, `country` (where the person lives) and `why` (the law that decides it). A courier asks for import tax on shoes worth 80 before delivery, which is due in Ireland and does not exist in New Zealand. Written from the two countries' customs rules. Used by the MCQ ontology page's personalisation. |
 
 Every real scam call in the YouTube-based sets (`scambait_*`) comes from the
 same 243 YouTube scam-baiting transcripts, the `YouTube_ScamBaiting` rows of

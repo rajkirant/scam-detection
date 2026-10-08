@@ -1,0 +1,11 @@
+pair_id,id,country,label,source,text,why
+p001,parcel_tax_ie,Ireland,nonscam,authored,"Caller: Hello, this is [Name] from [Courier]. I'm calling about your parcel from [Online shop], a pair of shoes worth 80.
+Customer: Yes, I ordered those last week.
+Caller: It's arrived in the country, but there's import tax of 18.40 to pay before we can deliver it.
+Customer: How do I pay?
+Caller: On our website, using the tracking number from your order. Once it's paid, we'll deliver it the next working day.","Since 1 July 2021, VAT is due on all goods from outside the EU, whatever their value. If the shop didn't charge it at checkout, you pay it to the postal service or parcel company before delivery. (Revenue)"
+p001,parcel_tax_nz,New Zealand,scam,authored,"Caller: Hello, this is [Name] from [Courier]. I'm calling about your parcel from [Online shop], a pair of shoes worth 80.
+Customer: Yes, I ordered those last week.
+Caller: It's arrived in the country, but there's import tax of 18.40 to pay before we can deliver it.
+Customer: How do I pay?
+Caller: On our website, using the tracking number from your order. Once it's paid, we'll deliver it the next working day.","Duty and GST are only collected at the border on parcels worth over NZ$1,000. Below that, the overseas shop charges GST at checkout and nothing is collected at the border, except on alcohol and tobacco, so the tax doesn't exist and the website is a payment trap. (New Zealand Customs Service)"
