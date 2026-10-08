@@ -4840,8 +4840,8 @@ is a new file; the ontology it started from is kept as it is.</pre>
         verdict, because scam and legitimate calls occur under every subject.
         Every call then answers the common questions, and the questions of its
         subject, in the order the subject's <code>ask</code> list gives: for a
-        bank call, urgency first, then whether the money is to go to a
-        different account, then the rest. Some answers open follow-up
+        bank call, who the caller says they are first, then urgency, then
+        whether the money is to go to a different account, then the rest. Some answers open follow-up
         questions, asked straight after, and only when that answer is chosen.
         The Classify tab shows the walk with the score building up as it goes. One request per question: the transcript, the
         question and its options lettered A, B, C&hellip;, and the model
