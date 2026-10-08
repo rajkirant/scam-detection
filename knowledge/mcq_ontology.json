@@ -706,12 +706,32 @@
       "options": [
         {"id": "number_from_alert", "text": "The person is calling a number shown in a pop-up, a locked or warning screen, or an unexpected email, invoice, or text", "value": 1.0},
         {
-          "id": "caller_raised_problem",
-          "text": "The caller contacted the person out of the blue about a problem the person did not know about, such as a virus, a charge, a debt, or a legal case",
+          "id": "caller_noticed_problem",
+          "text": "The caller says they noticed a problem the person is having with a device, an account, or a service, such as playback, internet, or a slow computer, and offers to fix it, though the person did not ask for help",
           "value": 0.8
+        },
+        {
+          "id": "caller_raised_problem",
+          "text": "The caller contacted the person out of the blue about a problem the person did not know about, such as a virus, a charge, a debt, a legal case, or a suspended account",
+          "value": 0.8
+        },
+        {
+          "id": "unexpected_windfall",
+          "text": "The caller says the person has won, been selected, or is owed money, for something the person did not enter or apply for",
+          "value": 0.5
+        },
+        {
+          "id": "number_from_search",
+          "text": "The person is calling a number found through a web search or an online ad, not on the organisation's own website, card, bill, or letter",
+          "value": 0.5
         },
         {"id": "returning_missed_call", "text": "The person is returning a missed call or a voicemail, with no letter or reference to check it against", "value": 0.3},
         {"id": "caller_offer", "text": "The caller offers a product, a service, or a deal the person had not asked about", "value": 0.0},
+        {
+          "id": "routine_notice",
+          "text": "A routine notice from an organisation the person already uses, such as a renewal, a payment due, a delivery slot, or an appointment reminder",
+          "value": -0.3
+        },
         {
           "id": "known_earlier_contact",
           "text": "The call follows up something the person confirms they did or arranged themselves, such as an order, a form, an appointment, or a complaint",
