@@ -701,9 +701,23 @@
       "prompt": "Is the call with a live person, or a recorded message?",
       "hint": "Choose a recorded message only when the transcript shows one, such as an automated voice or \"press 1\". A caller who sounds scripted or formal is still a live person.",
       "options": [
-        {"id": "recording_press_key", "text": "A recorded message that asks the person to press a key, or to call a number, to speak to someone", "value": 0.3},
         {"id": "live_person", "text": "A live person throughout", "value": 0.0},
-        {"id": "recording_info_only", "text": "A recorded message that only gives information, such as a reminder or a delivery time", "value": -0.3},
+        {
+          "id": "recording",
+          "text": "A recorded or automated message, such as a robot voice or \"press 1\"",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "recording_asks",
+              "prompt": "What does the recorded message ask the person to do?",
+              "options": [
+                {"id": "recording_press_key", "text": "A recorded message that asks the person to press a key, or to call a number, to speak to someone", "value": 0.3},
+                {"id": "recording_info_only", "text": "A recorded message that only gives information, such as a reminder or a delivery time", "value": -0.3},
+                {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+              ]
+            }
+          ]
+        },
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
     },
@@ -755,7 +769,7 @@
     {
       "id": "sensitive_details",
       "prompt": "Which personal or security details does the caller ask the person to give?",
-      "hint": "This is about details the caller asks the person to give, not details the caller states. Choose \"No personal or security details\" only when the call goes on long enough that such a request would have come up; a short or cut-off call is Not stated.",
+      "hint": "This is about details the caller asks the person to give, not details the caller states. A short or cut-off call is Not stated.",
       "options": [
         {"id": "security_codes", "text": "A password, a PIN, or a one-time code sent to the person's phone or email", "value": 1.0},
         {
@@ -794,7 +808,7 @@
           ]
         },
         {"id": "basic_identity", "text": "Only a name, a date of birth, or an address", "value": 0.0},
-        {"id": "none_asked", "text": "No personal or security details", "value": -0.3, "absence": true},
+        {"id": "none_asked", "text": "The call is shown to its end, and no personal or security details are asked for", "value": -0.3, "absence": true},
         {"id": "partial_only", "text": "Only part of a number, such as the last four digits, or a reference number from a letter", "value": -0.8},
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
@@ -842,8 +856,8 @@
             }
           ]
         },
-        {"id": "no_payment", "text": "No payment or money movement at all", "value": -0.3, "absence": true},
-        {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+        {"id": "not_mentioned", "text": "Not stated", "value": 0.0},
+        {"id": "no_payment", "text": "The call is shown to its end, and no payment or money movement is asked for", "value": -0.3, "absence": true}
       ]
     },
     {

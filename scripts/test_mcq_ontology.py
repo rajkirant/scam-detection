@@ -269,18 +269,24 @@ check("the shipped tree holds no learned knowledge or dataset evidence",
       [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
                    '"evidence"', '"knowledge"', "built_from", "honeypot",
                    "scambait", "huggingface") if w in shipped_text], [])
-check("the shipped tree loads: 15 subjects, 7 common questions, 53 in all",
+check("the shipped tree loads: 15 subjects, 7 common questions, 54 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
-       M.count_questions(shipped)), (15, 7, 53))
+       M.count_questions(shipped)), (15, 7, 54))
 pay = next(q for q in shipped["common_questions"] if q["id"] == "payment_asked")
 check("whether money is to move, then how and what for, only after a yes",
       ([o["id"] for o in pay["options"]],
        [[f["id"] for f in o.get("follow_up", [])] for o in pay["options"]],
        "no_payment" in [o["id"] for o in
                         pay["options"][0]["follow_up"][0]["options"]]),
-      (["yes", "no_payment", "not_mentioned"],
+      (["yes", "not_mentioned", "no_payment"],
        [["payment_channel", "payment_purpose"], [], []],
        False))
+fmt = next(q for q in shipped["common_questions"] if q["id"] == "caller_format")
+check("live or recorded first, what a recording asks only after 'recorded'",
+      ([o["id"] for o in fmt["options"]],
+       [o["id"] for o in fmt["options"][1]["follow_up"][0]["options"]]),
+      (["live_person", "recording", "not_mentioned"],
+       ["recording_press_key", "recording_info_only", "not_mentioned"]))
 check("other knowledge files are not mistaken for one",
       M.is_mcq_ontology(os.path.join(HERE, "..", "knowledge", "scam_ontology.json")),
       False)
@@ -345,6 +351,8 @@ check("asked with quotes: the letter, then a quote line, room for it",
 check("the root question asks for a letter only",
       ('write "Quote:"' in STATE["payloads"][0]["prompt"],
        STATE["payloads"][0]["options"]["num_predict"]), (False, M.ANSWER_TOKENS))
+check("no repeat penalty, so the letter written is the one the logprobs pick",
+      {p["options"].get("repeat_penalty") for p in STATE["payloads"]}, {1.0})
 check("absence options are marked for the model",
       "B - No payment at all (absence)" in STATE["payloads"][1]["prompt"])
 check("the file's rules are in the prompt, worded for the model",
@@ -784,6 +792,13 @@ check("... options put back in order, strongest scam sign first",
       [o["id"] for o in qs["common/money"]["options"]],
       ["gift", "a_money_transfer_service_such", "no_payment",
        "not_mentioned"])
+after_nm = {"options": [{"id": "a", "value": -0.5}, {"id": "b", "value": 0.5},
+                        {"id": "not_mentioned", "value": 0.0},
+                        {"id": "c", "value": -0.3}, {"id": "d", "value": 0.2}]}
+M._reorder(after_nm)
+check("... an option the file puts after Not stated stays after it",
+      [o["id"] for o in after_nm["options"]],
+      ["b", "a", "not_mentioned", "d", "c"])
 check("pressure: threat 4 scam calls, calm 4 legit",
       [(o["id"], o["value"]) for o in qs["common/pressure"]["options"]],
       [("threat", 1.0), ("calm", -0.75), ("not_mentioned", 0.0)])

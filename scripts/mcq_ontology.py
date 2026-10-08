@@ -394,11 +394,15 @@ def generate(prompt, n_tokens, top=TOP_LOGPROBS, timeout=300, stop=None):
     """(text, [(token, [(alternative, logprob), ...]) per generated token]).
     The alternatives are empty when this Ollama returns no logprobs."""
     num_ctx = ollama_ctx.fit_num_ctx(prompt, n_tokens + 2, where="mcq")
+    # no repeat penalty: Ollama's default (1.1) bends the letter it writes
+    # but not the logprobs it returns. The letters in "A to D" were written
+    # less often than their logprobs said, so the quote backed one letter
+    # and the score counted another.
     payload = {
         "model": llm_judge.DEFAULT_MODEL, "prompt": prompt, "stream": False,
         "logprobs": True, "top_logprobs": top,
         "options": {"temperature": 0.0, "num_predict": n_tokens,
-                    "num_ctx": int(num_ctx)},
+                    "num_ctx": int(num_ctx), "repeat_penalty": 1.0},
     }
     if stop:
         payload["options"]["stop"] = list(stop)
@@ -1455,11 +1459,16 @@ def _insert_option(q, text, added):
 
 def _reorder(q):
     """Strongest scam sign first, Not stated last; equal values keep their
-    order."""
-    nm = [o for o in q["options"] if o["id"] == NOT_MENTIONED]
-    rest = [o for o in q["options"] if o["id"] != NOT_MENTIONED]
-    rest.sort(key=lambda o: -o["value"])
-    q["options"] = rest + nm
+    order. Options the file puts after Not stated stay after it, sorted the
+    same way: "no payment" comes after Not stated, so that a short call is
+    Not stated rather than "no payment"."""
+    at = next((i for i, o in enumerate(q["options"])
+               if o["id"] == NOT_MENTIONED), len(q["options"]))
+    before, nm, after = (q["options"][:at], q["options"][at:at + 1],
+                         q["options"][at + 1:])
+    before.sort(key=lambda o: -o["value"])
+    after.sort(key=lambda o: -o["value"])
+    q["options"] = before + nm + after
 
 
 def _accuracy(results, labels):
