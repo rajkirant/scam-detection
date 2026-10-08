@@ -10,7 +10,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -51,7 +51,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity",
@@ -103,7 +103,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -157,7 +157,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -205,7 +205,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -270,7 +270,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -325,7 +325,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -364,7 +364,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -412,7 +412,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -462,7 +462,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity",
@@ -516,7 +516,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -566,7 +566,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -622,7 +622,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification",
         "claimed_identity"
@@ -670,7 +670,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_channel",
+        "common/payment_asked",
         "common/remote_access",
         "common/verification"
       ],
@@ -772,17 +772,31 @@
       ]
     },
     {
-      "id": "payment_channel",
-      "prompt": "If the person is asked to pay or move money, how?",
+      "id": "payment_asked",
+      "prompt": "Is the person asked to pay or move money?",
       "options": [
-        {"id": "gift_cards", "text": "Gift cards, prepaid cards, or vouchers", "value": 1.0},
-        {"id": "crypto_or_gold", "text": "Cryptocurrency, a crypto ATM, or gold", "value": 1.0},
-        {"id": "transfer_to_given_account", "text": "A transfer to account details the caller gives during the call", "value": 1.0},
-        {"id": "cash_courier", "text": "Cash handed to a courier, or sent by post", "value": 1.0},
-        {"id": "card_by_phone", "text": "Card details read out during the call", "value": 0.0},
+        {
+          "id": "yes",
+          "text": "Yes: to pay, transfer, or move money",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "payment_channel",
+              "prompt": "How is the person asked to pay or move money?",
+              "options": [
+                {"id": "gift_cards", "text": "Gift cards, prepaid cards, or vouchers", "value": 1.0},
+                {"id": "crypto_or_gold", "text": "Cryptocurrency, a crypto ATM, or gold", "value": 1.0},
+                {"id": "transfer_to_given_account", "text": "A transfer to account details the caller gives during the call", "value": 1.0},
+                {"id": "cash_courier", "text": "Cash handed to a courier, or sent by post", "value": 1.0},
+                {"id": "card_by_phone", "text": "Card details read out during the call", "value": 0.0},
+                {"id": "existing_method", "text": "A card or account already on file, or an ordinary invoice to pay later", "value": -0.8},
+                {"id": "official_channel", "text": "The organisation's own website, app, or online account, or a payment method printed on a bill or letter", "value": -1.0},
+                {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+              ]
+            }
+          ]
+        },
         {"id": "no_payment", "text": "No payment or money movement at all", "value": -0.3, "absence": true},
-        {"id": "existing_method", "text": "A card or account already on file, or an ordinary invoice to pay later", "value": -0.8},
-        {"id": "official_channel", "text": "The organisation's own website, app, or online account, or a payment method printed on a bill or letter", "value": -1.0},
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
     },

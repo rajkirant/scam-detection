@@ -639,12 +639,15 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
   decide the verdict, because scam and legitimate calls occur under every
   subject.
 - **Common questions** (7) are asked of every call: recorded message or live
-  person, how the call came about, which details are asked for, how money
-  would move, remote access, whether the caller can be checked, and pressure.
+  person, how the call came about, which details are asked for, whether the
+  person is asked to pay or move money, remote access, whether the caller can
+  be checked, and pressure.
 - **Subject questions** are asked of calls on that subject, such as what a
   "bank" caller wants done with the money.
 - **Follow-ups** are asked only when the option that opens them is chosen,
-  such as what an ID number is for, once the caller has asked for one.
+  such as what an ID number is for, once the caller has asked for one. When
+  the person is asked to pay or move money, a follow-up asks how: gift cards,
+  crypto, a transfer to account details given on the call, and so on.
 
 The questions are asked in a nested order. The subject is asked first, then
 the questions in the order of that subject's `ask` list. A bank call is asked
@@ -661,7 +664,7 @@ negative toward legitimate. *Not stated* and every option of a `recorded`
 question score 0. A recorded question, such as who the caller says they are,
 is kept to explain the verdict. The call's **score** is the sum of the values
 of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
-neutral.** When a dataset is scored, neutral counts as not scam. The 50
+neutral.** When a dataset is scored, neutral counts as not scam. The 51
 questions and their values are in the file.
 
 **Classify** walks the transcript through the tree, one request per question
