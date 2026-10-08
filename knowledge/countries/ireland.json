@@ -1,0 +1,23 @@
+{
+  "name": "Ireland",
+  "law": "Since 1 July 2021, VAT is due on all goods from outside the EU, whatever their value. If the shop didn't charge it at checkout, you pay it to the postal service or parcel company before delivery.",
+  "source": "Revenue, Ireland's tax and customs service",
+  "questions": [
+    {
+      "id": "import_charge",
+      "prompt": "Does the caller say a tax, duty or customs charge (such as VAT, GST or import tax) must be paid before a parcel is delivered?",
+      "options": [
+        {"id": "yes", "text": "Yes: a tax, duty or customs charge to pay before delivery"},
+        {"id": "no", "text": "No such charge", "absence": true},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "if": {"import_charge": ["yes"]},
+      "label": "legit",
+      "why": "In Ireland, VAT is due on all goods from outside the EU, whatever their value, since 1 July 2021. If the shop didn't charge it at checkout, the postal service or parcel company collects it before delivery."
+    }
+  ]
+}

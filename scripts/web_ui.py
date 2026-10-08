@@ -1404,6 +1404,7 @@ def dataset_row(path, idx):
               "content", "body"])
     li = col(["label", "is_scam", "scam", "target", "class", "y", "ground_truth"])
     ii = col(["id", "call_id", "conv_id"])
+    ci = col(["country"])         # where the person lives, for personalising
     if ti < 0:
         raise ValueError("no transcript column in that dataset")
     if not rows:
@@ -1412,7 +1413,7 @@ def dataset_row(path, idx):
     row = rows[idx]
     cell = lambda i: row[i] if 0 <= i < len(row) else ""
     return {"idx": idx, "total": len(rows), "text": cell(ti),
-            "label": cell(li), "row_id": cell(ii),
+            "label": cell(li), "row_id": cell(ii), "country": cell(ci),
             "dataset": path}
 
 
@@ -2617,7 +2618,7 @@ def mcq_config():
            "letters": mcq_ontology.LETTERS,
            "max_options": mcq_ontology.MAX_OPTIONS,
            "questions": mcq_ontology.list_questions(),
-           "banks": mcq_ontology.list_banks(),
+           "countries": mcq_ontology.list_countries(),
            "train_calls": mcq_ontology.TRAIN_CALLS,
            "onto_calls": mcq_ontology.TRAIN_ONTOLOGY_CALLS,
            "onto_new_options": mcq_ontology.NEW_OPTIONS,
@@ -2670,39 +2671,37 @@ def mcq_save(form):
     return mcq_read("knowledge/" + path.name)
 
 
-def mcq_bank_path(rel):
-    """knowledge/banks/<name>.json from the page, checked - or a ValueError."""
+def mcq_country_path(rel):
+    """knowledge/countries/<name>.json from the page, checked - or a
+    ValueError."""
     rel = str(rel or "").strip()
-    pre = "knowledge/banks/"
+    pre = "knowledge/countries/"
     name = rel[len(pre):] if rel.startswith(pre) else rel
     if not MCQ_FILE_RE.match(name):
-        raise ValueError("a bank is a .json file in knowledge/banks/")
-    return mcq_ontology.BANKS_DIR / name
+        raise ValueError("a country is a .json file in knowledge/countries/")
+    return mcq_ontology.COUNTRIES_DIR / name
 
 
 def mcq_ask(form):
     """Walk one transcript through the ontology's tree of questions, and,
-    with a bank picked, personalise the label for this person."""
+    with a country picked, personalise the label for a person there."""
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
     path = mcq_path(form.get("ontology"))
     onto = mcq_ontology.load_ontology(path)
     quotes = form.get("quotes", True) is not False
-    bank = None
-    if form.get("bank"):
-        bank = mcq_ontology.load_bank(mcq_bank_path(form["bank"]))
-    asked = str(form.get("asked") or "unknown")
-    if asked not in mcq_ontology.ASKED:
-        raise ValueError("asked must be yes, no or unknown")
+    country = None
+    if form.get("country"):
+        country = mcq_ontology.load_country(mcq_country_path(form["country"]))
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     t0 = time.time()
     try:
         res = mcq_ontology.classify(text, onto, quotes)
-        if bank:
-            res["personal"] = mcq_ontology.personalise(text, res, bank, asked,
+        if country:
+            res["personal"] = mcq_ontology.personalise(text, res, country,
                                                        quotes)
     except RuntimeError as e:
         raise ValueError(str(e))
@@ -4475,16 +4474,10 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <div class="persona">
         <div class="cap">Personalisation</div>
         <div class="askrow" style="margin-top:6px">
-          <label for="mcqbank" style="margin:0">Bank</label>
-          <select id="mcqbank" style="width:auto; flex:1"></select>
-          <label for="mcqasked" style="margin:0">This person asked for a change</label>
-          <select id="mcqasked" style="width:auto">
-            <option value="unknown">not known</option>
-            <option value="yes">yes</option>
-            <option value="no">no</option>
-          </select>
+          <label for="mcqcountry" style="margin:0">The person lives in</label>
+          <select id="mcqcountry" style="width:auto; flex:1"></select>
         </div>
-        <div class="hint" id="mcqbankpolicy"></div>
+        <div class="hint" id="mcqcountrylaw"></div>
       </div>
       <button class="go" id="mcqgo">Classify this call</button>
       <div class="hint" id="mcqasker" style="color:var(--bad)"></div>
@@ -7483,18 +7476,10 @@ async function mcqBoot() {
   forgetRowOnEdit('mcqtranscript', 'mcqinfo');
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
-  $('mcqbank').innerHTML = '<option value="">no bank - the words alone</option>'
-    + (cfg.banks || []).map(b => `<option value="${esc(b.path)}">${esc(b.name)}</option>`).join('');
-  const bankPolicy = () => {
-    const b = (cfg.banks || []).find(x => x.path === $('mcqbank').value);
-    $('mcqbankpolicy').textContent = b ? `${b.name}: ${b.policy} Its rules, `
-      + `with whether this person asked for a change, decide the label. In `
-      + `the finished system that history stays on the person's phone.`
-      : 'Pick the person\'s bank to personalise the label: the same words can '
-        + 'be a scam at one bank and genuine at another.';
-  };
-  $('mcqbank').onchange = bankPolicy;
-  bankPolicy();
+  $('mcqcountry').innerHTML = '<option value="">no country - the words alone</option>'
+    + (cfg.countries || []).map(c => `<option value="${esc(c.path)}">${esc(c.name)}</option>`).join('');
+  $('mcqcountry').onchange = mcqCountryLaw;
+  mcqCountryLaw();
   $('mcqqgo').onclick = mcqQuestion;
   $('mcqquestion').addEventListener('input', mcqQuestionEdited);
   $('mcqqsaved').onchange = () => mcqSavedPick($('mcqqsaved').value);
@@ -7607,8 +7592,23 @@ async function mcqLoadRow() {
   $('mcqtranscript').value = r.text;
   $('mcqidx').value = r.idx;
   $('mcqinfo').innerHTML = `row ${r.idx} of ${r.total}`
-    + (r.row_id ? ' · id ' + esc(r.row_id) : '') + truthPill(r.label);
+    + (r.row_id ? ' · id ' + esc(r.row_id) : '')
+    + (r.country ? ' · ' + esc(r.country) : '') + truthPill(r.label);
+  // a row that says where the person lives picks that country's law
+  const c = r.country && (MCQ.countries || []).find(x =>
+    x.name.toLowerCase() === r.country.trim().toLowerCase());
+  if (c) { $('mcqcountry').value = c.path; mcqCountryLaw(); }
   mcqSize();
+}
+
+// the law of the country picked, under the dropdown
+function mcqCountryLaw() {
+  const c = (MCQ.countries || []).find(x => x.path === $('mcqcountry').value);
+  $('mcqcountrylaw').textContent = c
+    ? `${c.name}: ${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules `
+      + 'decide the label where they apply.'
+    : 'Pick where the person lives to personalise the label: the same call can '
+      + 'be normal in one country and a scam in another.';
 }
 
 async function mcqAsk() {
@@ -7623,8 +7623,7 @@ async function mcqAsk() {
   $('mcqanswer').innerHTML = '<div class="card muted">' + esc(MCQ.model)
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
-    quotes: $('mcqquotes').checked, bank: $('mcqbank').value,
-    asked: $('mcqasked').value});
+    quotes: $('mcqquotes').checked, country: $('mcqcountry').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -7641,15 +7640,14 @@ function mcqSigned(v) {
     + `${Number(v).toFixed(2)}</span>`;
 }
 
-// the label for this person: the bank's rules on top of the words' verdict
+// the label for a person in this country: its rules on top of the words'
+// verdict
 function mcqPersonalCard(r, wordsWord) {
   const p = r.personal;
   const big = {scam: 'SCAM', legit: 'LEGITIMATE', unsure: 'UNSURE',
                neutral: 'NEUTRAL'}[p.final] || String(p.final).toUpperCase();
   const cls = p.final === 'scam' ? 'scam' : p.final === 'legit' ? 'legitimate'
     : 'uncertain';
-  const asked = {yes: 'asked for the change', no: 'asked for nothing',
-                 unknown: 'not known whether they asked'}[p.asked];
   const rows = p.answers.map(a => `<div class="tq-opt tq-pick">`
     + `<span>✓ ${a.text === null ? 'unreadable' : esc(a.text)}</span>`
     + `<span class="tq-run">${a.p === null ? '' : (100 * a.p).toFixed(0) + '%'}</span></div>`
@@ -7662,18 +7660,19 @@ function mcqPersonalCard(r, wordsWord) {
       <div>
         <div class="cap">For this person</div>
         <div class="big ${cls}">${big}</div>
-        <div class="hint">${esc(p.bank)} · ${esc(asked)}</div>
+        <div class="hint">a person in ${esc(p.country)}</div>
       </div>
       <div style="flex:1; min-width:260px">
         <div class="cap">Why</div>
         <div>${esc(p.why)}</div>
         ${p.advice ? `<div style="margin-top:6px; font-weight:600">${esc(p.advice)}</div>` : ''}
-        <div class="hint">${p.from === 'bank' ? 'decided by ' + esc(p.bank) + '\'s rule '
-          + p.rule + '; the words alone said ' + esc(wordsWord.toLowerCase())
-          : 'the words alone decide'} · ${esc(p.bank)}: ${esc(p.policy)}</div>
+        <div class="hint">${p.from === 'country' ? 'decided by ' + esc(p.country)
+          + '\'s rule ' + p.rule + '; the words alone said '
+          + esc(wordsWord.toLowerCase()) : 'the words alone decide'}
+          · ${esc(p.country)}: ${esc(p.law)}${p.source ? ' (' + esc(p.source) + ')' : ''}</div>
       </div>
     </div>
-    ${rows ? `<div class="qp" style="margin-top:10px">The bank's questions</div>${rows}` : ''}
+    ${rows ? `<div class="qp" style="margin-top:10px">${esc(p.country)}'s questions</div>${rows}` : ''}
   </div>`;
 }
 
