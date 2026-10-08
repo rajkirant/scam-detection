@@ -724,6 +724,7 @@
     {
       "id": "contact_origin",
       "prompt": "How did this conversation come about?",
+      "hint": "First decide who rang whom. Options that say the person is calling or returning a call fit only when the person rang the caller. When the caller rang the person, choose from the options about what the caller says or offers.",
       "options": [
         {"id": "number_from_alert", "text": "The person is calling a number shown in a pop-up, a locked or warning screen, or an unexpected email, invoice, or text", "value": 1.0},
         {
@@ -738,16 +739,17 @@
         },
         {
           "id": "unexpected_windfall",
-          "text": "The caller says the person has won, been selected, or is owed money, for something the person did not enter or apply for",
+          "text": "The caller says the person has won, been selected, or is owed money, or offers paid work or a paid task, for something the person did not enter or apply for",
           "value": 0.5
         },
         {
           "id": "number_from_search",
-          "text": "The person is calling a number found through a web search or an online ad, not on the organisation's own website, card, bill, or letter",
+          "text": "The person rang a number they found through a web search or an online ad, not on the organisation's own website, card, bill, or letter",
           "value": 0.5
         },
         {"id": "returning_missed_call", "text": "The person is returning a missed call or a voicemail, with no letter or reference to check it against", "value": 0.3},
         {"id": "caller_offer", "text": "The caller offers a product, a service, or a deal the person had not asked about", "value": 0.0},
+        {"id": "personal_contact", "text": "Someone the person knows calls about personal matters or plans, such as an invitation, a catch-up, or support", "value": 0.0},
         {
           "id": "routine_notice",
           "text": "A routine notice from an organisation the person already uses, such as a renewal, a payment due, a delivery slot, or an appointment reminder",
@@ -939,9 +941,9 @@
           "text": "A threat of harm if the person does not act now: arrest, legal action, a frozen account, a service cut off, lost data, or a lost parcel",
           "value": 1.0
         },
-        {"id": "secrecy", "text": "The person is told to keep the call secret from family, bank staff, or anyone else", "value": 1.0},
+        {"id": "secrecy", "text": "The caller asks the person to hide the call from family, bank staff, or anyone else", "value": 1.0},
         {"id": "stay_on_line", "text": "The person is told to stay on the line, or keep the computer on, while they act", "value": 0.8},
-        {"id": "offer_deadline", "text": "A deadline on an offer or a discount, with no threat", "value": 0.2},
+        {"id": "offer_deadline", "text": "A deadline on an offer or a discount, with no threat", "value": 0.0},
         {"id": "no_urgency", "text": "No time pressure: the person can decide later or hang up", "value": -0.5, "absence": true},
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
