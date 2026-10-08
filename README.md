@@ -653,7 +653,8 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
   what the money is for (a "security deposit" that will be given back, a fine
   to stop an arrest, keeping it safe, a release fee, ...). In the same way,
   whether the call says anything about checking the caller is asked first,
-  and how only after a yes.
+  and how only after a yes. Whether the caller is a live person or a recorded
+  message is asked first, and what the message asks only after "recorded".
 
 The questions are asked in a nested order. The subject is asked first, then
 the questions in the order of that subject's `ask` list. A bank call is asked
@@ -673,14 +674,20 @@ negative toward legitimate. *Not stated* and every option of a `recorded`
 question score 0. A recorded question, such as who the caller says they are,
 is kept to explain the verdict. The call's **score** is the sum of the values
 of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
-neutral.** When a dataset is scored, neutral counts as not scam. The 53
+neutral.** When a dataset is scored, neutral counts as not scam. The 54
 questions and their values are in the file.
 
 **Classify** walks the transcript through the tree, one request per question
 (about a dozen per call), with no retrieval. The model answers one letter.
 With *Require a quote* ticked, it also copies a few words from the transcript
 that support the answer. An answer whose quote is not in the transcript counts
-as Not stated. Options marked `absence` ("no payment at all") need no quote.
+as Not stated. Options marked `absence` ("no payment") need no quote. For
+details and payment, the absence option says the call must be shown to its
+end, and for payment it comes after Not stated. Without that, a short clip
+was read as "no payment". Ollama's repeat penalty is turned off for these
+requests. With it on, the letter the model wrote could differ from the one
+its logprobs picked, so the quote backed one answer and the score counted
+another.
 The result shows:
 - the verdict and the score,
 - the path the call took through the tree. It starts at the chosen subject,
@@ -855,6 +862,8 @@ The other tabs:
      the root's subjects stay at 0.
   4. Each question's options are put back in order, strongest scam sign
      first, because the model is told to choose the first option that fits.
+     Not stated stays last, except that an option the file puts after it
+     (such as "no payment") stays after it.
 
   The trained file is the questionnaire, with its new options and values,
   plus one line per training run. That line gives the dataset, calls, date,
