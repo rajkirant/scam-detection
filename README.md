@@ -648,8 +648,10 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
   "bank" caller wants done with the money.
 - **Follow-ups** are asked only when the option that opens them is chosen,
   such as what an ID number is for, once the caller has asked for one. When
-  the person is asked to pay or move money, a follow-up asks how: gift cards,
-  crypto, a transfer to account details given on the call, and so on.
+  the person is asked to pay or move money, two follow-ups ask how (gift
+  cards, crypto, a transfer to account details given on the call, ...) and
+  what the money is for (a "security deposit" that will be given back, a fine
+  to stop an arrest, keeping it safe, a release fee, ...).
 
 The questions are asked in a nested order. The subject is asked first, then
 the questions in the order of that subject's `ask` list. A bank call is asked
@@ -666,7 +668,7 @@ negative toward legitimate. *Not stated* and every option of a `recorded`
 question score 0. A recorded question, such as who the caller says they are,
 is kept to explain the verdict. The call's **score** is the sum of the values
 of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
-neutral.** When a dataset is scored, neutral counts as not scam. The 51
+neutral.** When a dataset is scored, neutral counts as not scam. The 52
 questions and their values are in the file.
 
 **Classify** walks the transcript through the tree, one request per question

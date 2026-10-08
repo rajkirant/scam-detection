@@ -269,16 +269,17 @@ check("the shipped tree holds no learned knowledge or dataset evidence",
       [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
                    '"evidence"', '"knowledge"', "built_from", "honeypot",
                    "scambait", "huggingface") if w in shipped_text], [])
-check("the shipped tree loads: 15 subjects, 7 common questions, 51 in all",
+check("the shipped tree loads: 15 subjects, 7 common questions, 52 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
-       M.count_questions(shipped)), (15, 7, 51))
+       M.count_questions(shipped)), (15, 7, 52))
 pay = next(q for q in shipped["common_questions"] if q["id"] == "payment_asked")
-check("whether money is to move, then how, only after a yes",
+check("whether money is to move, then how and what for, only after a yes",
       ([o["id"] for o in pay["options"]],
        [[f["id"] for f in o.get("follow_up", [])] for o in pay["options"]],
        "no_payment" in [o["id"] for o in
                         pay["options"][0]["follow_up"][0]["options"]]),
-      (["yes", "no_payment", "not_mentioned"], [["payment_channel"], [], []],
+      (["yes", "no_payment", "not_mentioned"],
+       [["payment_channel", "payment_purpose"], [], []],
        False))
 check("other knowledge files are not mistaken for one",
       M.is_mcq_ontology(os.path.join(HERE, "..", "knowledge", "scam_ontology.json")),
