@@ -67,6 +67,7 @@
             {"id": "isp_or_phone", "text": "The internet or phone provider", "value": 0.0},
             {"id": "security_company", "text": "An antivirus or security company", "value": 0.0},
             {"id": "own_it_dept", "text": "The person's own workplace IT department", "value": 0.0},
+            {"id": "other_named_company", "text": "Another named company or its support team, such as a streaming, app, or device company", "value": 0.0},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
         },
@@ -77,6 +78,11 @@
           "options": [
             {"id": "warning_screen", "text": "A pop-up, a locked screen, or a warning message", "value": 0.0},
             {"id": "remote_detection", "text": "Something the caller says they detected remotely, such as a virus, hacking, or errors", "value": 0.0},
+            {
+              "id": "service_fault_noticed_by_caller",
+              "text": "A fault with a device, an app, or a service, such as playback, streaming, or the connection, that the caller says they noticed",
+              "value": 0.0
+            },
             {"id": "renewal_or_licence", "text": "A renewal, a licence, or a support plan for software", "value": 0.0},
             {"id": "fault_noticed", "text": "A fault the person noticed themselves, such as a slow computer or a failed login", "value": 0.0},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
@@ -841,7 +847,11 @@
       "id": "remote_access",
       "prompt": "Does the caller ask the person to install software, or to let them see or control the device?",
       "options": [
-        {"id": "guided_check_for_proof", "text": "The person is told to open a system screen or type a command, so the caller can 'show proof' of a problem", "value": 1.0},
+        {
+          "id": "guided_check_for_proof",
+          "text": "The person is told to open a system screen or type a command, such as the event viewer or a command prompt, so the caller can point at it as 'proof' of a problem",
+          "value": 1.0
+        },
         {
           "id": "remote_control",
           "text": "Install or open remote-control software, such as AnyDesk or TeamViewer, or let the caller see or control the screen",
@@ -860,6 +870,11 @@
             }
           ]
         },
+        {
+          "id": "offer_restart_reset",
+          "text": "The caller only offers to talk the person through restarting or resetting a device or an app, with no software or access asked for",
+          "value": 0.0
+        },
         {"id": "no_device_request", "text": "No software, screen, or device request", "value": 0.0},
         {"id": "guided_self_fix", "text": "The person changes a setting they can see and control, with no access given to the caller", "value": -0.5},
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
@@ -871,7 +886,12 @@
       "options": [
         {"id": "discouraged", "text": "The person is told not to hang up, not to call the organisation themselves, or not to trust their bank or anyone else", "value": 1.0},
         {"id": "caller_contacts_only", "text": "Only a phone number, link, website, or app given by the caller is offered for checking", "value": 0.8},
-        {"id": "caller_quotes_details", "text": "The caller tries to prove who they are by quoting the person's own details, or a badge or case number", "value": 0.3},
+        {
+          "id": "caller_quotes_details",
+          "text": "The caller tries to prove who they are by quoting the person's own details, such as an address or an account number, or a badge or case number",
+          "value": 0.3
+        },
+        {"id": "name_only", "text": "The caller only gives their own name or a company name, and no way to check it is discussed", "value": 0.0},
         {"id": "encouraged", "text": "The person is invited to hang up and call a published number, check their own account, or wait for a letter", "value": -1.0},
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
