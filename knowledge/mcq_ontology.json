@@ -5,6 +5,7 @@
       "id": "bank_account",
       "text": "Bank account, card, or a payment on it",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "money_movement",
         "common/caller_format",
@@ -12,8 +13,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -46,6 +46,8 @@
       "id": "tech_support",
       "text": "Computer, phone, internet, email, or online account problem",
       "ask": [
+        "claimed_identity",
+        "problem",
         "common/pressure",
         "fix_cost",
         "common/caller_format",
@@ -53,9 +55,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity",
-        "problem"
+        "common/verification"
       ],
       "questions": [
         {
@@ -97,6 +97,7 @@
       "id": "government",
       "text": "Government, tax, Social Security, benefits, immigration, police, or a court",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "claim",
         "requested_action",
@@ -105,8 +106,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -151,6 +151,7 @@
       "id": "delivery",
       "text": "Parcel, courier, or delivery, including a customs charge on a parcel",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "requested_action",
         "parcel_expected",
@@ -159,8 +160,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -199,6 +199,7 @@
       "id": "order_refund",
       "text": "An order, a purchase, or a refund",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "claim",
         "resolution",
@@ -207,8 +208,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -265,6 +265,7 @@
       "id": "billing_subscription",
       "text": "A bill, an invoice, a subscription, a renewal, or a service plan",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "claim",
         "common/caller_format",
@@ -272,8 +273,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -320,6 +320,7 @@
       "id": "utility",
       "text": "Electricity, gas, or water supply",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "claim",
         "common/caller_format",
@@ -327,8 +328,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -358,6 +358,7 @@
       "id": "prize_reward",
       "text": "A prize, a lottery, a gift, a reward, or a free offer",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "entered",
         "prize_cost",
@@ -366,8 +367,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -406,6 +406,7 @@
       "id": "insurance_health",
       "text": "Insurance, Medicare or health cover, or a warranty",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "claim",
         "requested_action",
@@ -414,8 +415,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -457,6 +457,7 @@
       "id": "sales_offer",
       "text": "Selling a product or a service, or asking for a donation",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "payment_terms",
         "common/caller_format",
@@ -465,7 +466,6 @@
         "common/payment_asked",
         "common/remote_access",
         "common/verification",
-        "claimed_identity",
         "product"
       ],
       "questions": [
@@ -510,6 +510,7 @@
       "id": "loan_debt",
       "text": "A loan, credit, debt relief, or a student loan",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "promise",
         "upfront_payment",
@@ -518,8 +519,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -559,6 +559,7 @@
       "id": "investment",
       "text": "An investment, trading, or a cryptocurrency opportunity",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "returns",
         "where_invested",
@@ -568,8 +569,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {
@@ -616,6 +616,7 @@
       "id": "family_personal",
       "text": "A family member, a friend, or a romantic contact",
       "ask": [
+        "claimed_identity",
         "common/pressure",
         "story",
         "identity_check",
@@ -624,8 +625,7 @@
         "common/sensitive_details",
         "common/payment_asked",
         "common/remote_access",
-        "common/verification",
-        "claimed_identity"
+        "common/verification"
       ],
       "questions": [
         {

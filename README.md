@@ -655,11 +655,14 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
 
 The questions are asked in a nested order. The subject is asked first, then
 the questions in the order of that subject's `ask` list. A bank call is asked
-about urgency first, then whether the money is to go to a new or different
-account, then the other common questions, and who the caller says they are
-last. A follow-up comes straight after the answer that opens it. Every subject
-starts with urgency, then its own scored questions, then the remaining common
-questions, then its recorded questions. Edit an `ask` list to change the
+who the caller says they are first, then about urgency, then whether the
+money is to go to a new or different account, then the other common
+questions. A tech support call is asked who the caller says they are, then
+what problem the call is about, then urgency. A follow-up comes straight
+after the answer that opens it. Every subject starts with who the caller
+says they are (where it has that question), then urgency, then its own
+scored questions, then the remaining common questions, then any other
+recorded questions. Edit an `ask` list to change the
 order: it names the subject's own question ids, and common questions as
 `common/<id>`.
 
