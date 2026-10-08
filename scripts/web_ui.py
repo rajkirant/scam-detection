@@ -8338,9 +8338,11 @@ function mcqTreeQ(q, tag, path, call) {
   }).join('');
   // a pick a missing quote overruled shows as Not stated; say what it was
   const overruled = got && got.quoted === false
-    ? `<div class="tq-quote muted"><s>“${esc(got.quote || 'no quote')}”</s> not in `
-      + `the transcript, so the model's pick, <s>${esc(got.picked || '')}</s>, `
-      + `counts as Not stated</div>` : '';
+    ? `<div class="tq-quote muted">${got.quote
+        ? `<s>“${esc(got.quote)}”</s> is not in the transcript`
+        : 'The model gave no quote' + (got.answered ? ` (its whole reply: `
+          + `“${esc(got.answered.trim())}”)` : '')}, so its pick, `
+      + `<s>${esc(got.picked || '')}</s>, counts as Not stated</div>` : '';
   return `<div class="tq-card ${rec ? 'recorded' : ''}">
     <div class="tq-q">${esc(q.prompt || '(no prompt)')}<span class="tq-tag">${esc(tag)}`
     + `${rec ? ' · recorded, scores 0' : ''} · ${esc(q.id || '')}</span></div>

@@ -482,6 +482,21 @@ check("one request, the verdict from the option's value",
 check("a legitimate option scores -1",
       M.classify("PARCEL transcript", flat)["verdict"], "legit")
 
+print("\na quote after a blank line")
+check("a quote on its own line after a blank line is still read",
+      M.find_quote('A\n\nQuote: "a security deposit of [Money]"'),
+      "a security deposit of [Money]")
+STATE["payloads"].clear()
+r = M.classify(GIFT, tree)
+stops = [p["options"].get("stop") for p in STATE["payloads"]
+         if p["options"].get("stop")]
+check("quoting requests do not stop at a blank line, before the quote",
+      (bool(stops), any("\n\n" in s for s in stops)), (True, False))
+check("each answer keeps the model's own reply, to explain an overrule",
+      all("answered" in a for a in r["answers"]) and
+      any(a["answered"].startswith("A") or a["answered"][:1].isalpha()
+          for a in r["answers"]), True)
+
 print("\nreading the letter")
 STATE["lead"] = "**"
 a = M.ask("PARCEL transcript", {"prompt": flat["prompt"], "options": flat["options"]},

@@ -540,9 +540,11 @@ def ask(transcript, q, onto, root=False, quotes=True, timeout=300):
     n = len(q["options"])
     quoting = quotes and not root and q.get("role") != ROLE_RECORDED
     prompt = question_prompt(transcript, q, onto, root, quotes)
+    # no stop at a blank line: a model that writes "A", a blank line, then
+    # "Quote: ..." would be cut off after the letter and lose its quote
     text, steps = generate(prompt, QUOTE_TOKENS if quoting else ANSWER_TOKENS,
                            timeout=timeout,
-                           stop=["\n\n", "\nQuestion"] if quoting else None)
+                           stop=["\nQuestion"] if quoting else None)
     probs, how = read_letter(text, steps, n)
     choice = None if how == "unreadable" else max(range(n),
                                                   key=lambda i: probs[i])
@@ -592,7 +594,9 @@ def _answer_record(path, q, a, root=False):
             "p": a["probs"][a["choice"]] if a["choice"] is not None else None,
             "probs": [round(p, 4) for p in a["probs"]],
             "expected": sum(p * x["value"] for p, x in zip(a["probs"], opts)),
-            "how": a["how"], "quote": a["quote"], "quoted": a["quoted"]}
+            "how": a["how"], "quote": a["quote"], "quoted": a["quoted"],
+            # the model's own reply, to show when its pick was overruled
+            "answered": (a.get("answered") or "")[:300]}
 
 
 def question_order(onto, subject):
