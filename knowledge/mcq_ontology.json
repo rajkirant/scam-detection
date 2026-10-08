@@ -793,6 +793,23 @@
                 {"id": "official_channel", "text": "The organisation's own website, app, or online account, or a payment method printed on a bill or letter", "value": -1.0},
                 {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
               ]
+            },
+            {
+              "id": "payment_purpose",
+              "prompt": "What does the caller say the money is for?",
+              "options": [
+                {
+                  "id": "refundable_deposit",
+                  "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                  "value": 1.0
+                },
+                {"id": "avoid_trouble", "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account", "value": 1.0},
+                {"id": "keep_safe", "text": "To keep the money safe from fraud, hackers, or a criminal investigation", "value": 1.0},
+                {"id": "release_fee", "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released", "value": 0.8},
+                {"id": "caller_service", "text": "A product, repair, or service the caller is offering on this call", "value": 0.3},
+                {"id": "agreed_purchase", "text": "Something the person ordered or signed up for, or a bill they already owe", "value": -0.5},
+                {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+              ]
             }
           ]
         },
