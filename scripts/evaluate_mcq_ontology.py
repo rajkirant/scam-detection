@@ -97,6 +97,8 @@ def main():
                          "mcq_ontology__stripped for the content-deletion pass)")
     ap.add_argument("--no-quotes", action="store_true",
                     help="do not require a supporting quote for each answer")
+    ap.add_argument("--no-hints", action="store_true",
+                    help="leave the questions' hints out of the prompts")
     ap.add_argument("--debug", action="store_true",
                     help="print every answer for the first calls")
     args = ap.parse_args()
@@ -106,6 +108,8 @@ def main():
         onto = MCQ.load_ontology(args.ontology)
     except ValueError as e:
         sys.exit("ERROR %s" % e)
+    if args.no_hints:
+        onto = MCQ.without_hints(onto)
     data = load(args.csv, args.limit)
     n_fraud = sum(1 for _, l in data if l == "Fraud")
 
@@ -117,6 +121,8 @@ def main():
     print("  tree    : %s - %d subjects, %d common questions, %d in all"
           % (onto["prompt"], len(onto["options"]),
              len(onto["common_questions"]), MCQ.count_questions(onto)))
+    print("  hints   : %s" % ("off" if args.no_hints else
+                              "%d questions carry one" % MCQ.count_hints(onto)))
     print("  answers : quotes %s; no retrieval, no learned knowledge"
           % ("required" if quotes else "off"))
     print("  verdict : the sign of the summed answer values (0 = neutral, "

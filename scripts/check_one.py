@@ -80,6 +80,8 @@ def main():
                     help="repeat the same transcript N times to check stability")
     ap.add_argument("--no-quotes", action="store_true",
                     help="do not require a supporting quote for each answer")
+    ap.add_argument("--no-hints", action="store_true",
+                    help="leave the questions' hints out of the prompts")
     args = ap.parse_args()
 
     if args.idx is None and args.raw_row is None:
@@ -104,6 +106,8 @@ def main():
         onto = MCQ.load_ontology(args.ontology)
     except ValueError as e:
         sys.exit("ERROR %s" % e)
+    if args.no_hints:
+        onto = MCQ.without_hints(onto)
 
     verdicts = []
     for i in range(args.runs):

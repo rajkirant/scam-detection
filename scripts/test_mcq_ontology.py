@@ -486,6 +486,39 @@ check("one request, the verdict from the option's value",
 check("a legitimate option scores -1",
       M.classify("PARCEL transcript", flat)["verdict"], "legit")
 
+print("\nhints: a note for the model on what counts")
+hinted = json.loads(json.dumps(TREE_ONTO))
+hinted["common_questions"][1]["hint"] = "Being polite is not pressure."
+check("a hint is checked: it must be text",
+      [any('"hint" must be text' in p for p in M.check_ontology(
+          dict(hinted, common_questions=[dict(hinted["common_questions"][1],
+                                              hint=7)])))], [True])
+ht = M.normalise(hinted)
+pressure = ht["common_questions"][1]
+check("a question's hint goes into its prompt, after the options",
+      re.search(r"C - Not stated\n\nAbout this question: Being polite is "
+                r"not pressure\.\n", M.question_prompt("call", pressure, ht))
+      is not None)
+check("a question without one gets no hint line",
+      "About this question" in M.question_prompt(
+          "call", ht["common_questions"][0], ht), False)
+check("without_hints takes every hint out, and leaves the rest",
+      (M.count_hints(ht), M.count_hints(M.without_hints(ht)),
+       M.without_hints(ht)["common_questions"][1]["prompt"]),
+      (1, 0, "Is there pressure?"))
+check("the file writer keeps hints",
+      M.to_file(ht)["common_questions"][1].get("hint"),
+      "Being polite is not pressure.")
+STATE["payloads"].clear()
+M.classify(GIFT, M.without_hints(ht))
+check("--no-hints: no prompt carries a hint",
+      any("About this question" in p["prompt"] for p in STATE["payloads"]), False)
+check("the shipped tree's hints: six, on the questions that misfired",
+      sorted(path for path, q, _ in M.iter_questions(shipped) if q.get("hint")),
+      ["common/caller_format", "common/payment_asked", "common/remote_access",
+       "common/sensitive_details", "common/verification",
+       "common/verification/yes/verification_how"])
+
 print("\na quote after a blank line")
 check("a quote on its own line after a blank line is still read",
       M.find_quote('A\n\nQuote: "a security deposit of [Money]"'),
