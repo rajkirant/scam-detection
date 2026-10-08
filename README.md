@@ -240,7 +240,9 @@ a dataset of the same size overwrites, so look at it before re-running.
 Everything `run_all.sh` does, as a form — plus four pages that put one call to
 one model: a fine-tuned BERT, a bag of words, a length threshold, or the local
 LLM. Each of the four fits on a dataset, keeps what it fitted in `models/`,
-and scores itself on held-out calls.
+and scores itself on held-out calls. The MCQ ontology page walks a call
+through a tree of questions, and the Files page lets you browse and read the
+project's files.
 
 ```bash
 ./web_ui.sh                   # http://localhost:8000, ctrl-c to stop
@@ -845,6 +847,33 @@ The other tabs:
 score a held-out one. When the ontology was trained on the dataset being
 scored, the score card says so. The content-deletion test is the other fair
 read.
+
+### Files page
+
+The project folder in the browser, **read only**. Click a folder to open it
+and a file to read it, or type part of a name in *find a file by name* to
+search the whole project. What is open is in the address bar
+(`#files/knowledge/countries/ireland.json`), so a file can be bookmarked,
+reloaded or linked. The country hint on the MCQ ontology page links to its
+file this way.
+- **Text files** (code, JSON, Markdown, logs) show with line numbers and an
+  option to wrap lines. Only the first 1 MB is shown.
+- **CSV files** show as a table, 50 rows a page, with the row count. *Show as
+  text* gives the raw file.
+- **Images** show as themselves. **Anything else**, and every file, can be
+  downloaded.
+
+The server can be public, and the page has no login, so some files are never
+listed, searched or sent:
+- hidden files and folders, such as `.env` with your API keys and `.git`;
+- the virtualenv (`venv/`), `__pycache__` and `node_modules`;
+- files named like keys or secrets (`*.pem`, `*.key`, `id_rsa`, anything with
+  "secret" or "credential" in its name);
+- anything outside the project folder, including through a symlink.
+
+Nothing can be created, changed or deleted from this page. A downloaded
+`.html` or `.svg` file is sent as a download, never shown as a page.
+`python scripts/test_files_page.py` checks these rules offline.
 
 ### Scoring a whole dataset
 
