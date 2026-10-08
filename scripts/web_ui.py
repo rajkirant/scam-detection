@@ -52,6 +52,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -1978,6 +1979,157 @@ def start_train_run(form):
     return meta
 
 
+# ------------------------------------------------------------------- files
+# The Files page: the project's own files, to browse and read. This server
+# can be public - --public puts it behind an ngrok URL with no login - so the
+# rules are strict. Nothing outside the project folder is reachable, and
+# nothing hidden is listed or sent: .env holds the API keys, .git the history,
+# and the virtualenv is thousands of files nobody wants. Nothing can be
+# written, renamed or deleted from here.
+FILES_ROOT = PROJECT_DIR.resolve()
+FILES_SKIP_DIRS = {"venv", "env", "__pycache__", "node_modules"}
+FILES_SECRET_RE = re.compile(r"\.(pem|key|p12|pfx|kdbx)$|^id_(rsa|dsa|ecdsa|ed25519)"
+                             r"|secret|credential", re.I)
+FILES_TEXT_MAX = 1000000        # bytes of a text file shown; the rest downloads
+FILES_CSV_ROWS = 50             # rows of a CSV per page
+FILES_CELL_MAX = 4000           # characters of one CSV cell
+FILES_FIND_MAX = 200            # names a search returns
+FILES_IMAGES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".gif": "image/gif", ".webp": "image/webp"}
+
+
+def files_hidden(name, is_dir=False):
+    """Whether the Files page leaves this name out."""
+    return (name.startswith(".") or (is_dir and name.lower() in FILES_SKIP_DIRS)
+            or FILES_SECRET_RE.search(name) is not None)
+
+
+def files_path(rel):
+    """(absolute path, project-relative path) for a path from the page, or a
+    ValueError: no "..", no drive letters, nothing hidden on the way there,
+    and - after symlinks - still inside the project."""
+    rel = str(rel or "").replace("\\", "/").strip().strip("/")
+    parts = [p for p in rel.split("/") if p]
+    if any(p in (".", "..") or ":" in p for p in parts):
+        raise ValueError("not a path inside the project: %s" % rel)
+    path = FILES_ROOT.joinpath(*parts)
+    real = path.resolve()
+    if real != FILES_ROOT and FILES_ROOT not in real.parents:
+        raise ValueError("%s is outside the project" % rel)
+    inside = real.relative_to(FILES_ROOT).parts
+    for chain in (parts, inside):
+        for i, p in enumerate(chain):
+            if files_hidden(p, i < len(chain) - 1 or real.is_dir()):
+                raise ValueError("%s is not shown here" % rel)
+    if not real.exists():
+        raise ValueError("no such file or folder: %s" % rel)
+    return real, "/".join(parts)
+
+
+def files_shown(folder, name, is_dir):
+    """Whether a name in a project folder is listed: not hidden, and, for a
+    symlink, leading somewhere the page would open."""
+    if files_hidden(name, is_dir):
+        return False
+    path = Path(folder) / name
+    if path.is_symlink():
+        try:
+            files_path(path.relative_to(FILES_ROOT).as_posix())
+        except (ValueError, OSError):
+            return False
+    return True
+
+
+def files_entry(entry, folder):
+    """One directory entry for the listing, or None when it is not shown."""
+    try:
+        is_dir = entry.is_dir()
+        if not files_shown(folder, entry.name, is_dir):
+            return None
+        st = entry.stat()
+    except OSError:
+        return None
+    return {"name": entry.name, "dir": is_dir,
+            "size": None if is_dir else st.st_size, "mtime": st.st_mtime}
+
+
+def files_list(rel):
+    """A folder's entries, folders first. Given a file, its folder - with
+    "open" naming the file, so a link to a file lands beside it."""
+    path, rel = files_path(rel)
+    opened = None
+    if not path.is_dir():
+        opened, rel = rel, rel.rpartition("/")[0]
+        path = path.parent
+    with os.scandir(path) as it:
+        entries = [e for e in (files_entry(x, path) for x in it) if e]
+    entries.sort(key=lambda e: (not e["dir"], e["name"].lower()))
+    return {"path": rel, "entries": entries, "open": opened}
+
+
+def files_find(text):
+    """Files and folders anywhere in the project whose name holds `text`."""
+    text = str(text or "").strip().lower()
+    if not text:
+        raise ValueError("type part of a file name")
+    out, more = [], False
+    for top, dirs, names in os.walk(FILES_ROOT):
+        dirs[:] = sorted(d for d in dirs if files_shown(top, d, True))
+        base = Path(top).relative_to(FILES_ROOT)
+        for name, is_dir in [(d, True) for d in dirs] + \
+                            [(n, False) for n in sorted(names)]:
+            if text in name.lower() and (is_dir or files_shown(top, name, False)):
+                if len(out) == FILES_FIND_MAX:
+                    more = True
+                    break
+                out.append({"path": (base / name).as_posix(), "dir": is_dir})
+        if more:
+            break
+    return {"query": text, "matches": out, "more": more}
+
+
+def files_csv(path, offset, delim):
+    """One page of a CSV's rows, and how many rows it has."""
+    import csv
+    csv.field_size_limit(sys.maxsize)
+    rows, total = [], 0
+    with open(path, newline="", encoding="utf-8-sig", errors="replace") as f:
+        reader = csv.reader(f, delimiter=delim)
+        header = next(reader, [])
+        for i, row in enumerate(reader):
+            if offset <= i < offset + FILES_CSV_ROWS:
+                rows.append([c if len(c) <= FILES_CELL_MAX
+                             else c[:FILES_CELL_MAX] + " …" for c in row])
+            total = i + 1
+    return {"kind": "csv", "header": header, "rows": rows, "offset": offset,
+            "total": total, "limit": FILES_CSV_ROWS}
+
+
+def files_read(rel, offset=0, as_text=False):
+    """One file, for the viewer: the text (up to FILES_TEXT_MAX bytes), a page
+    of a CSV as a table, or - for an image or a binary file - just what it is,
+    with /api/files/raw to show or download it."""
+    path, rel = files_path(rel)
+    if path.is_dir():
+        raise ValueError("%s is a folder" % rel)
+    st = path.stat()
+    out = {"path": rel, "name": path.name, "size": st.st_size,
+           "mtime": st.st_mtime}
+    ext = path.suffix.lower()
+    if ext in FILES_IMAGES:
+        return dict(out, kind="image")
+    with open(path, "rb") as f:
+        head = f.read(FILES_TEXT_MAX + 1)
+    if b"\0" in head[:8192] or ext == ".pdf":
+        return dict(out, kind="binary")
+    if ext in (".csv", ".tsv") and not as_text:
+        return dict(out, **files_csv(path, max(0, int(offset)),
+                                     "\t" if ext == ".tsv" else ","))
+    return dict(out, kind="text",
+                text=head[:FILES_TEXT_MAX].decode("utf-8", errors="replace"),
+                truncated=len(head) > FILES_TEXT_MAX)
+
+
 # ------------------------------------------------------------------ server
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
@@ -2006,12 +2158,45 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_file(self, rel):
+        """A project file as it is on disk: an image to show, anything else
+        to download. Streamed, so a large checkpoint does not sit in memory,
+        and never rendered as a page - an .html or .svg from the project
+        cannot run script in this one."""
+        path, rel = files_path(rel)
+        if path.is_dir():
+            raise ValueError("%s is a folder" % rel)
+        ctype = FILES_IMAGES.get(path.suffix.lower())
+        name = urllib.parse.quote(path.name)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype or "application/octet-stream")
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.send_header("Content-Disposition", "%s; filename*=UTF-8''%s"
+                         % ("inline" if ctype else "attachment", name))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "sandbox")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        with open(path, "rb") as f:
+            shutil.copyfileobj(f, self.wfile, 1 << 16)
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         try:
             if u.path == "/":
                 return self._send(200, PAGE, "text/html; charset=utf-8")
+            # ---- the Files page: read only
+            if u.path == "/api/files/list":
+                return self._send(200, files_list(q.get("path", [""])[0]))
+            if u.path == "/api/files/find":
+                return self._send(200, files_find(q.get("q", [""])[0]))
+            if u.path == "/api/files/read":
+                return self._send(200, files_read(
+                    q.get("path", [""])[0], int(q.get("offset", ["0"])[0]),
+                    q.get("as", [""])[0] == "text"))
+            if u.path == "/api/files/raw":
+                return self._send_file(q.get("path", [""])[0])
             if u.path == "/api/config":
                 return self._send(200, {
                     "datasets": datasets(),
@@ -3159,7 +3344,7 @@ PAGE = r"""<!doctype html>
   #kbstate { margin-top:3px; font-weight:400; }
 
   /* ---- the two pages ---- */
-  nav.pages { display:flex; gap:5px; }
+  nav.pages { display:flex; gap:5px; flex-wrap:wrap; }
   nav.pages button { background:none; border:1px solid var(--line); color:var(--dim);
                      padding:5px 14px; border-radius:99px; font-size:13px; }
   nav.pages button:hover { color:var(--ink); border-color:var(--dim); }
@@ -3325,8 +3510,8 @@ PAGE = r"""<!doctype html>
      full text is in its tooltip */
   #ollama { flex:1 1 0; min-width:0; overflow:hidden; text-overflow:ellipsis;
             white-space:nowrap; }
-  header .admin { display:flex; align-items:center; gap:8px; flex:none;
-                  margin-left:auto; }
+  header .admin { display:flex; align-items:center; gap:8px; flex:0 1 auto;
+                  min-width:0; flex-wrap:wrap; margin-left:auto; }
   #adminveil { position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:50;
                display:flex; align-items:center; justify-content:center;
                padding:16px; }
@@ -3344,6 +3529,50 @@ PAGE = r"""<!doctype html>
   .askrow select, .askrow input[type=text] { width:auto; padding:6px 9px; }
   /* has to out-rank the "select, input[type=text]" width:100% above it */
   input[type=text].num { width:74px; }
+
+  /* ---- the Files page */
+  .crumbs { margin:12px 0 8px; font-size:13px; overflow-wrap:anywhere; color:var(--dim); }
+  .crumbs button { background:none; border:none; padding:0; color:var(--accent);
+                   font-weight:600; cursor:pointer; }
+  .fslist { border:1px solid var(--line); border-radius:6px; background:var(--panel);
+            max-height:60vh; overflow-y:auto; }
+  .fsrow { display:flex; gap:8px; align-items:baseline; width:100%; text-align:left;
+           background:none; border:none; border-bottom:1px solid var(--line);
+           border-radius:0; padding:6px 10px; font-weight:400; color:var(--ink); }
+  .fsrow:last-child { border-bottom:none; }
+  .fsrow:hover { background:var(--bg); }
+  .fsrow.on { background:var(--bg); color:var(--accent); font-weight:600; }
+  .fsrow .ic { width:1em; flex:none; color:var(--dim); }
+  .fsrow .nm { flex:1; min-width:0; overflow-wrap:anywhere; }
+  .fsrow .sz { flex:none; color:var(--dim); font-size:12px; }
+  .fshead { display:flex; justify-content:space-between; align-items:flex-start;
+            gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+  .fspath { font-family:var(--mono); font-weight:600; overflow-wrap:anywhere; }
+  .fstools { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  .fstools label { display:flex; gap:6px; align-items:center; margin:0;
+                   font-weight:400; font-size:12.5px; }
+  a.fsbtn { font-weight:600; font-size:12.5px; padding:5px 12px; border-radius:6px;
+            border:1px solid var(--line); color:var(--ink); text-decoration:none; }
+  a.fsbtn:hover { border-color:var(--accent); color:var(--accent); }
+  .fscode { display:flex; align-items:flex-start; border:1px solid var(--line);
+            border-radius:8px; background:var(--bg); overflow:auto; max-height:75vh; }
+  .fscode pre { margin:0; padding:12px; font-family:var(--mono); font-size:12.5px;
+                line-height:1.5; }
+  .fscode .fsln { flex:none; color:var(--dim); text-align:right; user-select:none;
+                  border-right:1px solid var(--line); position:sticky; left:0;
+                  background:var(--bg); }
+  .fscode .fstext { flex:1; white-space:pre; }
+  .fscode.wrap .fsln { display:none; }
+  .fscode.wrap .fstext { white-space:pre-wrap; word-break:break-word; }
+  table.fscsv td, table.fscsv th { text-align:left; vertical-align:top; font-size:12.5px; }
+  table.fscsv th { text-transform:none; white-space:nowrap; }
+  table.fscsv td:first-child, table.fscsv th:first-child { color:var(--dim); }
+  table.fscsv td div { max-height:7.5em; overflow:auto; white-space:pre-wrap;
+                       overflow-wrap:break-word; max-width:520px; }
+  table.fsdir td, table.fsdir th { text-align:left; }
+  table.fsdir td:not(:first-child) { color:var(--dim); white-space:nowrap; }
+  table.fsdir button.link { font-size:13px; text-decoration:none; }
+  img.fsimg { max-width:100%; height:auto; border:1px solid var(--line); border-radius:6px; }
 </style>
 </head>
 <body>
@@ -3356,6 +3585,7 @@ PAGE = r"""<!doctype html>
     <button data-page="length">Length only</button>
     <button data-page="llm">LLM judge</button>
     <button data-page="mcq">MCQ ontology</button>
+    <button data-page="files">Files</button>
   </nav>
   <span class="sub" id="ollama">checking Ollama…</span>
   <span class="admin">
@@ -4648,6 +4878,35 @@ is a new file; the ontology it started from is kept as it is.</pre>
         test on the Benchmark page is the other fair read.</p>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="wrap" id="page-files" hidden>
+  <div class="side">
+    <div class="sect">
+      <div class="secthead">Project files</div>
+      <input type="text" id="fsfind" placeholder="find a file by name…" spellcheck="false"
+        autocomplete="off">
+      <div class="crumbs" id="fscrumbs"></div>
+      <div class="fslist" id="fslist"></div>
+      <div class="hint" id="fsnote" style="color:var(--bad)"></div>
+    </div>
+    <div class="sect">
+      <div class="secthead">What this is</div>
+      <div class="hint" style="margin-top:0">The project folder, read only.
+        Click a folder to open it and a file to read it, or type part of a
+        name to search the whole project. A CSV shows as a table, 50 rows a
+        page; an image shows as itself; anything can be downloaded. The
+        address bar follows what is open, so a file can be bookmarked or
+        linked.</div>
+      <div class="hint">This server can be public, so hidden files and
+        folders (<code>.env</code> with your API keys, <code>.git</code>),
+        the virtualenv, and anything named like a key or a secret are never
+        listed or sent, and nothing can be changed from here.</div>
+    </div>
+  </div>
+  <div class="main">
+    <div id="fsview"></div>
   </div>
 </div>
 
@@ -5955,12 +6214,15 @@ function markHistory() {
 // the first one. The only thing the two share is the run machinery on the
 // server: a training run is a detached run like any other, which is why it
 // also turns up under Recent runs.
-const PAGES = ['bench', 'bert', 'bow', 'length', 'llm', 'mcq'];
+const PAGES = ['bench', 'bert', 'bow', 'length', 'llm', 'mcq', 'files'];
 // Old page names that should still land somewhere sensible. (#mcq used to
 // redirect to BERT; it is the MCQ ontology page's own name again.)
 const PAGE_WAS = {};
+// The Files page carries what it has open after its name:
+// #files/knowledge/countries/ireland.json.
 const pageInUrl = () => {
-  const h = PAGE_WAS[location.hash.slice(1)] || location.hash.slice(1);
+  const name = location.hash.slice(1).split('/')[0];
+  const h = PAGE_WAS[name] || name;
   return PAGES.includes(h) ? h : 'bench';
 };
 
@@ -5976,7 +6238,7 @@ const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
 // someone - and reloading while reading an answer comes back to the answer
 // pane rather than to the benchmark form.
 function showPage(name) {
-  if (location.hash.slice(1) !== name)
+  if (location.hash.slice(1).split('/')[0] !== name)
     history.replaceState(null, '', name === 'bench' ? location.pathname : '#' + name);
   for (const b of $('pages').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.page === name);
@@ -5986,6 +6248,7 @@ function showPage(name) {
   $('page-length').hidden = name !== 'length';
   $('page-llm').hidden = name !== 'llm';
   $('page-mcq').hidden = name !== 'mcq';
+  $('page-files').hidden = name !== 'files';
   // drawn on first visit rather than at boot: someone who only ever runs
   // benchmarks should not be made to wait for a directory scan of models/,
   // nor for ollama to be asked what it has pulled
@@ -5994,6 +6257,7 @@ function showPage(name) {
   if (name === 'length' && !LEN) lenBoot();
   if (name === 'llm' && !LLM) llmBoot();
   if (name === 'mcq' && !MCQ) mcqBoot();
+  if (name === 'files') fsFromHash();
 }
 
 async function bertBoot() {
@@ -7604,9 +7868,10 @@ async function mcqLoadRow() {
 // the law of the country picked, under the dropdown
 function mcqCountryLaw() {
   const c = (MCQ.countries || []).find(x => x.path === $('mcqcountry').value);
-  $('mcqcountrylaw').textContent = c
-    ? `${c.name}: ${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules `
-      + 'decide the label where they apply.'
+  $('mcqcountrylaw').innerHTML = c
+    ? esc(`${c.name}: ${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules `
+      + 'decide the label where they apply. ') + `<a href="#files/${esc(c.path)}" `
+      + `style="color:var(--accent)">${esc(c.path)}</a>`
     : 'Pick where the person lives to personalise the label: the same call can '
       + 'be normal in one country and a scam in another.';
 }
@@ -8171,6 +8436,198 @@ async function mcqBuildPoll() {
 }
 
 boot();
+// ================================================================ Files
+// The project's own files, read only. What is open is in the URL -
+// #files/knowledge/countries/ireland.json - so a link from another page
+// lands on the file, and a reload or a bookmark comes back to it.
+let FS = null, fsFindTimer = null;
+const fsQ = rel => encodeURIComponent(rel);
+
+function fsSize(n) {
+  if (n === null || n === undefined) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + ' ' + units[i];
+}
+
+const fsWhen = t => new Date(t * 1000).toLocaleString();
+
+function fsHashPath() {
+  try {
+    return location.hash.slice(1).split('/').slice(1).map(decodeURIComponent)
+      .join('/');
+  } catch (e) { return ''; }
+}
+
+function fsSetHash() {
+  const rel = FS.file || FS.dir;
+  history.replaceState(null, '', '#files' + (rel
+    ? '/' + rel.split('/').map(encodeURIComponent).join('/') : ''));
+}
+
+// each time the page is shown: follow the URL when it names somewhere else
+function fsFromHash() {
+  if (!FS) {
+    FS = {dir: null, file: null, entries: [], asText: false, wrap: false};
+    $('fsfind').addEventListener('input', fsFindTyped);
+    $('fsfind').onkeydown = e => {
+      if (e.key === 'Escape') { $('fsfind').value = ''; fsFindTyped(); }
+    };
+  }
+  const rel = fsHashPath();
+  if (FS.dir === null || (rel && rel !== (FS.file || FS.dir))) fsGo(rel);
+  else fsSetHash();
+}
+
+// a folder, or a file - which opens beside the rest of its folder
+async function fsGo(rel, fallback = true) {
+  const r = await api('/api/files/list?path=' + fsQ(rel));
+  if (r.error) {
+    $('fsnote').textContent = r.error;
+    if (FS.dir === null && fallback && rel) fsGo('', false);
+    else if (FS.dir !== null) fsSetHash();    // the URL back to what is open
+    return;
+  }
+  $('fsnote').textContent = '';
+  FS.dir = r.path;
+  FS.entries = r.entries;
+  fsPaintCrumbs();
+  fsPaintList();
+  if (r.open) return fsOpen(r.open);
+  FS.file = null;
+  fsSetHash();
+  fsPaintFolder();
+}
+
+function fsWire(box, fromSearch) {
+  for (const b of box.querySelectorAll('[data-rel]'))
+    b.onclick = () => {
+      if (fromSearch) { $('fsfind').value = ''; return fsGo(b.dataset.rel); }
+      return b.dataset.dir ? fsGo(b.dataset.rel) : fsOpen(b.dataset.rel);
+    };
+}
+
+function fsPaintCrumbs() {
+  const parts = FS.dir ? FS.dir.split('/') : [];
+  const link = (label, rel) => `<button data-rel="${esc(rel)}" data-dir="1">${esc(label)}</button>`;
+  $('fscrumbs').innerHTML = [link('scam-detection', '')].concat(parts.map((p, i) =>
+    link(p, parts.slice(0, i + 1).join('/')))).join(' / ');
+  fsWire($('fscrumbs'));
+}
+
+const fsRel = name => (FS.dir ? FS.dir + '/' : '') + name;
+
+function fsRow(rel, label, isDir, size) {
+  return `<button class="fsrow${rel === FS.file ? ' on' : ''}" data-rel="${esc(rel)}"`
+    + `${isDir ? ' data-dir="1"' : ''}><span class="ic">${isDir && label !== '..' ? '▸' : ''}</span>`
+    + `<span class="nm">${esc(label)}${isDir && label !== '..' ? '/' : ''}</span>`
+    + `<span class="sz">${isDir ? '' : fsSize(size)}</span></button>`;
+}
+
+function fsPaintList() {
+  const rows = FS.entries.map(e => fsRow(fsRel(e.name), e.name, e.dir, e.size));
+  if (FS.dir) rows.unshift(fsRow(FS.dir.split('/').slice(0, -1).join('/'), '..',
+                                 true, null));
+  $('fslist').innerHTML = rows.join('')
+    || '<div class="hint" style="padding:8px 10px; margin:0">an empty folder</div>';
+  fsWire($('fslist'));
+}
+
+function fsFindTyped() {
+  clearTimeout(fsFindTimer);
+  const q = $('fsfind').value.trim();
+  if (!q) { fsPaintCrumbs(); fsPaintList(); return; }
+  fsFindTimer = setTimeout(async () => {
+    const r = await api('/api/files/find?q=' + encodeURIComponent(q));
+    if ($('fsfind').value.trim() !== q) return;          // typed on since
+    if (r.error) { $('fslist').innerHTML = `<div class="hint" style="padding:8px 10px; margin:0">${esc(r.error)}</div>`; return; }
+    const n = r.matches.length;
+    $('fscrumbs').textContent = `${n}${r.more ? '+' : ''} match${n === 1 ? '' : 'es'} `
+      + 'in the whole project';
+    $('fslist').innerHTML = r.matches.map(m => fsRow(m.path, m.path, m.dir, null)).join('')
+      || '<div class="hint" style="padding:8px 10px; margin:0">nothing by that name</div>';
+    fsWire($('fslist'), true);
+  }, 200);
+}
+
+function fsPaintFolder() {
+  const dirs = FS.entries.filter(e => e.dir).length;
+  const rows = FS.entries.map(e => `<tr><td><button class="link" data-rel="${esc(fsRel(e.name))}"`
+    + `${e.dir ? ' data-dir="1"' : ''}>${esc(e.name)}${e.dir ? '/' : ''}</button></td>`
+    + `<td>${e.dir ? '' : fsSize(e.size)}</td><td>${esc(fsWhen(e.mtime))}</td></tr>`).join('');
+  $('fsview').innerHTML = `<div class="card">
+    <div class="fspath">${esc(FS.dir || 'scam-detection')}/</div>
+    <div class="hint">${dirs} folder${dirs === 1 ? '' : 's'}, ${FS.entries.length - dirs}
+      file${FS.entries.length - dirs === 1 ? '' : 's'}</div>
+    <div class="scroll" style="margin-top:10px"><table class="fsdir">
+      <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+      <tbody>${rows}</tbody></table></div></div>`;
+  fsWire($('fsview'));
+}
+
+async function fsOpen(rel, offset = 0) {
+  if (rel !== FS.file) FS.asText = false;
+  FS.file = rel;
+  fsSetHash();
+  for (const b of $('fslist').querySelectorAll('.fsrow'))
+    b.classList.toggle('on', b.dataset.rel === rel);
+  $('fsview').innerHTML = `<div class="card muted">opening ${esc(rel)}…</div>`;
+  const r = await api('/api/files/read?path=' + fsQ(rel) + '&offset=' + offset
+                      + (FS.asText ? '&as=text' : ''));
+  if (FS.file !== rel) return;             // another file was picked meanwhile
+  if (r.error) {
+    $('fsview').innerHTML = `<div class="card" style="color:var(--bad)">${esc(r.error)}</div>`;
+    return;
+  }
+  fsPaintFile(r);
+}
+
+function fsPaintFile(r) {
+  const raw = '/api/files/raw?path=' + fsQ(r.path);
+  const tools = [`<a class="fsbtn" href="${raw}" download>Download</a>`];
+  if (/\.(csv|tsv)$/i.test(r.name))
+    tools.unshift(`<button class="link" id="fsastext">show as ${FS.asText ? 'a table' : 'text'}</button>`);
+  if (r.kind === 'text')
+    tools.unshift(`<label><input type="checkbox" id="fswrap"${FS.wrap ? ' checked' : ''}> wrap lines</label>`);
+  let body;
+  if (r.kind === 'text') {
+    const lines = r.text.split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
+    body = `<div class="fscode${FS.wrap ? ' wrap' : ''}" id="fscode">`
+      + `<pre class="fsln">${lines.map((_, i) => i + 1).join('\n')}</pre>`
+      + `<pre class="fstext">${esc(lines.join('\n'))}</pre></div>`
+      + (r.truncated ? '<div class="hint">Only the first 1 MB is shown. Download the '
+                       + 'file for all of it.</div>' : '');
+  } else if (r.kind === 'csv') {
+    const a = r.offset + 1, b = r.offset + r.rows.length;
+    body = `<div class="row" style="margin-bottom:8px">
+        <span class="hint" style="margin:0">${r.total ? `rows ${a}–${b} of ${r.total}` : 'no rows'}</span>
+        <button class="link" id="fsprev"${r.offset ? '' : ' disabled'}>← previous</button>
+        <button class="link" id="fsnext"${b < r.total ? '' : ' disabled'}>next →</button></div>
+      <div class="scroll"><table class="fscsv"><thead><tr><th>#</th>`
+      + r.header.map(h => `<th>${esc(h)}</th>`).join('') + '</tr></thead><tbody>'
+      + r.rows.map((row, i) => `<tr><td>${r.offset + i + 1}</td>`
+        + row.map(c => `<td><div>${esc(c)}</div></td>`).join('') + '</tr>').join('')
+      + '</tbody></table></div>';
+  } else if (r.kind === 'image') {
+    body = `<img class="fsimg" src="${raw}" alt="${esc(r.name)}">`;
+  } else {
+    body = '<div class="muted">A binary file, so it is not shown here. Download it '
+      + 'to open it.</div>';
+  }
+  $('fsview').innerHTML = `<div class="card"><div class="fshead"><div>
+      <div class="fspath">${esc(r.path)}</div>
+      <div class="hint">${fsSize(r.size)} · modified ${esc(fsWhen(r.mtime))}</div></div>
+      <div class="fstools">${tools.join('')}</div></div>${body}</div>`;
+  if ($('fsastext')) $('fsastext').onclick = () => { FS.asText = !FS.asText; fsOpen(r.path); };
+  if ($('fswrap')) $('fswrap').onchange = () => {
+    FS.wrap = $('fswrap').checked;
+    $('fscode').classList.toggle('wrap', FS.wrap);
+  };
+  if ($('fsprev')) $('fsprev').onclick = () => fsOpen(r.path, Math.max(0, r.offset - r.limit));
+  if ($('fsnext')) $('fsnext').onclick = () => fsOpen(r.path, r.offset + r.limit);
+}
 </script>
 </body>
 </html>
