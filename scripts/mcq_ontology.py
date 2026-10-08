@@ -8,7 +8,7 @@ otherwise) holding a tree of questions:
   the root question    the subject of the call (bank, tech support,
                        government ...). It does not decide the verdict.
   common questions     asked of every call: how the call came about, which
-                       details are asked for, how money would move ...
+                       details are asked for, whether money is to move ...
   subject questions    asked of calls on that subject
   follow-ups           asked only when the option that opens them is chosen
 
