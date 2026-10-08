@@ -882,17 +882,31 @@
     },
     {
       "id": "verification",
-      "prompt": "Can the person check that the caller is genuine?",
+      "prompt": "Does the call say anything about how the person could check that the caller is genuine?",
       "options": [
-        {"id": "discouraged", "text": "The person is told not to hang up, not to call the organisation themselves, or not to trust their bank or anyone else", "value": 1.0},
-        {"id": "caller_contacts_only", "text": "Only a phone number, link, website, or app given by the caller is offered for checking", "value": 0.8},
         {
-          "id": "caller_quotes_details",
-          "text": "The caller tries to prove who they are by quoting the person's own details, such as an address or an account number, or a badge or case number",
-          "value": 0.3
+          "id": "yes",
+          "text": "Yes: the caller says how to check, tells the person not to check, or tries to prove who they are",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "verification_how",
+              "prompt": "How can the person check that the caller is genuine?",
+              "options": [
+                {"id": "discouraged", "text": "The person is told not to hang up, not to call the organisation themselves, or not to trust their bank or anyone else", "value": 1.0},
+                {"id": "caller_contacts_only", "text": "Only a phone number, link, website, or app given by the caller is offered for checking", "value": 0.8},
+                {
+                  "id": "caller_quotes_details",
+                  "text": "The caller tries to prove who they are by quoting the person's own details, such as an address or an account number, or a badge or case number",
+                  "value": 0.3
+                },
+                {"id": "encouraged", "text": "The person is invited to hang up and call a published number, check their own account, or wait for a letter", "value": -1.0},
+                {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+              ]
+            }
+          ]
         },
-        {"id": "name_only", "text": "The caller only gives their own name or a company name, and no way to check it is discussed", "value": 0.0},
-        {"id": "encouraged", "text": "The person is invited to hang up and call a published number, check their own account, or wait for a letter", "value": -1.0},
+        {"id": "no", "text": "No: the caller only gives a name or a company, and checking is never discussed", "value": 0.0, "absence": true},
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
     },

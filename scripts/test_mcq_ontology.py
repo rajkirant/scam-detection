@@ -269,9 +269,9 @@ check("the shipped tree holds no learned knowledge or dataset evidence",
       [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
                    '"evidence"', '"knowledge"', "built_from", "honeypot",
                    "scambait", "huggingface") if w in shipped_text], [])
-check("the shipped tree loads: 15 subjects, 7 common questions, 52 in all",
+check("the shipped tree loads: 15 subjects, 7 common questions, 53 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
-       M.count_questions(shipped)), (15, 7, 52))
+       M.count_questions(shipped)), (15, 7, 53))
 pay = next(q for q in shipped["common_questions"] if q["id"] == "payment_asked")
 check("whether money is to move, then how and what for, only after a yes",
       ([o["id"] for o in pay["options"]],
