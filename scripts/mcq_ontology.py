@@ -154,6 +154,9 @@ def _check_question(q, where, probs, root=False):
         probs.append('%s has no "id"' % where)
     if not str(q.get("prompt") or "").strip():
         probs.append('%s: "prompt" - the question - is missing or empty' % where)
+    if "hint" in q and not (isinstance(q["hint"], str) and q["hint"].strip()):
+        probs.append('%s: "hint" must be text - a sentence or two for the '
+                     'model on what counts' % where)
     opts = q.get("options")
     if not isinstance(opts, list):
         probs.append('%s: "options" must be a list' % where)
@@ -264,6 +267,8 @@ def _check_ask(subject, common, probs):
 def _norm_question(q):
     q = dict(q)
     q["prompt"] = " ".join(str(q["prompt"]).split())
+    if q.get("hint"):
+        q["hint"] = " ".join(q["hint"].split())
     opts = []
     for o in q["options"]:
         o = dict(o)
@@ -341,6 +346,24 @@ def iter_questions(onto):
 
 def count_questions(onto):
     return sum(1 for _ in iter_questions(onto))
+
+
+# A question may carry a "hint": a sentence or two for the model on what
+# counts and what does not - say, that a caller naming their own company is
+# not proof of who they are. It goes into that question's prompt, and is
+# not shown on the page. Scoring the same dataset with and without hints
+# (--no-hints) shows whether they help.
+def count_hints(onto):
+    return sum(1 for _, q, _ in iter_questions(onto) if q.get("hint"))
+
+
+def without_hints(obj):
+    """A copy of a tree (or any part of one) with every hint taken out."""
+    if isinstance(obj, dict):
+        return {k: without_hints(v) for k, v in obj.items() if k != "hint"}
+    if isinstance(obj, list):
+        return [without_hints(v) for v in obj]
+    return obj
 
 
 def list_ontologies():
@@ -504,6 +527,9 @@ def question_prompt(transcript, q, onto, root=False, quotes=True):
                              " (absence)" if o.get("absence") else "")
               for i, o in enumerate(q["options"])]
     lines.append("")
+    # the file's own note on what counts, when the question has one
+    if q.get("hint"):
+        lines.append("About this question: " + q["hint"])
     if root:
         lines.append(rules["route"])
     else:
@@ -1635,6 +1661,8 @@ def _show_call(res, onto):
 
 def run_ask(args):
     onto = load_ontology(args.ontology)
+    if args.no_hints:
+        onto = without_hints(onto)
     res = classify(args.text, onto, not args.no_quotes)
     _show_call(res, onto)
     if args.country:
@@ -1692,14 +1720,18 @@ def run_evaluate(args):
     """Score a whole dataset: what the MCQ page's Score a dataset tab runs."""
     import eval_common as EC
     onto = load_ontology(args.ontology)
+    hints = count_hints(onto) if not args.no_hints else 0
+    if args.no_hints:
+        onto = without_hints(onto)
     quotes = not args.no_quotes
     print("Loading dataset")
     rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
     print()
     print("==> score  %s over %d calls" % (args.ontology, len(rows)))
-    print("  %s  (%d subjects, %d questions; quotes %s)"
+    print("  %s  (%d subjects, %d questions; quotes %s; %s)"
           % (onto["prompt"], len(onto["options"]), count_questions(onto),
-             "required" if quotes else "off"))
+             "required" if quotes else "off",
+             "hints off" if args.no_hints else "%d hints" % hints))
     trained = [t.get("dataset") for t in onto.get("training") or []]
     if any(t and Path(t).name == Path(args.csv).name for t in trained):
         print("  NOTE this ontology was trained on this dataset: some of the "
@@ -1762,7 +1794,7 @@ def run_evaluate(args):
                                       for i, s in enumerate(onto["options"])],
                           "neutral": neutral, "questions_asked": asked,
                           "unquoted": unquoted, "quotes": quotes,
-                          "stopped": stopped,
+                          "hints": not args.no_hints, "stopped": stopped,
                           "measured": sum(r["measured"] for r in results)})
     return m
 
@@ -1785,7 +1817,7 @@ def dumps(obj, width=180, indent=0):
 
 
 # what an ontology file keeps: the questionnaire, and one line per training run
-_Q_KEYS = ("id", "role", "prompt", "options")
+_Q_KEYS = ("id", "role", "prompt", "hint", "options")
 _O_KEYS = ("id", "text", "value", "absence", "follow_up")
 _RUN_KEYS = ("dataset", "calls", "date", "added", "changed",
              "training_calls_right_before", "training_calls_right_after")
@@ -1867,9 +1899,15 @@ def build_parser():
                        help="do not require a supporting quote for each "
                             "answer (faster: one letter per question)")
 
+    def hint_flag(p):
+        p.add_argument("--no-hints", action="store_true",
+                       help="leave the questions' hints out of the prompts, "
+                            "to measure what they add")
+
     a = sub.add_parser("ask", help="one transcript through the tree")
     a.add_argument("--text", required=True)
     walk_flags(a)
+    hint_flag(a)
     a.add_argument("--country", default=None,
                    help="where the person lives: a country name (\"New "
                         "Zealand\") or file in knowledge/countries/, whose "
@@ -1907,6 +1945,7 @@ def build_parser():
     ev = sub.add_parser("evaluate", help="score a whole dataset")
     ev.add_argument("--csv", required=True)
     walk_flags(ev)
+    hint_flag(ev)
     ev.add_argument("--limit", type=int, default=None,
                     help="a class-balanced head of the dataset")
     ev.add_argument("--text-col", default=None)

@@ -2571,6 +2571,9 @@ def start_eval_run(page, form):
         if form.get("quotes") is False:
             flags.append("--no-quotes")
         name = path.stem
+        if form.get("hints") is False:          # to measure what hints add
+            flags.append("--no-hints")
+            name += " (no hints)"
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
             raise ValueError("a run is already going (%s). Stop it first - "
@@ -2876,6 +2879,9 @@ def mcq_ask(form):
     path = mcq_path(form.get("ontology"))
     onto = mcq_ontology.load_ontology(path)
     quotes = form.get("quotes", True) is not False
+    hints = form.get("hints", True) is not False
+    if not hints:
+        onto = mcq_ontology.without_hints(onto)
     country = None
     if form.get("country"):
         country = mcq_ontology.load_country(mcq_country_path(form["country"]))
@@ -2898,6 +2904,7 @@ def mcq_ask(form):
                       "text": o["text"]}
                      for i, o in enumerate(onto["options"])],
         "explain": mcq_ontology.explain(res), "quotes": quotes,
+        "hints": hints,
         "pct": mcq_ontology.pct(res["score"]),
         "model": llm_judge.DEFAULT_MODEL, "words": len(text.split()),
         "elapsed_ms": int(1000 * (time.time() - t0))})
@@ -4619,9 +4626,16 @@ per held-out call, so it takes minutes, not seconds.</pre>
         <span class="note">an answer whose quote is not in the transcript
           counts as Not stated; off is faster, one letter per question</span></span>
       </label>
-      <div class="hint">Used by Classify, Score a dataset and Train. No
-        retrieval and no learned knowledge: the model sees the transcript,
-        the question and its options.</div>
+      <label class="inline" style="margin-top:6px">
+        <input type="checkbox" id="mcqhints" checked>
+        <span><span class="name">Use the questions' hints</span>
+        <span class="note">a sentence or two in the file, on what counts for
+          that question, added to its prompt; off measures what they add</span></span>
+      </label>
+      <div class="hint">Quotes are used by Classify, Score a dataset and
+        Train; hints by Classify and Score (training keeps them in the file).
+        No retrieval and no learned knowledge: the model sees the transcript,
+        the question, its options and its hint.</div>
     </div>
 
     <div class="sect">
@@ -7760,7 +7774,7 @@ async function mcqBoot() {
   evalHistory('mcq', evalIds('mcq', 'q-eval'));
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value,
-    quotes: $('mcqquotes').checked});
+    quotes: $('mcqquotes').checked, hints: $('mcqhints').checked});
   $('mcqsave').onclick = mcqSave;
   $('mcqjson').addEventListener('input', mcqJsonCheck);
   $('mcqbgo').onclick = mcqTrainOnto;
@@ -7888,7 +7902,8 @@ async function mcqAsk() {
   $('mcqanswer').innerHTML = '<div class="card muted">' + esc(MCQ.model)
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
-    quotes: $('mcqquotes').checked, country: $('mcqcountry').value});
+    quotes: $('mcqquotes').checked, hints: $('mcqhints').checked,
+    country: $('mcqcountry').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {

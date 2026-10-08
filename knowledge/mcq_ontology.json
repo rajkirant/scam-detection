@@ -699,6 +699,7 @@
     {
       "id": "caller_format",
       "prompt": "Is the call with a live person, or a recorded message?",
+      "hint": "Choose a recorded message only when the transcript shows one, such as an automated voice or \"press 1\". A caller who sounds scripted or formal is still a live person.",
       "options": [
         {"id": "recording_press_key", "text": "A recorded message that asks the person to press a key, or to call a number, to speak to someone", "value": 0.3},
         {"id": "live_person", "text": "A live person throughout", "value": 0.0},
@@ -754,6 +755,7 @@
     {
       "id": "sensitive_details",
       "prompt": "Which personal or security details does the caller ask the person to give?",
+      "hint": "This is about details the caller asks the person to give, not details the caller states. Choose \"No personal or security details\" only when the call goes on long enough that such a request would have come up; a short or cut-off call is Not stated.",
       "options": [
         {"id": "security_codes", "text": "A password, a PIN, or a one-time code sent to the person's phone or email", "value": 1.0},
         {
@@ -800,6 +802,7 @@
     {
       "id": "payment_asked",
       "prompt": "Is the person asked to pay or move money?",
+      "hint": "Choose \"No payment\" only when the call goes on long enough that a payment would have come up, such as a call that ends with the matter settled; a short or cut-off call is Not stated. An offer of free help is not a payment.",
       "options": [
         {
           "id": "yes",
@@ -846,6 +849,7 @@
     {
       "id": "remote_access",
       "prompt": "Does the caller ask the person to install software, or to let them see or control the device?",
+      "hint": "The first option is the trick of showing ordinary system screens or command output as 'proof' of a problem. Helping someone restart, reset, or change a setting is not that trick.",
       "options": [
         {
           "id": "guided_check_for_proof",
@@ -883,6 +887,7 @@
     {
       "id": "verification",
       "prompt": "Does the call say anything about how the person could check that the caller is genuine?",
+      "hint": "A caller saying their own name, company, or department is not a way to check them. Choose Yes only when the call talks about checking, proving, or not checking who the caller is.",
       "options": [
         {
           "id": "yes",
@@ -892,6 +897,7 @@
             {
               "id": "verification_how",
               "prompt": "How can the person check that the caller is genuine?",
+              "hint": "Quoting details means details about the person, such as their address or an account number. The caller's own name, company, or department is not proof.",
               "options": [
                 {"id": "discouraged", "text": "The person is told not to hang up, not to call the organisation themselves, or not to trust their bank or anyone else", "value": 1.0},
                 {"id": "caller_contacts_only", "text": "Only a phone number, link, website, or app given by the caller is offered for checking", "value": 0.8},

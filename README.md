@@ -701,8 +701,24 @@ and pick an absence option only when that part of the call is covered.
 `prompt` and its options, and is marked `"role": "recorded"` where it scores
 0. Every option has an `id`, a `text` and a `value`, is marked
 `"absence": true` where that applies, and may carry `follow_up` questions.
-There are no descriptions, guidelines or evidence in it. Its values are
-hand-set starting points, and only training changes them.
+There are no descriptions or evidence in it. Its values are hand-set
+starting points, and only training changes them.
+
+**Hints.** A question may also carry a `"hint"`: a sentence or two for the
+model on what counts and what does not. For example, a caller saying their
+own name or company is not a way to check them. The hint goes into that
+question's prompt, after the options, as "About this question: …". It is
+not shown on the page, but you can see and edit it in *Edit the JSON*. Six
+questions have one: the recorded-message question, sensitive details,
+whether money is asked for, remote access, and both verification
+questions. They are written in general terms, not from any one call.
+Training keeps hints but does not write them, so options it adds have none.
+
+To see whether hints help, score the same held-out dataset twice: once as
+usual, and once with *Use the questions' hints* unticked (`--no-hints` on
+the command line). A run without hints is labelled "(no hints)" on the
+Results tab. Judge hints on a dataset they were not written from, or the
+comparison flatters them.
 
 **Personalisation: the same words, a different label.** The same call can be
 normal in one country and a scam in another, because the law there makes the
@@ -1097,6 +1113,8 @@ The tree comes from `knowledge/mcq_ontology.json` (`--ontology` for another,
 such as a trained file). Each answer's value is summed into the call's score:
 above 0 scam, below 0 legitimate, 0 neutral (counted as not scam).
 `--no-quotes` skips the supporting quotes (faster: one letter per question).
+`--no-hints` leaves the questions' hints out of the prompts, to measure what
+they add.
 No retrieval and no learned knowledge go into the prompts. See
 [the MCQ ontology page](#mcq-ontology-page). The run prints which subject the
 scam and legitimate calls were routed to, how many were neutral, the score
