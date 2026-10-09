@@ -241,11 +241,27 @@ def check_ontology(obj):
 
 def _check_ask(subject, common, probs):
     """A subject's `ask` order may name only its own questions and the
-    common ones (as common/<id>), each once."""
+    common ones (as common/<id>), each once. Its `skip` list may name only
+    common questions, ones the ask list does not also name."""
+    sid = subject.get("id")
+    skip = subject.get("skip")
+    if skip is not None:
+        if not isinstance(skip, list):
+            probs.append('%s: "skip" must be a list of common/<id>' % sid)
+        else:
+            for ref in skip:
+                if not (isinstance(ref, str) and ref.startswith("common/")
+                        and ref[7:] in common):
+                    probs.append('%s: "skip" names %r, which is not '
+                                 'common/<a common question>' % (sid, ref))
+                elif ref in (subject.get("ask") or []):
+                    probs.append('%s: %r is in both "ask" and "skip"'
+                                 % (sid, ref))
+            if len(set(map(str, skip))) != len(skip):
+                probs.append('%s: "skip" names a question twice' % sid)
     ask = subject.get("ask")
     if ask is None:
         return
-    sid = subject.get("id")
     if not isinstance(ask, list):
         probs.append('%s: "ask" must be a list of question ids' % sid)
         return
@@ -636,11 +652,14 @@ def question_order(onto, subject):
     common questions as common/<id> - for a bank call, urgency first, then
     whether money is to go to a different account, and so on. Questions it
     does not list follow, the common ones first, in file order. Without
-    `ask`: the common questions, then the subject's."""
+    `ask`: the common questions, then the subject's. Common questions in the
+    subject's `skip` list are not asked: one of its own questions covers
+    them, such as a "pay or move money" answer that opens the payment
+    questions itself."""
     common = {q["id"]: q for q in onto["common_questions"]}
     own = {q["id"]: q for q in (subject or {}).get("questions", [])}
     sid = (subject or {}).get("id")
-    out, seen = [], set()
+    out, seen = [], set((subject or {}).get("skip") or [])
     for ref in (subject or {}).get("ask") or []:
         if ref.startswith("common/") and ref[7:] in common:
             out.append((ref, common[ref[7:]]))
@@ -1856,6 +1875,8 @@ def to_file(onto):
             n["value"] = s["value"]
         if s.get("ask"):
             n["ask"] = s["ask"]
+        if s.get("skip"):
+            n["skip"] = s["skip"]
         n["questions"] = [q_out(q) for q in s.get("questions", [])]
         subs.append(n)
     out = {"prompt": onto["prompt"], "options": subs,

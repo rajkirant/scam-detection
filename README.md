@@ -649,9 +649,12 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
 - **Follow-ups** are asked only when the option that opens them is chosen,
   such as what an ID number is for, once the caller has asked for one. When
   the person is asked to pay or move money, two follow-ups ask how (gift
-  cards, crypto, a transfer to account details given on the call, ...) and
-  what the money is for (a "security deposit" that will be given back, a fine
-  to stop an arrest, keeping it safe, a release fee, ...). In the same way,
+  cards, crypto, cash, a bank transfer, ...) and what the money is for (a
+  "security deposit" that will be given back, a fine to stop an arrest,
+  keeping it safe, a release fee, ...). A bank transfer then asks what kind
+  of account the money goes into: one the caller gives on the call (a
+  "safe", "secure" or government account), the person's own accounts, or the
+  organisation's own account from a bill or its website. In the same way,
   whether the call says anything about checking the caller is asked first,
   and how only after a yes. Whether the caller is a live person or a recorded
   message is asked first, and what the message asks only after "recorded".
@@ -668,6 +671,14 @@ scored questions, then the remaining common questions, then any other
 recorded questions. Edit an `ask` list to change the
 order: it names the subject's own question ids, and common questions as
 `common/<id>`.
+
+**Money is asked about once.** Government, delivery, and insurance calls ask
+"What does the caller ask the person to do?". There, the answer "pay money,
+or move or transfer it" opens the same money questions: how, into what kind
+of account, and what for. Those three subjects list `common/payment_asked`
+under `"skip"`, so the separate "Is the person asked to pay or move money?"
+is not asked as well, and the same money is not counted twice. A `skip`
+list may name only common questions, and none that its `ask` list names.
 
 Every option has a **value** from -1 to 1: positive points toward scam,
 negative toward legitimate. *Not stated* and every option of a `recorded`
@@ -703,8 +714,8 @@ else. The rules are: choose the first option that fits, quote the transcript,
 and pick an absence option only when that part of the call is covered.
 
 **The file is only the questionnaire.** The root `prompt` and its `options`
-(the subjects) come first. Each subject has an `ask` order and its
-`questions`, and the `common_questions` follow. Every question has an `id`, a
+(the subjects) come first. Each subject has an `ask` order, an optional
+`skip` list, and its `questions`, and the `common_questions` follow. Every question has an `id`, a
 `prompt` and its options, and is marked `"role": "recorded"` where it scores
 0. Every option has an `id`, a `text` and a `value`, is marked
 `"absence": true` where that applies, and may carry `follow_up` questions.

@@ -269,9 +269,9 @@ check("the shipped tree holds no learned knowledge or dataset evidence",
       [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
                    '"evidence"', '"knowledge"', "built_from", "honeypot",
                    "scambait", "huggingface") if w in shipped_text], [])
-check("the shipped tree loads: 15 subjects, 7 common questions, 54 in all",
+check("the shipped tree loads: 15 subjects, 7 common questions, 64 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
-       M.count_questions(shipped)), (15, 7, 54))
+       M.count_questions(shipped)), (15, 7, 64))
 pay = next(q for q in shipped["common_questions"] if q["id"] == "payment_asked")
 check("whether money is to move, then how and what for, only after a yes",
       ([o["id"] for o in pay["options"]],
@@ -281,6 +281,28 @@ check("whether money is to move, then how and what for, only after a yes",
       (["yes", "not_mentioned", "no_payment"],
        [["payment_channel", "payment_purpose"], [], []],
        False))
+money_chain = M.to_file(shipped)
+common_yes = next(o for o in next(q for q in money_chain["common_questions"]
+                                  if q["id"] == "payment_asked")["options"]
+                  if o["id"] == "yes")["follow_up"]
+transfer = next(o for o in common_yes[0]["options"] if o["id"] == "bank_transfer")
+check("a bank transfer asks what kind of account the money goes into",
+      ([f["id"] for f in transfer["follow_up"]],
+       [o["id"] for o in transfer["follow_up"][0]["options"]]),
+      (["account_type"],
+       ["caller_account", "own_accounts", "official_account", "not_mentioned"]))
+for sid in ("government", "delivery", "insurance_health"):
+    sub = next(x for x in money_chain["options"] if x["id"] == sid)
+    act = next(q for q in sub["questions"] if q["id"] == "requested_action")
+    pay_or_move = act["options"][0]
+    check("%s: pay or move money opens the same money questions" % sid,
+          (pay_or_move["id"], pay_or_move["follow_up"] == common_yes),
+          ("pay_or_move", True))
+check("only those three subjects skip the common money question",
+      [x["id"] for x in shipped["options"]
+       if "common/payment_asked" not in [p for p, _ in
+                                         M.question_order(shipped, x)]],
+      ["government", "delivery", "insurance_health"])
 fmt = next(q for q in shipped["common_questions"] if q["id"] == "caller_format")
 check("live or recorded first, what a recording asks only after 'recorded'",
       ([o["id"] for o in fmt["options"]],
@@ -369,6 +391,22 @@ ordered["options"][0]["ask"] = ["common/pressure", "nope", "common/pressure"]
 check("an ask list naming an unknown question, or one twice, is refused",
       sorted(p.split(":")[0] for p in M.check_ontology(ordered)),
       ["bank", "bank"])
+skipped = json.loads(json.dumps(TREE_ONTO))
+skipped["options"][0]["skip"] = ["common/money"]
+check("a subject's skip list leaves that common question out of its calls",
+      [a["path"] for a in M.classify(GIFT, M.normalise(skipped))["answers"]],
+      ["root", "common/pressure", "bank/claimed"])
+check("... and the file writer keeps it",
+      M.to_file(M.normalise(skipped))["options"][0].get("skip"),
+      ["common/money"])
+bad = json.loads(json.dumps(TREE_ONTO))
+bad["options"][0]["skip"] = ["common/nope", "money"]
+check("a skip list naming anything but a common question is refused",
+      len(M.check_ontology(bad)), 2)
+bad["options"][0]["skip"] = ["common/money"]
+bad["options"][0]["ask"] = ["common/money", "claimed"]
+check("... and so is a question in both ask and skip",
+      any("both" in p for p in M.check_ontology(bad)), True)
 check("the shipped file: a bank call is asked who is calling, then urgency, "
       "then where the money goes", [p for p, _ in M.question_order(
           shipped, shipped["options"][0])][:3],
@@ -521,15 +559,25 @@ STATE["payloads"].clear()
 M.classify(GIFT, M.without_hints(ht))
 check("--no-hints: no prompt carries a hint",
       any("About this question" in p["prompt"] for p in STATE["payloads"]), False)
-check("the shipped tree's hints: thirteen, on the questions that misfired",
+check("the shipped tree's hints: on the questions that misfired, and on "
+      "every copy of the money questions",
       sorted(path for path, q, _ in M.iter_questions(shipped) if q.get("hint")),
-      ["billing_subscription/claim",
-       "common/caller_format", "common/contact_origin", "common/payment_asked",
-       "common/remote_access",
-       "common/sensitive_details", "common/verification",
-       "common/verification/yes/verification_how",
-       "government/claim", "insurance_health/claim",
-       "investment/returns", "investment/withdrawal", "loan_debt/promise"])
+      sorted(["billing_subscription/claim",
+              "common/caller_format", "common/contact_origin",
+              "common/payment_asked",
+              "common/payment_asked/yes/payment_channel",
+              "common/payment_asked/yes/payment_channel/bank_transfer/account_type",
+              "common/remote_access",
+              "common/sensitive_details", "common/verification",
+              "common/verification/yes/verification_how",
+              "government/claim", "insurance_health/claim",
+              "investment/returns", "investment/withdrawal",
+              "loan_debt/promise"]
+             + ["%s/requested_action%s" % (sid, tail)
+                for sid in ("delivery", "government", "insurance_health")
+                for tail in ("", "/pay_or_move/payment_channel",
+                             "/pay_or_move/payment_channel/bank_transfer/"
+                             "account_type")]))
 
 print("\na quote after a blank line")
 check("a quote on its own line after a blank line is still read",
