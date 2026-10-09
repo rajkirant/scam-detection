@@ -651,16 +651,21 @@
           "options": [
             {"id": "emergency_money", "text": "An accident, an arrest, or a hospital stay that needs money now", "value": 0.8},
             {"id": "travel_money", "text": "They need money to travel, to visit, or to clear customs", "value": 0.8},
-            {"id": "ordinary_talk", "text": "An ordinary conversation, with no request for money", "value": -1.0},
+            {
+              "id": "ordinary_talk",
+              "text": "An ordinary personal conversation, such as a catch-up, news, plans, an invitation, or an offer of support, with no request for money",
+              "value": -1.0
+            },
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
         },
         {
           "id": "identity_check",
           "prompt": "Is it clear who is calling?",
+          "hint": "Choose an option only when the call says it. A caller who gives their name and talks about the person's life is not shown to be a stranger. If the call does not say how they know each other, choose Not stated.",
           "options": [
             {"id": "unclear_identity", "text": "The caller avoids giving their name, or explains why their voice sounds different", "value": 0.8},
-            {"id": "never_met", "text": "The person has never met the caller in person", "value": 0.5},
+            {"id": "never_met", "text": "The caller says or shows that they know the person only online or by message, and have never met in person", "value": 0.5},
             {"id": "known_voice", "text": "The person clearly recognises the caller", "value": -0.5},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
@@ -724,7 +729,7 @@
     {
       "id": "contact_origin",
       "prompt": "How did this conversation come about?",
-      "hint": "First decide who rang whom. Options that say the person is calling or returning a call fit only when the person rang the caller. When the caller rang the person, choose from the options about what the caller says or offers.",
+      "hint": "First decide who rang whom. Options that say the person is calling or returning a call fit only when the person rang the caller. When the caller rang the person, choose from the options about what the caller says or offers. If the caller says they noticed a problem the person is already having, choose that option, not the one about a problem the person did not know about.",
       "options": [
         {"id": "number_from_alert", "text": "The person is calling a number shown in a pop-up, a locked or warning screen, or an unexpected email, invoice, or text", "value": 1.0},
         {
@@ -734,7 +739,7 @@
         },
         {
           "id": "caller_raised_problem",
-          "text": "The caller contacted the person out of the blue about a problem the person did not know about, such as a virus, a charge, a debt, a legal case, or a suspended account",
+          "text": "The caller contacted the person out of the blue about a problem the person has not seen or reported themselves, such as a virus, a charge, a debt, a legal case, or a suspended account",
           "value": 0.8
         },
         {

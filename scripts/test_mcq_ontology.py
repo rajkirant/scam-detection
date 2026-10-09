@@ -521,12 +521,13 @@ STATE["payloads"].clear()
 M.classify(GIFT, M.without_hints(ht))
 check("--no-hints: no prompt carries a hint",
       any("About this question" in p["prompt"] for p in STATE["payloads"]), False)
-check("the shipped tree's hints: seven, on the questions that misfired",
+check("the shipped tree's hints: eight, on the questions that misfired",
       sorted(path for path, q, _ in M.iter_questions(shipped) if q.get("hint")),
       ["common/caller_format", "common/contact_origin", "common/payment_asked",
        "common/remote_access",
        "common/sensitive_details", "common/verification",
-       "common/verification/yes/verification_how"])
+       "common/verification/yes/verification_how",
+       "family_personal/identity_check"])
 
 print("\na quote after a blank line")
 check("a quote on its own line after a blank line is still read",
