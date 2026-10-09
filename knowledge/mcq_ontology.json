@@ -131,6 +131,7 @@
         {
           "id": "claim",
           "prompt": "What does the caller say the call is about?",
+          "hint": "The legal case option fits only when the caller says the person is accused, sued, wanted, or under investigation. A case the person asked a lawyer about, a report the person made, or being a witness is not that.",
           "options": [
             {"id": "id_misused", "text": "The person's Social Security or ID number is suspended, misused, or linked to a crime", "value": 1.0},
             {"id": "warrant_or_case", "text": "A warrant, a lawsuit, or a legal case against the person", "value": 1.0},
@@ -440,6 +441,7 @@
         {
           "id": "claim",
           "prompt": "What is the call about?",
+          "hint": "The free item option fits only when the caller wants personal details in return for it. A new add-on, programme, or discount offered to a customer is a quote or an offer.",
           "options": [
             {"id": "cover_expiring", "text": "The person's cover or warranty is about to run out and must be renewed now", "value": 0.3},
             {"id": "free_item_or_card", "text": "A free item, a new card, or a benefit, in return for details", "value": 0.3},
@@ -543,6 +545,7 @@
         {
           "id": "promise",
           "prompt": "What does the caller promise?",
+          "hint": "Ordinary terms fits only when the call says approval depends on an application or a credit check. Low rates, flexible repayment, or fast approval in a sales pitch is not ordinary terms. If nothing else fits, choose Not stated.",
           "options": [
             {"id": "debt_cancelled", "text": "Debts or student loans cancelled or cut sharply", "value": 0.8},
             {"id": "guaranteed_approval", "text": "Approval guaranteed, whatever the person's credit history", "value": 0.8},
@@ -593,6 +596,7 @@
         {
           "id": "returns",
           "prompt": "What returns are promised?",
+          "hint": "Choose an option only when the call talks about returns. A review of the person's portfolio, a consultation, or a question about their account says nothing about returns.",
           "options": [
             {"id": "guaranteed_high", "text": "High or guaranteed returns with little or no risk", "value": 1.0},
             {"id": "risks_explained", "text": "Returns that are not guaranteed, with the risks explained", "value": -0.8},
@@ -611,6 +615,7 @@
         {
           "id": "withdrawal",
           "prompt": "Can the person take their money out?",
+          "hint": "Choose an option only when the call talks about taking money out.",
           "options": [
             {"id": "fee_to_withdraw", "text": "Only after paying a fee, a tax, or more money", "value": 1.0},
             {"id": "free_withdrawal", "text": "Yes, at any time, without extra payments", "value": -0.5},
@@ -729,7 +734,7 @@
     {
       "id": "contact_origin",
       "prompt": "How did this conversation come about?",
-      "hint": "First decide who rang whom. Options that say the person is calling or returning a call fit only when the person rang the caller. When the caller rang the person, choose from the options about what the caller says or offers. If the caller says they noticed a problem the person is already having, choose that option, not the one about a problem the person did not know about. The options about where the person found the number (a pop-up or an alert, a web search, a missed call, or the organisation's own website, card, bill, or letter) fit only when the call says where. When the caller says the person contacted them first, the call is not out of the blue.",
+      "hint": "First decide who started the contact. If the caller says the person called, wrote, reported, asked, or made a request first, such as \"you contacted us\", \"your report\", \"your service request\", or \"your inquiry\", choose the option that the person contacted them first, even when the call is about a problem. The out-of-the-blue problem option fits only when the caller started the contact to say something is wrong: a virus or a hack, suspicious or unauthorised activity, a debt or a fine, a legal case or an investigation, or a suspended or blocked account. A review, an update, a reminder, a pending software update, a change to settings, a balance, an invitation, or news about something the person already has is not a problem. An offer the person did not ask for is the offer option, or the won-or-selected option when they are told they were picked or pre-approved. If the caller says they noticed a problem the person is already having, choose that option. Options about where the person found the number fit only when the call says where. Options that say the person is calling fit only when the person rang the caller. Someone the person knows passing on news or an opportunity is a personal contact.",
       "options": [
         {"id": "number_from_alert", "text": "The person is calling a number shown in a pop-up, a locked or warning screen, or an unexpected email, invoice, or text", "value": 1.0},
         {
@@ -739,7 +744,7 @@
         },
         {
           "id": "caller_raised_problem",
-          "text": "The caller contacted the person out of the blue about a problem the person has not seen or reported themselves, such as a virus, a charge, a debt, a legal case, or a suspended account",
+          "text": "The caller started the contact, out of the blue, to say something is wrong that the person did not know about, such as a virus, a charge, a debt, a legal case, or a suspended account",
           "value": 0.8
         },
         {
