@@ -317,7 +317,23 @@
           "id": "parcel_expected",
           "prompt": "Is the person expecting this parcel?",
           "options": [
-            {"id": "unexpected", "text": "No: the parcel is unexpected or not identified", "value": 0.8},
+            {
+              "id": "unexpected",
+              "text": "No: the person did not order it, or the parcel is not identified",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "after_unexpected",
+                  "prompt": "What does the caller want for this parcel?",
+                  "hint": "Confirming an address the person gave earlier, or reading out an order number to check, is not asking for something. Choose the mistake option when the caller says it may be their error, the wrong person, or the wrong address, and drops it.",
+                  "options": [
+                    {"id": "still_wants", "text": "Something before it is released or delivered: a fee, card or bank details, personal details, or a key press", "value": 0.8},
+                    {"id": "mistake_accepted", "text": "Nothing: the caller accepts it may be a mistake, the wrong person, or the wrong address", "value": -0.8},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                }
+              ]
+            },
             {"id": "expected", "text": "Yes: it matches something the person ordered", "value": -1.0},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
@@ -523,10 +539,12 @@
         {
           "id": "prize_cost",
           "prompt": "What must the person do to receive the prize?",
+          "hint": "If the person must give an ID number, card or bank details, or a password to get the prize, choose that option, even when the caller says the prize is free.",
           "options": [
             {"id": "pay_first", "text": "Pay a fee, a tax, or a shipping charge first", "value": 1.0},
             {"id": "buy_or_subscribe", "text": "Buy something, or sign up to a paid service", "value": 0.5},
-            {"id": "nothing_to_pay", "text": "Nothing: the prize is sent or collected free", "value": -0.8},
+            {"id": "give_details", "text": "Give an ID number, card or bank details, or a password", "value": 0.5},
+            {"id": "nothing_to_pay", "text": "Nothing: the prize is sent or collected free, and nothing more than a name or an address is asked for", "value": -0.8},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
         }
@@ -970,7 +988,7 @@
     {
       "id": "sensitive_details",
       "prompt": "Which personal or security details does the caller ask the person to give?",
-      "hint": "This is about details the caller asks the person to give, not details the caller states. A short or cut-off call is Not stated.",
+      "hint": "This is about details the caller asks the person to give, not details the caller states. A short or cut-off call is Not stated. The last digits of a card or a bank account are not a reference number. An order, booking, tracking, or policy number, or a customer number from a bill, is.",
       "options": [
         {"id": "security_codes", "text": "A password, a PIN, or a one-time code sent to the person's phone or email", "value": 1.0},
         {
@@ -1009,8 +1027,13 @@
           ]
         },
         {"id": "basic_identity", "text": "Only a name, a date of birth, or an address", "value": 0.0},
+        {"id": "last_digits", "text": "Only the last few digits of a card or bank account number", "value": 0.0},
         {"id": "none_asked", "text": "The call is shown to its end, and no personal or security details are asked for", "value": -0.3, "absence": true},
-        {"id": "partial_only", "text": "Only part of a number, such as the last four digits, or a reference number from a letter", "value": -0.8},
+        {
+          "id": "reference_only",
+          "text": "Only a reference number the person can check, such as an order, booking, tracking, policy, or prescription number, or a customer number from a bill or a letter",
+          "value": -0.8
+        },
         {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
       ]
     },

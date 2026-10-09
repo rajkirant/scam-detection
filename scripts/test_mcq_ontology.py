@@ -269,9 +269,9 @@ check("the shipped tree holds no learned knowledge or dataset evidence",
       [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
                    '"evidence"', '"knowledge"', "built_from", "honeypot",
                    "scambait", "huggingface") if w in shipped_text], [])
-check("the shipped tree loads: 15 subjects, 7 common questions, 64 in all",
+check("the shipped tree loads: 15 subjects, 7 common questions, 65 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
-       M.count_questions(shipped)), (15, 7, 64))
+       M.count_questions(shipped)), (15, 7, 65))
 pay = next(q for q in shipped["common_questions"] if q["id"] == "payment_asked")
 check("whether money is to move, then how and what for, only after a yes",
       ([o["id"] for o in pay["options"]],
@@ -303,6 +303,32 @@ check("only those three subjects skip the common money question",
        if "common/payment_asked" not in [p for p, _ in
                                          M.question_order(shipped, x)]],
       ["government", "delivery", "insurance_health"])
+details = next(q for q in shipped["common_questions"]
+               if q["id"] == "sensitive_details")
+check("the last digits of a card are their own answer (0), apart from a "
+      "reference number the person can check (-0.8)",
+      [(o["id"], o["value"]) for o in details["options"]
+       if o["id"] in ("last_digits", "reference_only", "partial_only")],
+      [("last_digits", 0.0), ("reference_only", -0.8)])
+parcel = next(q for q in next(x for x in shipped["options"]
+                              if x["id"] == "delivery")["questions"]
+              if q["id"] == "parcel_expected")
+unexpected = next(o for o in parcel["options"] if o["id"] == "unexpected")
+check("an unexpected parcel scores 0 itself, and asks what the caller wants",
+      (unexpected["value"], [f["id"] for f in unexpected["follow_up"]],
+       [(o["id"], o["value"]) for o in
+        unexpected["follow_up"][0]["options"]]),
+      (0.0, ["after_unexpected"],
+       [("still_wants", 0.8), ("mistake_accepted", -0.8),
+        ("not_mentioned", 0.0)]))
+prize = next(q for q in next(x for x in shipped["options"]
+                             if x["id"] == "prize_reward")["questions"]
+             if q["id"] == "prize_cost")
+check("a 'free' prize that needs an ID number or card details is its own "
+      "answer, before 'nothing to pay'",
+      [o["id"] for o in prize["options"]],
+      ["pay_first", "buy_or_subscribe", "give_details", "nothing_to_pay",
+       "not_mentioned"])
 fmt = next(q for q in shipped["common_questions"] if q["id"] == "caller_format")
 check("live or recorded first, what a recording asks only after 'recorded'",
       ([o["id"] for o in fmt["options"]],
@@ -572,7 +598,8 @@ check("the shipped tree's hints: on the questions that misfired, and on "
               "common/verification/yes/verification_how",
               "government/claim", "insurance_health/claim",
               "investment/returns", "investment/withdrawal",
-              "loan_debt/promise"]
+              "loan_debt/promise", "prize_reward/prize_cost",
+              "delivery/parcel_expected/unexpected/after_unexpected"]
              + ["%s/requested_action%s" % (sid, tail)
                 for sid in ("delivery", "government", "insurance_health")
                 for tail in ("", "/pay_or_move/payment_channel",
