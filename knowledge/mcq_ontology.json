@@ -131,7 +131,7 @@
         {
           "id": "claim",
           "prompt": "What does the caller say the call is about?",
-          "hint": "The legal case option fits only when the caller says the person is accused, sued, wanted, or under investigation. A case the person asked a lawyer about, a report the person made, or being a witness is not that.",
+          "hint": "The legal case option fits only when the caller says the person is accused, sued, wanted, or under investigation. A case the person asked a lawyer about, a report the person made, or being a witness is not that. The follow-up option fits only when the call names a letter, a form, or an application the person sent or received. A request for documents for an investigation is not a follow-up.",
           "options": [
             {"id": "id_misused", "text": "The person's Social Security or ID number is suspended, misused, or linked to a crime", "value": 1.0},
             {"id": "warrant_or_case", "text": "A warrant, a lawsuit, or a legal case against the person", "value": 1.0},
