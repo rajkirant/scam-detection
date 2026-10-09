@@ -110,10 +110,10 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_asked",
         "common/remote_access",
         "common/verification"
       ],
+      "skip": ["common/payment_asked"],
       "questions": [
         {
           "id": "claimed_identity",
@@ -144,9 +144,69 @@
         {
           "id": "requested_action",
           "prompt": "What does the caller ask the person to do?",
+          "hint": "If the caller asks for money in any way, choose the pay or move money option, even when they also ask for something else.",
           "options": [
-            {"id": "move_to_secure", "text": "Move money to a government-held or 'secure' account", "value": 1.0},
-            {"id": "pay_on_call", "text": "Pay an amount during this call", "value": 0.8},
+            {
+              "id": "pay_or_move",
+              "text": "Pay money, or move or transfer it, such as to settle a fine or into a 'secure' account",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "payment_channel",
+                  "prompt": "How would the money be paid or moved?",
+                  "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is.",
+                  "options": [
+                    {"id": "gift_cards", "text": "Gift cards, prepaid cards, or vouchers", "value": 1.0},
+                    {"id": "crypto_or_gold", "text": "Cryptocurrency, a crypto ATM, or gold", "value": 1.0},
+                    {"id": "cash_courier", "text": "Cash handed to a courier, or sent by post", "value": 1.0},
+                    {
+                      "id": "bank_transfer",
+                      "text": "A bank transfer",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "account_type",
+                          "prompt": "What kind of account would the money go into?",
+                          "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                          "options": [
+                            {
+                              "id": "caller_account",
+                              "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                              "value": 1.0
+                            },
+                            {"id": "own_accounts", "text": "Only between the person's own existing accounts", "value": -0.8},
+                            {"id": "official_account", "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app", "value": -1.0},
+                            {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                          ]
+                        }
+                      ]
+                    },
+                    {"id": "card_by_phone", "text": "Card details read out during the call", "value": 0.0},
+                    {"id": "existing_method", "text": "A card or account already on file, or an ordinary invoice to pay later", "value": -0.8},
+                    {"id": "official_channel", "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter", "value": -1.0},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                },
+                {
+                  "id": "payment_purpose",
+                  "prompt": "What does the caller say the money is for?",
+                  "options": [
+                    {
+                      "id": "refundable_deposit",
+                      "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                      "value": 1.0
+                    },
+                    {"id": "avoid_trouble", "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account", "value": 1.0},
+                    {"id": "keep_safe", "text": "To keep the money safe from fraud, hackers, or a criminal investigation", "value": 1.0},
+                    {"id": "release_fee", "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released", "value": 0.8},
+                    {"id": "keep_cover", "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call", "value": 0.5},
+                    {"id": "caller_service", "text": "A product, repair, or service the caller is offering on this call", "value": 0.3},
+                    {"id": "agreed_purchase", "text": "Something the person ordered or signed up for, or a bill they already owe", "value": -0.5},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                }
+              ]
+            },
             {"id": "no_action", "text": "Nothing: the call only gives information", "value": -0.3},
             {"id": "official_route", "text": "Use their online account, post a form, or reply to the letter", "value": -1.0},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
@@ -165,10 +225,10 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_asked",
         "common/remote_access",
         "common/verification"
       ],
+      "skip": ["common/payment_asked"],
       "questions": [
         {
           "id": "claimed_identity",
@@ -184,8 +244,70 @@
         {
           "id": "requested_action",
           "prompt": "What does the caller ask the person to do?",
+          "hint": "If the caller asks for money in any way, choose the pay or move money option, even when they also ask for something else.",
           "options": [
-            {"id": "pay_fee_now", "text": "Pay a customs, redelivery, or handling fee during the call", "value": 0.8},
+            {
+              "id": "pay_or_move",
+              "text": "Pay money, or move or transfer it, such as a customs, redelivery, or handling fee",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "payment_channel",
+                  "prompt": "How would the money be paid or moved?",
+                  "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is.",
+                  "options": [
+                    {"id": "gift_cards", "text": "Gift cards, prepaid cards, or vouchers", "value": 1.0},
+                    {"id": "crypto_or_gold", "text": "Cryptocurrency, a crypto ATM, or gold", "value": 1.0},
+                    {"id": "cash_courier", "text": "Cash handed to a courier, or sent by post", "value": 1.0},
+                    {
+                      "id": "bank_transfer",
+                      "text": "A bank transfer",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "account_type",
+                          "prompt": "What kind of account would the money go into?",
+                          "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                          "options": [
+                            {
+                              "id": "caller_account",
+                              "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                              "value": 1.0
+                            },
+                            {"id": "own_accounts", "text": "Only between the person's own existing accounts", "value": -0.8},
+                            {"id": "official_account", "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app", "value": -1.0},
+                            {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                          ]
+                        }
+                      ]
+                    },
+                    {"id": "card_by_phone", "text": "Card details read out during the call", "value": 0.0},
+                    {"id": "existing_method", "text": "A card or account already on file, or an ordinary invoice to pay later", "value": -0.8},
+                    {"id": "official_channel", "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter", "value": -1.0},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                },
+                {
+                  "id": "payment_purpose",
+                  "prompt": "What does the caller say the money is for?",
+                  "options": [
+                    {
+                      "id": "refundable_deposit",
+                      "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                      "value": 1.0
+                    },
+                    {"id": "avoid_trouble", "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account", "value": 1.0},
+                    {"id": "keep_safe", "text": "To keep the money safe from fraud, hackers, or a criminal investigation", "value": 1.0},
+                    {"id": "release_fee", "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released", "value": 0.8},
+                    {"id": "keep_cover", "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call", "value": 0.5},
+                    {"id": "caller_service", "text": "A product, repair, or service the caller is offering on this call", "value": 0.3},
+                    {"id": "agreed_purchase", "text": "Something the person ordered or signed up for, or a bill they already owe", "value": -0.5},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                }
+              ]
+            },
+            {"id": "no_action", "text": "Nothing: the call only gives information", "value": -0.3},
             {"id": "confirm_address", "text": "Confirm an address the person gave earlier", "value": -0.5},
             {"id": "confirm_slot", "text": "Confirm or change a delivery time", "value": -1.0},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
@@ -421,10 +543,10 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
-        "common/payment_asked",
         "common/remote_access",
         "common/verification"
       ],
+      "skip": ["common/payment_asked"],
       "questions": [
         {
           "id": "claimed_identity",
@@ -453,9 +575,71 @@
         {
           "id": "requested_action",
           "prompt": "What does the caller ask the person to do?",
+          "hint": "If the caller asks for money in any way, choose the pay or move money option, even when they also ask for something else.",
           "options": [
-            {"id": "pay_now_to_keep", "text": "Pay now, during this call, to keep the cover", "value": 0.5},
+            {
+              "id": "pay_or_move",
+              "text": "Pay money, or move or transfer it, such as a premium to keep the cover",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "payment_channel",
+                  "prompt": "How would the money be paid or moved?",
+                  "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is.",
+                  "options": [
+                    {"id": "gift_cards", "text": "Gift cards, prepaid cards, or vouchers", "value": 1.0},
+                    {"id": "crypto_or_gold", "text": "Cryptocurrency, a crypto ATM, or gold", "value": 1.0},
+                    {"id": "cash_courier", "text": "Cash handed to a courier, or sent by post", "value": 1.0},
+                    {
+                      "id": "bank_transfer",
+                      "text": "A bank transfer",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "account_type",
+                          "prompt": "What kind of account would the money go into?",
+                          "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                          "options": [
+                            {
+                              "id": "caller_account",
+                              "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                              "value": 1.0
+                            },
+                            {"id": "own_accounts", "text": "Only between the person's own existing accounts", "value": -0.8},
+                            {"id": "official_account", "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app", "value": -1.0},
+                            {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                          ]
+                        }
+                      ]
+                    },
+                    {"id": "card_by_phone", "text": "Card details read out during the call", "value": 0.0},
+                    {"id": "existing_method", "text": "A card or account already on file, or an ordinary invoice to pay later", "value": -0.8},
+                    {"id": "official_channel", "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter", "value": -1.0},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                },
+                {
+                  "id": "payment_purpose",
+                  "prompt": "What does the caller say the money is for?",
+                  "options": [
+                    {
+                      "id": "refundable_deposit",
+                      "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                      "value": 1.0
+                    },
+                    {"id": "avoid_trouble", "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account", "value": 1.0},
+                    {"id": "keep_safe", "text": "To keep the money safe from fraud, hackers, or a criminal investigation", "value": 1.0},
+                    {"id": "release_fee", "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released", "value": 0.8},
+                    {"id": "keep_cover", "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call", "value": 0.5},
+                    {"id": "caller_service", "text": "A product, repair, or service the caller is offering on this call", "value": 0.3},
+                    {"id": "agreed_purchase", "text": "Something the person ordered or signed up for, or a bill they already owe", "value": -0.5},
+                    {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                  ]
+                }
+              ]
+            },
             {"id": "give_cover_details", "text": "Give details of their current insurance or health cover", "value": 0.0},
+            {"id": "no_action", "text": "Nothing: the call only gives information", "value": -0.3},
             {"id": "quote_or_agent", "text": "Receive a written quote, or book a time with an agent", "value": -0.5},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
@@ -842,15 +1026,37 @@
           "follow_up": [
             {
               "id": "payment_channel",
-              "prompt": "How is the person asked to pay or move money?",
+              "prompt": "How would the money be paid or moved?",
+              "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is.",
               "options": [
                 {"id": "gift_cards", "text": "Gift cards, prepaid cards, or vouchers", "value": 1.0},
                 {"id": "crypto_or_gold", "text": "Cryptocurrency, a crypto ATM, or gold", "value": 1.0},
-                {"id": "transfer_to_given_account", "text": "A transfer to account details the caller gives during the call", "value": 1.0},
                 {"id": "cash_courier", "text": "Cash handed to a courier, or sent by post", "value": 1.0},
+                {
+                  "id": "bank_transfer",
+                  "text": "A bank transfer",
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "account_type",
+                      "prompt": "What kind of account would the money go into?",
+                      "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                      "options": [
+                        {
+                          "id": "caller_account",
+                          "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                          "value": 1.0
+                        },
+                        {"id": "own_accounts", "text": "Only between the person's own existing accounts", "value": -0.8},
+                        {"id": "official_account", "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app", "value": -1.0},
+                        {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
+                      ]
+                    }
+                  ]
+                },
                 {"id": "card_by_phone", "text": "Card details read out during the call", "value": 0.0},
                 {"id": "existing_method", "text": "A card or account already on file, or an ordinary invoice to pay later", "value": -0.8},
-                {"id": "official_channel", "text": "The organisation's own website, app, or online account, or a payment method printed on a bill or letter", "value": -1.0},
+                {"id": "official_channel", "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter", "value": -1.0},
                 {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
               ]
             },
@@ -866,6 +1072,7 @@
                 {"id": "avoid_trouble", "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account", "value": 1.0},
                 {"id": "keep_safe", "text": "To keep the money safe from fraud, hackers, or a criminal investigation", "value": 1.0},
                 {"id": "release_fee", "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released", "value": 0.8},
+                {"id": "keep_cover", "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call", "value": 0.5},
                 {"id": "caller_service", "text": "A product, repair, or service the caller is offering on this call", "value": 0.3},
                 {"id": "agreed_purchase", "text": "Something the person ordered or signed up for, or a bill they already owe", "value": -0.5},
                 {"id": "not_mentioned", "text": "Not stated", "value": 0.0}

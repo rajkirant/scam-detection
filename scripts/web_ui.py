@@ -8327,11 +8327,12 @@ const mcqFmt = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2)
 
 // the questions a call on this subject is asked, in order - the same rule
 // as mcq_ontology.question_order: the ask list first, then the common
-// questions it left out, then the subject's own
+// questions it left out, then the subject's own. Common questions in its
+// skip list are not asked at all.
 function mcqTreeOrder(o, subj) {
   const common = new Map((o.common_questions || []).map(q => [q.id, q]));
   const own = new Map(((subj && subj.questions) || []).map(q => [q.id, q]));
-  const out = [], seen = new Set();
+  const out = [], seen = new Set((subj && subj.skip) || []);
   for (const ref of (subj && subj.ask) || []) {
     if (typeof ref !== 'string') continue;
     if (ref.startsWith('common/') && common.has(ref.slice(7)))
