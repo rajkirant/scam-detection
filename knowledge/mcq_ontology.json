@@ -297,6 +297,7 @@
         {
           "id": "claim",
           "prompt": "What does the caller say about the bill?",
+          "hint": "Choose the option about a charge the person does not recognise only when the call says they do not recognise it. A question the person raised about their own bill is about a bill they know.",
           "options": [
             {"id": "changed_bank_details", "text": "A supplier's bank details have changed, so payments should go to a new account", "value": 1.0},
             {
@@ -728,7 +729,7 @@
     {
       "id": "contact_origin",
       "prompt": "How did this conversation come about?",
-      "hint": "First decide who rang whom. Options that say the person is calling or returning a call fit only when the person rang the caller. When the caller rang the person, choose from the options about what the caller says or offers. If the caller says they noticed a problem the person is already having, choose that option, not the one about a problem the person did not know about.",
+      "hint": "First decide who rang whom. Options that say the person is calling or returning a call fit only when the person rang the caller. When the caller rang the person, choose from the options about what the caller says or offers. If the caller says they noticed a problem the person is already having, choose that option, not the one about a problem the person did not know about. The options about where the person found the number (a pop-up or an alert, a web search, a missed call, or the organisation's own website, card, bill, or letter) fit only when the call says where. When the caller says the person contacted them first, the call is not out of the blue.",
       "options": [
         {"id": "number_from_alert", "text": "The person is calling a number shown in a pop-up, a locked or warning screen, or an unexpected email, invoice, or text", "value": 1.0},
         {
@@ -748,10 +749,15 @@
         },
         {
           "id": "number_from_search",
-          "text": "The person rang a number they found through a web search or an online ad, not on the organisation's own website, card, bill, or letter",
+          "text": "The call says the person rang a number they found through a web search or an online ad, not on the organisation's own website, card, bill, or letter",
           "value": 0.5
         },
         {"id": "returning_missed_call", "text": "The person is returning a missed call or a voicemail, with no letter or reference to check it against", "value": 0.3},
+        {
+          "id": "person_contacted_first",
+          "text": "The caller says the person contacted them first, such as calling, writing, or asking for information, but the call does not say where the person found the number",
+          "value": 0.0
+        },
         {"id": "caller_offer", "text": "The caller offers a product, a service, or a deal the person had not asked about", "value": 0.0},
         {"id": "personal_contact", "text": "Someone the person knows calls about personal matters or plans, such as an invitation, a catch-up, or support", "value": 0.0},
         {
