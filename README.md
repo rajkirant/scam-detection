@@ -715,11 +715,14 @@ starting points, and only training changes them.
 model on what counts and what does not. For example, a caller saying their
 own name or company is not a way to check them. The hint goes into that
 question's prompt, after the options, as "About this question: …". It is
-not shown on the page, but you can see and edit it in *Edit the JSON*. Eight
-questions have one: the recorded-message question, how the call came about,
-sensitive details, whether money is asked for, remote access, both
-verification questions, and what the caller says about a bill. They are
-written in general terms, not from any one call.
+not shown on the page, but you can see and edit it in *Edit the JSON*.
+Thirteen questions have one, each on a question the model misread: the
+recorded-message question, how the call came about, sensitive details, whether
+money is asked for, remote access, both verification questions, what the
+caller says about a bill, what a government caller says, what an insurance
+call is about, what a loan caller promises, and an investment's returns and
+withdrawals. A hint says what the options that get mixed up mean, and what
+they do not cover. They are written in general terms, not from any one call.
 Training keeps hints but does not write them, so options it adds have none.
 
 To see whether hints help, score the same held-out dataset twice: once as
