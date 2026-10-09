@@ -715,11 +715,10 @@ starting points, and only training changes them.
 model on what counts and what does not. For example, a caller saying their
 own name or company is not a way to check them. The hint goes into that
 question's prompt, after the options, as "About this question: …". It is
-not shown on the page, but you can see and edit it in *Edit the JSON*. Eight
+not shown on the page, but you can see and edit it in *Edit the JSON*. Seven
 questions have one: the recorded-message question, how the call came about,
-sensitive details, whether money is asked for, remote access, both
-verification questions, and whether it is clear who is calling (family and
-personal calls). They are written in general terms, not from any one call.
+sensitive details, whether money is asked for, remote access, and both
+verification questions. They are written in general terms, not from any one call.
 Training keeps hints but does not write them, so options it adds have none.
 
 To see whether hints help, score the same held-out dataset twice: once as
