@@ -662,10 +662,9 @@
         {
           "id": "identity_check",
           "prompt": "Is it clear who is calling?",
-          "hint": "Choose an option only when the call says it. A caller who gives their name and talks about the person's life is not shown to be a stranger. If the call does not say how they know each other, choose Not stated.",
           "options": [
             {"id": "unclear_identity", "text": "The caller avoids giving their name, or explains why their voice sounds different", "value": 0.8},
-            {"id": "never_met", "text": "The caller says or shows that they know the person only online or by message, and have never met in person", "value": 0.5},
+            {"id": "never_met", "text": "The person has never met the caller in person", "value": 0.5},
             {"id": "known_voice", "text": "The person clearly recognises the caller", "value": -0.5},
             {"id": "not_mentioned", "text": "Not stated", "value": 0.0}
           ]
