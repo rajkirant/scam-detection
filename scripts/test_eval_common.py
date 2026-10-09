@@ -124,6 +124,30 @@ with tempfile.TemporaryDirectory() as tmp:
     check("still in file order", [r["row"] for r in cut],
           sorted(r["row"] for r in cut))
 
+    # the next batch: a skip leaves out what an earlier batch of that size
+    # took, split the same way, so two batches never share a call
+    nxt = EC.load_rows(ds, limit=10, skip=10, quiet=True)
+    check("a skip gives the next balanced batch", (len(nxt),
+          sum(r["label"] for r in nxt)), (10, 5))
+    check("and shares no call with the first",
+          {r["id"] for r in nxt} & {r["id"] for r in cut}, set())
+    first20 = EC.load_rows(ds, limit=20, quiet=True)
+    check("the two batches are the 20-call head, together",
+          sorted(r["row"] for r in cut + nxt),
+          sorted(r["row"] for r in first20))
+    odd = EC.load_rows(ds, limit=5, quiet=True)
+    odd2 = EC.load_rows(ds, limit=5, skip=5, quiet=True)
+    check("an odd size splits the skip the way it split the limit",
+          {r["id"] for r in odd} & {r["id"] for r in odd2}, set())
+    rest = EC.load_rows(ds, skip=10, quiet=True)
+    check("a skip with no limit keeps every call after it", len(rest), 20)
+    try:
+        EC.load_rows(ds, limit=10, skip=1000, quiet=True)
+        check("skipping past the end is refused", False, True)
+    except SystemExit as e:
+        check("skipping past the end is refused, and says so",
+              "no calls left" in str(e), True)
+
     # a transcript longer than csv's own field limit, which is the bug that
     # stopped the hard subsets loading at all
     big = Path(tmp) / "big.csv"

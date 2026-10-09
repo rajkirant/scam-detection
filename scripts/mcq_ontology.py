@@ -1734,7 +1734,8 @@ def run_evaluate(args):
         onto = without_hints(onto)
     quotes = not args.no_quotes
     print("Loading dataset")
-    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit,
+                        skip=args.skip)
     print()
     print("==> score  %s over %d calls" % (args.ontology, len(rows)))
     print("  %s  (%d subjects, %d questions; quotes %s; %s)"
@@ -1957,6 +1958,9 @@ def build_parser():
     hint_flag(ev)
     ev.add_argument("--limit", type=int, default=None,
                     help="a class-balanced head of the dataset")
+    ev.add_argument("--skip", type=int, default=None,
+                    help="leave out the calls an earlier balanced batch of this "
+                         "size took: --limit 50 --skip 50 is the next 50")
     ev.add_argument("--text-col", default=None)
     ev.add_argument("--label-col", default=None)
     ev.add_argument("--out", default=None,

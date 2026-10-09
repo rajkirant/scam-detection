@@ -50,8 +50,14 @@ def to_binary(value):
         return 0
 
 
-def load_rows(path, text_col=None, label_col=None, limit=None, quiet=False):
+def load_rows(path, text_col=None, label_col=None, limit=None, quiet=False,
+              skip=None):
     """[{id, row, text, label, words}] out of a dataset CSV.
+
+    `limit` takes a class-balanced head: half scam, half legitimate, in file
+    order. `skip` leaves out the calls an earlier balanced batch of that size
+    took, split the same way, so --limit 50 --skip 50 is the next 50 after a
+    50-call run. With a skip and no limit, every call after those is kept.
 
     stdlib csv rather than pandas, and the field size limit is lifted first:
     the longest transcript in datasets/ is 225,978 characters and the default
@@ -85,12 +91,21 @@ def load_rows(path, text_col=None, label_col=None, limit=None, quiet=False):
                      "text": text,
                      "label": to_binary(r.get(lcol)),
                      "words": len(text.split())})
-    if limit:
-        # a class-balanced head, so a smoke test is not all one class
-        pos = [r for r in rows if r["label"]][: limit // 2]
-        neg = [r for r in rows if not r["label"]][: limit - limit // 2]
+    skip = skip or 0
+    if limit or skip:
+        # a class-balanced head, so a smoke test is not all one class; a skip
+        # is split the same way, so it lines up with an earlier batch
+        pos = [r for r in rows if r["label"]][skip // 2:]
+        neg = [r for r in rows if not r["label"]][skip - skip // 2:]
+        if limit:
+            pos, neg = pos[: limit // 2], neg[: limit - limit // 2]
         rows = sorted(pos + neg, key=lambda r: r["row"])
+        if not rows:
+            raise SystemExit("no calls left after skipping %d" % skip)
     if not quiet:
+        if skip:
+            print("  skipped the first %d calls (%d scam, %d legitimate)"
+                  % (skip, skip // 2, skip - skip // 2))
         print("  loaded %d calls from %s" % (len(rows), path))
         print("  text column: '%s'   label column: '%s'" % (tcol, lcol))
         print("  class balance: %d scam / %d legitimate"

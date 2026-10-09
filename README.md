@@ -920,6 +920,13 @@ All of them go through `scripts/eval_common.py`, deliberately: confusion
 matrices computed different ways could not be compared, and comparing them is
 the only reason to have several pages.
 
+**Batches: calls and skip.** *Calls* takes a balanced head: half scam, half
+legitimate, in file order. *Skip* leaves out the calls an earlier batch of
+that size took, split the same way. So calls 50 with skip 50 scores the next
+50 calls after a 50-call score, and no call is in both. Skip 100 after two
+such batches, and so on. A score with a skip is marked *pilot* on the Results
+tab, and its row under *Earlier scores* says "after 50".
+
 **Stopping and keeping scores.** While a score runs, a **Stop this run**
 button sits under "Score every call". Stopping keeps the calls scored so far:
 the run writes them out as a partial result. Its card and log say "stopped
@@ -1452,7 +1459,9 @@ python scripts/mcq_ontology.py    evaluate --csv datasets/zhi_english_646.csv --
 
 Each prints a running tally, then the confusion matrix next to what
 always-scam and never-scam get on the same calls, and says out loud when the
-model fails to beat them. `--limit N` takes a class-balanced head. `--out
+model fails to beat them. `--limit N` takes a class-balanced head, and
+`--skip N` leaves out the calls an earlier batch of N took: `--limit 50
+--skip 50` is the next 50. `--out
 PATH.json` writes the metrics as JSON and a per-call CSV into `results/`;
 without it the numbers are printed and nothing is kept.
 
