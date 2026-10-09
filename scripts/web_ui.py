@@ -841,6 +841,7 @@ def _score_entry(meta, finished):
          "model": meta.get("model_name") or d.get("model") or "",
          "limit": str(meta.get("limit", "")),
          "calls": sum(m.get(k, 0) for k in ("tp", "fp", "fn", "tn")),
+         "skip": meta.get("skip", 0),
          "acc": pct(m.get("acc")), "p": m.get("prec"), "r": m.get("rec"),
          "f1": m.get("f1"), "stripped_test": False}
     for k in ("tp", "fp", "fn", "tn"):
@@ -2464,6 +2465,7 @@ EVAL_PAGES = {
 
 EVAL_FIELDS = {
     "limit":     ("--limit", int, 0, 100000, 0),
+    "skip":      ("--skip", int, 0, 1000000, 0),
     "threshold": ("--threshold", float, 0.0, 1.0, None),
 }
 
@@ -2604,6 +2606,10 @@ def start_eval_run(page, form):
     limit = numeric(form, EVAL_FIELDS, "limit")
     if limit:
         flags += ["--limit", str(limit)]
+    # the calls an earlier batch took, so the next batch is new calls
+    skip = numeric(form, EVAL_FIELDS, "skip")
+    if skip:
+        flags += ["--skip", str(skip)]
     if page in ("bert", "bow"):
         thr = numeric(form, EVAL_FIELDS, "threshold")
         if thr is not None:
@@ -2657,6 +2663,8 @@ def start_eval_run(page, form):
             "dataset": ds, "baseline": "%s:%s" % (page, name or "bare"),
             "limit": str(limit or "-"), "model": name or page,
             "started": time.time()}
+    if skip:
+        meta["skip"] = skip
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -3942,6 +3950,10 @@ results table, and the prediction it made for every single call.</pre>
           <input type="text" id="bertevlimit" class="num" placeholder="all"
                  spellcheck="false" title="calls to score, 0 or blank for all">
           <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+          <input type="text" id="bertevskip" class="num" placeholder="0"
+                 spellcheck="false"
+                 title="leave out the calls an earlier batch of this size took">
+          <span class="hint">skip (50 leaves out what a 50-call score took)</span>
         </div>
         <div class="askrow">
           <label class="inline" for="bertevthr">Scam at
@@ -4111,6 +4123,10 @@ shows up in Recent runs on the Benchmark page too.</pre>
           <input type="text" id="bowevlimit" class="num" placeholder="all"
                  spellcheck="false" title="calls to score, 0 or blank for all">
           <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+          <input type="text" id="bowevskip" class="num" placeholder="0"
+                 spellcheck="false"
+                 title="leave out the calls an earlier batch of this size took">
+          <span class="hint">skip (50 leaves out what a 50-call score took)</span>
         </div>
         <div class="askrow">
           <label class="inline" for="bowevthr">Scam at
@@ -4298,6 +4314,10 @@ run appears under Recent runs on the Benchmark page like any other.</pre>
           <input type="text" id="lenevlimit" class="num" placeholder="all"
                  spellcheck="false" title="calls to score, 0 or blank for all">
           <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+          <input type="text" id="lenevskip" class="num" placeholder="0"
+                 spellcheck="false"
+                 title="leave out the calls an earlier batch of this size took">
+          <span class="hint">skip (50 leaves out what a 50-call score took)</span>
         </div>
         <div class="askrow">
           <label class="inline" for="lenevthr">Scam past
@@ -4533,6 +4553,10 @@ the run appears under Recent runs on the Benchmark page like any other.</pre>
           <input type="text" id="llmevlimit" class="num" placeholder="all"
                  spellcheck="false" title="calls to score, 0 or blank for all">
           <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+          <input type="text" id="llmevskip" class="num" placeholder="0"
+                 spellcheck="false"
+                 title="leave out the calls an earlier batch of this size took">
+          <span class="hint">skip (50 leaves out what a 50-call score took)</span>
         </div>
         <div class="askrow">
           <span class="hint" id="llmevcost" style="flex:1"></span></div>
@@ -4791,6 +4815,10 @@ per held-out call, so it takes minutes, not seconds.</pre>
           <input type="text" id="mcqevlimit" class="num" placeholder="all"
                  spellcheck="false" title="calls to score, 0 or blank for all">
           <span class="hint">calls (blank = all, a balanced head otherwise)</span>
+          <input type="text" id="mcqevskip" class="num" placeholder="0"
+                 spellcheck="false"
+                 title="leave out the calls an earlier batch of this size took">
+          <span class="hint">skip (50 leaves out what a 50-call score took)</span>
         </div>
         <button class="go" id="mcqevgo">Score every call</button>
         <div class="hint" id="mcqeverr" style="color:var(--bad)"></div>
@@ -5375,7 +5403,8 @@ function paintLedger() {
   // The summary row for a baseline is its most recent run over the whole
   // dataset, if it has one - a 40-call pilot is recorded, but it should not
   // stand in for the real number just because it happened to be later.
-  const full = e => (!e.limit || e.limit === '0' || e.limit === '-') && !e.stopped;
+  const full = e => (!e.limit || e.limit === '0' || e.limit === '-') && !e.stopped
+    && !e.skip;
   const pick = list => list.find(full) || list[0];
 
   const head = `<tr><th>Baseline</th><th>Acc</th><th>P</th><th>R</th><th>F1</th>`
@@ -5622,6 +5651,7 @@ function paintHeader(meta, status) {
     (meta.baseline + ' · ' + meta.dataset.replace('datasets/', ''));
   const bits = [side ? meta.dataset.replace('datasets/', '')
                      : limitText(meta.limit)];
+  if (meta.skip) bits.push('after the first ' + meta.skip);
   if (meta.model) bits.push(meta.model);
   bits.push(new Date(meta.started * 1000).toLocaleString());
   $('runsub').textContent = bits.join(' · ');
@@ -6304,7 +6334,7 @@ async function bertBoot() {
   ).join('');
   evalHistory('bert', evalIds('bert', 'm-eval'));
   $('bertevgo').onclick = () => evalRun('bert', evalIds('bert', 'm-eval'), {
-    model: model, dataset: $('berteds').value, limit: $('bertevlimit').value,
+    model: model, dataset: $('berteds').value, limit: $('bertevlimit').value, skip: $('bertevskip').value,
     threshold: $('bertevthr').value, strip_tags: $('bertevstrip').checked,
     gpu: $('bertevgpu').checked,
   });
@@ -6641,7 +6671,7 @@ async function bowBoot() {
   $('boweds').innerHTML = $('bowdataset').innerHTML;
   evalHistory('bow', evalIds('bow', 'b-eval'));
   $('bowevgo').onclick = () => evalRun('bow', evalIds('bow', 'b-eval'), {
-    model: bowModel, dataset: $('boweds').value, limit: $('bowevlimit').value,
+    model: bowModel, dataset: $('boweds').value, limit: $('bowevlimit').value, skip: $('bowevskip').value,
     threshold: $('bowevthr').value, strip_tags: $('bowevstrip').checked,
   });
   for (const b of $('bowtabs').querySelectorAll('button'))
@@ -6907,7 +6937,8 @@ async function evalHistory(page, ids) {
         style="cursor:pointer"` : ''}>
         <td>${esc((e.finished || '').slice(5))}</td>
         <td class="optname">${esc((e.dataset || '').replace(/^datasets\//, ''))}</td>
-        <td class="optname">${esc(e.model || '')}</td><td>${e.calls}</td>
+        <td class="optname">${esc(e.model || '')}</td><td>${e.calls}${
+          e.skip ? ` <span class="muted">after ${e.skip}</span>` : ''}</td>
         <td><b>${pctf(e.acc)}</b></td><td>${e.f1 === undefined || e.f1 === null
           ? '—' : Number(e.f1).toFixed(3)}</td>
         <td>${e.stopped ? `<span class="pill">stopped ${e.stopped.scored}/${e.stopped.of}</span>` : ''}${
@@ -7160,7 +7191,7 @@ async function lenBoot() {
   $('leneds').innerHTML = $('lendataset').innerHTML;
   evalHistory('length', evalIds('len', 'l-eval'));
   $('lenevgo').onclick = () => evalRun('length', evalIds('len', 'l-eval'), {
-    model: lenModel, dataset: $('leneds').value, limit: $('lenevlimit').value,
+    model: lenModel, dataset: $('leneds').value, limit: $('lenevlimit').value, skip: $('lenevskip').value,
     threshold: $('lenevthr').value, direction: $('lenevdir').value,
     strip_tags: $('lenevstrip').checked,
   });
@@ -7436,7 +7467,7 @@ async function llmBoot() {
   evalHistory('llm', evalIds('llm', 'j-eval'));
   $('llmevgo').onclick = () => evalRun('llm', evalIds('llm', 'j-eval'), {
     model: llmProf,
-    dataset: $('llmeds').value, limit: $('llmevlimit').value,
+    dataset: $('llmeds').value, limit: $('llmevlimit').value, skip: $('llmevskip').value,
     num_ctx: $('llmctx').value, max_tokens: $('llmmaxtok').value,
     temperature: $('llmtemp').value,
   });
@@ -7773,7 +7804,7 @@ async function mcqBoot() {
   mcqSavedList(cfg.questions, null);
   evalHistory('mcq', evalIds('mcq', 'q-eval'));
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
-    ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value,
+    ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value, skip: $('mcqevskip').value,
     quotes: $('mcqquotes').checked, hints: $('mcqhints').checked});
   $('mcqsave').onclick = mcqSave;
   $('mcqjson').addEventListener('input', mcqJsonCheck);

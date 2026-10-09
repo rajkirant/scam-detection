@@ -378,7 +378,8 @@ def run_evaluate(args):
 
     clf = classifier_from(args)
     print("Loading dataset")
-    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit,
+                        skip=args.skip)
     print()
     print("==> score  models/%s over %d calls" % (clf.name, len(rows)))
     trained_on = clf.meta.get("dataset")
@@ -521,6 +522,9 @@ def build_parser():
     scoring(ev)
     ev.add_argument("--csv", required=True)
     ev.add_argument("--limit", type=int, default=None)
+    ev.add_argument("--skip", type=int, default=None,
+                    help="leave out the calls an earlier balanced batch of this "
+                         "size took: --limit 50 --skip 50 is the next 50")
     ev.add_argument("--threshold", type=float, default=None)
     ev.add_argument("--text-col", default=None)
     ev.add_argument("--label-col", default=None)

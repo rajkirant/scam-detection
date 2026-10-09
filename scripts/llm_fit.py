@@ -470,7 +470,8 @@ def run_evaluate(args):
     profile = load_profile(args.profile) if args.profile else None
 
     print("Loading dataset")
-    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit)
+    rows = EC.load_rows(args.csv, args.text_col, args.label_col, args.limit,
+                        skip=args.skip)
     print()
     print("==> score  %s over %d calls%s"
           % (args.model, len(rows),
@@ -633,6 +634,9 @@ def build_parser():
     ev.add_argument("--limit", type=int, default=None,
                     help="a class-balanced head - one generation per call, "
                          "so this is the flag that decides what it costs")
+    ev.add_argument("--skip", type=int, default=None,
+                    help="leave out the calls an earlier balanced batch of this "
+                         "size took: --limit 50 --skip 50 is the next 50")
     ev.add_argument("--num-ctx", type=int, default=llm_judge.DEFAULT_NUM_CTX)
     ev.add_argument("--max-tokens", type=int,
                     default=llm_judge.DEFAULT_MAX_TOKENS)
