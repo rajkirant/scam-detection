@@ -56,6 +56,3 @@ Thumbs.db
 #
 # If a dataset turns out to be redistribution-restricted, add it here and
 # note its provenance in the README instead.
-
-# the ngrok program, if it is kept in the project (web_ui.sh --public)
-bin/ngrok

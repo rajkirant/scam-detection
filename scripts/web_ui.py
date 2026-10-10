@@ -1982,7 +1982,7 @@ def start_train_run(form):
 
 # ------------------------------------------------------------------- files
 # The Files page: the project's own files, to browse and read. This server
-# can be public - --public puts it behind an ngrok URL with no login - so the
+# can be reachable from other machines, with no login in front of it, so the
 # rules are strict. Nothing outside the project folder is reachable, and
 # nothing hidden is listed or sent: .env holds the API keys, .git the history,
 # and the virtualenv is thousands of files nobody wants. Nothing can be
@@ -2138,7 +2138,7 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):      # one line per run, not per poll
         pass
 
-    # The browser went away before the reply was written - the public tunnel
+    # The browser went away before the reply was written - the connection
     # dropped, or the tab was closed mid-poll. Nothing is wrong with the
     # server and nothing can be sent, so drop the connection quietly instead
     # of letting socketserver print two tracebacks about a broken pipe.
@@ -5477,7 +5477,7 @@ async function showVersion() {
 
 async function doUpdate() {
   if (!confirm('Pull the latest code from GitHub and restart this server?\n\n'
-      + 'Runs already finished are kept. The public link stays the same.')) return;
+      + 'Runs already finished are kept.')) return;
   veil('Updating…', 'running git pull');
   const r = await api('/api/admin/update', {});
   if (r.error) {
@@ -5511,17 +5511,17 @@ async function doUpdate() {
 }
 
 async function doStop() {
-  if (!confirm('Stop this server?\n\nRuns already going keep going. The public '
-      + 'link closes, and the page stops working until the server is started '
-      + 'again from the terminal.')) return;
+  if (!confirm('Stop this server?\n\nRuns already going keep going. The page '
+      + 'stops working until the server is started again from the terminal.')) return;
   const r = await api('/api/admin/stop', {});
   if (r.error) { veil('Could not stop', '', r.error, true); return; }
   const going = r.runs_still_going || [];
   veil('Server stopped',
        (going.length ? going.length + ' run' + (going.length === 1 ? ' is' : 's are')
           + ' still going and will finish on their own.<br>' : '')
-       + 'Start it again on the machine with <code>./web_ui.sh --public</code> '
-       + '(or <code>--tmux</code>). Finished runs and the Results tab are kept.');
+       + 'Start it again on the machine with <code>./web_ui.sh --tmux</code> '
+       + '(with <code>--local</code> if it ran that way). Finished runs and the '
+       + 'Results tab are kept.');
 }
 
 function select(id) {
@@ -5582,7 +5582,7 @@ function showTab(name) {
 let polling = false, pollFails = 0;
 async function poll() {
   if (!current || polling) return;
-  // one at a time: over a slow tunnel a tick can outlast 900ms, and two polls
+  // one at a time: over a slow connection a tick can outlast 900ms, and two polls
   // reading from the same offset print the same lines twice
   polling = true;
   try { await pollOnce(); } finally { polling = false; }
@@ -5593,7 +5593,7 @@ async function pollOnce() {
   const r = await api(`/api/output?id=${encodeURIComponent(id)}&offset=${offset}`);
   if (id !== current) return;
   if (r.error) {
-    // a dropped request over the tunnel is not the end of the run: keep
+    // a dropped request is not the end of the run: keep
     // trying for a while, and only give up on a request that keeps failing
     if (++pollFails < 8) return;
     clearInterval(timer); timer = null;
@@ -8709,13 +8709,13 @@ def lan_address():
 # detached into their own sessions and outlive it, as they always have.
 #
 # Restarting is done by re-executing this same process (os.execv) rather than
-# by exiting and letting web_ui.sh start a new one. The PID stays the same, so
-# web_ui.sh keeps waiting on it and never runs its cleanup - the public tunnel
-# stays up on the same address, and is only missing a server for the second
-# or two the new one takes to bind. The listening socket is not inherited
-# across exec (Python sockets are non-inheritable), so the new image binds the
-# port afresh; the BERT worker pipes are not inherited either, and the workers
-# are unloaded first so they do not linger.
+# by exiting and starting a new one. The PID stays the same - web_ui.sh execs
+# into this process - so the terminal or tmux session it runs in carries on,
+# and the page is only without a server for the second or two the new one
+# takes to bind. The listening socket is not inherited across exec (Python
+# sockets are non-inheritable), so the new image binds the port afresh; the
+# BERT worker pipes are not inherited either, and the workers are unloaded
+# first so they do not linger.
 ADMIN_LOCK = threading.Lock()
 
 
@@ -8763,8 +8763,8 @@ def _stop_now():
     sys.stderr.write("stopped from the web UI\n")
     sys.stderr.flush()
     # os._exit rather than sys.exit: this runs on a helper thread, and the
-    # server's own loop would otherwise keep the process alive. web_ui.sh sees
-    # its server go, closes the tunnel and exits - and with it the tmux session.
+    # server's own loop would otherwise keep the process alive. A --tmux
+    # session ends with it.
     os._exit(0)
 
 
