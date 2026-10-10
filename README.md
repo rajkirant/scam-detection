@@ -249,7 +249,6 @@ project's files.
 ./web_ui.sh --tmux            # detached: survives an SSH disconnect
 ./web_ui.sh --port 8080       # somewhere else
 ./web_ui.sh --local           # this machine only (then forward the port)
-./web_ui.sh --public          # plus an https link that works from anywhere
 ```
 
 It binds every interface, so another machine on the same network can open it
@@ -261,47 +260,18 @@ scam-detection UI
   other machines: http://192.168.1.42:8000
 ```
 
-`--public` also opens an SSH reverse tunnel to localhost.run (no account
-needed) and prints the public URL:
-
-```
-==> Opening a public link
-  ok public    https://fa58e6c3b454ab.lhr.life
-```
-
-The tunnel is supervised: when it drops, or the address stops answering, it is
-reopened and announced in the terminal. **localhost.run's address is not
-permanent.** An SSH key (`ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_lhr`, once)
-keeps it for a while, but localhost.run retires free addresses from time to
-time (the old link answers 503) and the next connection gets a new one.
-
-**For a permanent address, use ngrok.** Every free ngrok account comes with
-one static domain that never changes:
-
-1. Sign up at <https://ngrok.com> (free) and download the ngrok program for
-   Linux. Put it on `PATH`, or in `~/bin`, `~/.local/bin` or `./bin`. It is a
-   single file and needs no root.
-2. `ngrok config add-authtoken <the token on your ngrok dashboard>`
-3. Copy your free static domain from the dashboard (Domains) into `.env`:
-   `NGROK_DOMAIN=your-name.ngrok-free.app`
-
-From then on `./web_ui.sh --public` (or `--tmux --public`) always comes up on
-`https://your-name.ngrok-free.app`, and every reconnect comes back on the same
-address. `--domain` on the command line does the same without `.env`. ngrok's
-free plan shows each new browser a one-time warning page; press *Visit Site*
-once. If ngrok will not start, its own reason (no authtoken, the domain
-belonging to another account, the domain already online from another ngrok) is
-printed in the terminal. See `results/logs/tunnel.log` for the connection
-history.
-
-> **That link has no password in front of it.** Anyone who opens it can start
-> and stop runs on this box and read every transcript. Fine for showing a
-> result to someone for ten minutes, not something to leave up. On an untrusted
-> network use `--local` and tunnel in yourself instead:
+> **The page has no password in front of it.** Anyone who can reach the port
+> can start and stop runs on this box and read every transcript. On an
+> untrusted network use `--local` and tunnel in yourself instead:
 >
 > ```bash
 > ssh -L 8000:localhost:8000 user@host
 > ```
+
+To open it from outside the network, run it with `--local` behind a tunnel
+that runs as a service of its own (`cloudflared` pointed at
+`http://localhost:8000`, say), and put a login in front of that tunnel, since
+the page has none. `web_ui.sh` neither starts nor stops the tunnel.
 
 Runs started from the page are detached from the server, so closing the
 browser, dropping the SSH link, or restarting the server does not stop them —
@@ -314,20 +284,20 @@ Two buttons at the right of the header, with the running commit beside them.
 
 **Update** runs `git pull --ff-only` in the project and, if anything new came
 in, restarts the server into it — the page reloads itself when the new server
-answers. The restart happens inside the same process, so `web_ui.sh` never
-notices and **the public link stays up on the same address**. It is refused,
+answers. The restart happens inside the same process, so the terminal or
+`--tmux` session the UI runs in carries on as before. It is refused,
 with the reason, while a run is going (bash reads `run_all.sh` as it executes,
 so replacing it under a live run can break that run) or when the pull cannot
 fast-forward (local edits, say) — in both cases nothing is changed. One file
 it cannot reload is `web_ui.sh` itself; if an update changes it, the page says
 so, and it takes effect the next time you start the UI from the terminal.
 
-**Stop server** stops the UI: the server exits, `web_ui.sh` closes the public
-tunnel, and a `--tmux` session ends. Runs already going carry on and finish on
-their own. Start it again from the terminal.
+**Stop server** stops the UI: the server exits, and a `--tmux` session ends
+with it. Runs already going carry on and finish on their own. Start it again
+from the terminal.
 
 Neither is behind a password, the same as the rest of the page: anyone who
-has the public link can press them.
+can open the page can press them.
 
 ### Results tab
 
@@ -1875,11 +1845,6 @@ route in setup step 4.
 
 **A run reports many unreadable verdicts** — the model is being verbose and
 running out of tokens before it reaches its answer. Lower `--limit` and inspect the `<system>_why` column in the per-call CSV.
-
-**The public link keeps changing** — localhost.run's free addresses are not
-permanent, with or without an SSH key. Set up ngrok's free static domain
-(see [the public link](#a-browser-ui) above) for one that never changes.
-History is in `results/logs/tunnel.log`.
 
 ---
 
