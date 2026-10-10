@@ -278,6 +278,45 @@ browser, dropping the SSH link, or restarting the server does not stop them —
 reopen the URL and the run is still there. Pick a run under **Recent runs** to
 get its Output, Results, Per-call predictions and the per-baseline Step logs.
 
+### Start, stop and check
+
+The usual way to run it on the GPU machine: detached, this machine only, with
+a tunnel in front. From the project folder on that machine:
+
+```bash
+./web_ui.sh --local --tmux        # start
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000   # 200 once it is up
+tail -f results/logs/web_ui.log   # watch its output (ctrl-c stops watching, not the UI)
+tmux attach -t scam_ui            # its terminal: ctrl-b then d to leave, ctrl-c stops it
+tmux kill-session -t scam_ui      # stop (or Stop server in the page)
+```
+
+To restart, stop it and start it again. Stopping the UI never stops a run that
+is already going; it is still under **Recent runs** when the UI comes back.
+
+If it does not come up:
+
+- **`curl` prints `000`** — give it a few seconds after starting. If it stays
+  at `000`, the server did not start, and the reason is at the end of its log:
+  `tail -20 results/logs/web_ui.log`.
+- **`session scam_ui already exists`** — an earlier copy is still running.
+  Stop it with `tmux kill-session -t scam_ui` and start again.
+- **`port 8000 is already in use`** — the message names what holds the port
+  and how to stop it. If it cannot say, `ss -ltnp | grep :8000` shows it and
+  `fuser -k 8000/tcp` stops it.
+
+The tunnel is a service of its own (`cloudflared`, installed with
+`sudo cloudflared service install <token>`), so it starts on boot, and
+stopping or restarting the UI leaves it alone. While the UI is stopped, the
+public address answers with Cloudflare's 502 error page.
+
+```bash
+systemctl is-active cloudflared                    # "active" when the tunnel is up
+sudo systemctl restart cloudflared                 # restart the tunnel
+sudo journalctl -u cloudflared -n 30 --no-pager    # its recent log
+sudo systemctl stop cloudflared                    # take it offline, until the next boot
+```
+
 ### Update and Stop server
 
 Two buttons at the right of the header, with the running commit beside them.
