@@ -269,9 +269,9 @@ check("the shipped tree holds no learned knowledge or dataset evidence",
       [w for w in ("scam_patterns", "scam_ontology", "legit_contrast",
                    '"evidence"', '"knowledge"', "built_from", "honeypot",
                    "scambait", "huggingface") if w in shipped_text], [])
-check("the shipped tree loads: 15 subjects, 7 common questions, 65 in all",
+check("the shipped tree loads: 15 subjects, 7 common questions, 67 in all",
       (len(shipped["options"]), len(shipped["common_questions"]),
-       M.count_questions(shipped)), (15, 7, 65))
+       M.count_questions(shipped)), (15, 7, 67))
 pay = next(q for q in shipped["common_questions"] if q["id"] == "payment_asked")
 check("whether money is to move, then how and what for, only after a yes",
       ([o["id"] for o in pay["options"]],
@@ -335,6 +335,19 @@ check("live or recorded first, what a recording asks only after 'recorded'",
        [o["id"] for o in fmt["options"][1]["follow_up"][0]["options"]]),
       (["live_person", "recording", "not_mentioned"],
        ["recording_press_key", "recording_info_only", "not_mentioned"]))
+origin = next(q for q in shipped["common_questions"]
+              if q["id"] == "contact_origin")
+check("who rang whom first, recorded so it scores nothing itself; why the "
+      "caller rang, or where the person got the number, only after it",
+      (origin.get("role"), [o["id"] for o in origin["options"]],
+       [[f["id"] for f in o.get("follow_up", [])] for o in origin["options"]]),
+      ("recorded", ["caller_rang", "person_rang", "not_mentioned"],
+       [["caller_reason"], ["number_source"], []]))
+check("a caller raising a problem out of the blue still scores 0.8, one "
+      "level down",
+      [(o["id"], o["value"]) for o in origin["options"][0]["follow_up"][0]
+       ["options"] if o["id"] == "caller_raised_problem"],
+      [("caller_raised_problem", 0.8)])
 check("other knowledge files are not mistaken for one",
       M.is_mcq_ontology(os.path.join(HERE, "..", "knowledge", "scam_ontology.json")),
       False)
@@ -590,6 +603,8 @@ check("the shipped tree's hints: on the questions that misfired, and on "
       sorted(path for path, q, _ in M.iter_questions(shipped) if q.get("hint")),
       sorted(["billing_subscription/claim",
               "common/caller_format", "common/contact_origin",
+              "common/contact_origin/caller_rang/caller_reason",
+              "common/contact_origin/person_rang/number_source",
               "common/payment_asked",
               "common/payment_asked/yes/payment_channel",
               "common/payment_asked/yes/payment_channel/bank_transfer/account_type",

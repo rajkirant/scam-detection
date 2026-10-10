@@ -278,6 +278,45 @@ browser, dropping the SSH link, or restarting the server does not stop them —
 reopen the URL and the run is still there. Pick a run under **Recent runs** to
 get its Output, Results, Per-call predictions and the per-baseline Step logs.
 
+### Start, stop and check
+
+The usual way to run it on the GPU machine: detached, this machine only, with
+a tunnel in front. From the project folder on that machine:
+
+```bash
+./web_ui.sh --local --tmux        # start
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:8000   # 200 once it is up
+tail -f results/logs/web_ui.log   # watch its output (ctrl-c stops watching, not the UI)
+tmux attach -t scam_ui            # its terminal: ctrl-b then d to leave, ctrl-c stops it
+tmux kill-session -t scam_ui      # stop (or Stop server in the page)
+```
+
+To restart, stop it and start it again. Stopping the UI never stops a run that
+is already going; it is still under **Recent runs** when the UI comes back.
+
+If it does not come up:
+
+- **`curl` prints `000`** — give it a few seconds after starting. If it stays
+  at `000`, the server did not start, and the reason is at the end of its log:
+  `tail -20 results/logs/web_ui.log`.
+- **`session scam_ui already exists`** — an earlier copy is still running.
+  Stop it with `tmux kill-session -t scam_ui` and start again.
+- **`port 8000 is already in use`** — the message names what holds the port
+  and how to stop it. If it cannot say, `ss -ltnp | grep :8000` shows it and
+  `fuser -k 8000/tcp` stops it.
+
+The tunnel is a service of its own (`cloudflared`, installed with
+`sudo cloudflared service install <token>`), so it starts on boot, and
+stopping or restarting the UI leaves it alone. While the UI is stopped, the
+public address answers with Cloudflare's 502 error page.
+
+```bash
+systemctl is-active cloudflared                    # "active" when the tunnel is up
+sudo systemctl restart cloudflared                 # restart the tunnel
+sudo journalctl -u cloudflared -n 30 --no-pager    # its recent log
+sudo systemctl stop cloudflared                    # take it offline, until the next boot
+```
+
 ### Update and Stop server
 
 Two buttons at the right of the header, with the running commit beside them.
@@ -628,6 +667,11 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
   whether the call says anything about checking the caller is asked first,
   and how only after a yes. Whether the caller is a live person or a recorded
   message is asked first, and what the message asks only after "recorded".
+  How the call came about is asked in two steps: who rang whom first, a
+  recorded question that scores nothing by itself, then why the caller says
+  they are calling when the caller rang, or where the person got the number
+  when the person rang. A greeting and a name alone answer neither, so a call
+  that says nothing more scores 0 there.
 
 The questions are asked in a nested order. The subject is asked first, then
 the questions in the order of that subject's `ask` list. A bank call is asked
@@ -655,7 +699,7 @@ negative toward legitimate. *Not stated* and every option of a `recorded`
 question score 0. A recorded question, such as who the caller says they are,
 is kept to explain the verdict. The call's **score** is the sum of the values
 of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
-neutral.** When a dataset is scored, neutral counts as not scam. The 54
+neutral.** When a dataset is scored, neutral counts as not scam. The 67
 questions and their values are in the file.
 
 **Classify** walks the transcript through the tree, one request per question
