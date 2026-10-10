@@ -667,6 +667,11 @@ under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
   whether the call says anything about checking the caller is asked first,
   and how only after a yes. Whether the caller is a live person or a recorded
   message is asked first, and what the message asks only after "recorded".
+  How the call came about is asked in two steps: who rang whom first, a
+  recorded question that scores nothing by itself, then why the caller says
+  they are calling when the caller rang, or where the person got the number
+  when the person rang. A greeting and a name alone answer neither, so a call
+  that says nothing more scores 0 there.
 
 The questions are asked in a nested order. The subject is asked first, then
 the questions in the order of that subject's `ask` list. A bank call is asked
@@ -694,7 +699,7 @@ negative toward legitimate. *Not stated* and every option of a `recorded`
 question score 0. A recorded question, such as who the caller says they are,
 is kept to explain the verdict. The call's **score** is the sum of the values
 of the options chosen. **Above 0 is scam, below 0 legitimate, and exactly 0
-neutral.** When a dataset is scored, neutral counts as not scam. The 54
+neutral.** When a dataset is scored, neutral counts as not scam. The 67
 questions and their values are in the file.
 
 **Classify** walks the transcript through the tree, one request per question
