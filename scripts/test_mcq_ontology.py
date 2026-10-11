@@ -772,8 +772,13 @@ check("thousands of rows are refused before any is looked at",
                                                       or ""), True)
 huge = rows(pq)
 huge["options"][0]["value"] = 10 ** 400
-check("a number too big for a float is refused like any bad value",
-      "must be a number from -1 to 1" in (edit_fails(o, ploc, huge) or ""), True)
+check("a number too big for a float is refused like any bad value, briefly",
+      ("must be a number from -1 to 1" in (edit_fails(o, ploc, huge) or ""),
+       len(edit_fails(o, ploc, huge) or "") < 120), (True, True))
+few = rows(pq, prompt=" ", options=[{"from": None, "text": "", "value": 0}])
+check("too few options is named along with the other problems",
+      [w in (edit_fails(o, ploc, few) or "") for w in
+       ('"prompt"', "between 2 and 20", 'has no "text"')], [True] * 3)
 
 o = raw()
 ploc = ["common_questions", ci(o, "pressure")]

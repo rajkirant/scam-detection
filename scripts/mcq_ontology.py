@@ -60,6 +60,7 @@ import math
 import os
 import random
 import re
+import reprlib
 import sys
 import time
 import urllib.error
@@ -2021,7 +2022,9 @@ def edit_question(obj, locator, edit, copies=True):
     rows = edit.get("options")
     if not isinstance(rows, list):
         raise ValueError('"options" must be a list')
-    if not 2 <= len(rows) <= MAX_TREE_OPTIONS:
+    # too many rows is refused before any is looked at; too few is left to
+    # _check_question, which names it along with any other problem
+    if len(rows) > MAX_TREE_OPTIONS:
         raise ValueError("not applied: there must be between 2 and %d options; "
                          "there are %d" % (MAX_TREE_OPTIONS, len(rows)))
     if not all(isinstance(r, dict) for r in rows):
@@ -2044,7 +2047,7 @@ def edit_question(obj, locator, edit, copies=True):
             value = float(r.get("value") or 0)
         except (TypeError, ValueError, OverflowError):
             raise ValueError("option %d: the value must be a number from -1 "
-                             "to 1, not %r" % (n, r.get("value")))
+                             "to 1, not %s" % (n, reprlib.repr(r.get("value"))))
         if not math.isfinite(value):
             raise ValueError("option %d: the value must be a number from -1 "
                              "to 1" % n)
