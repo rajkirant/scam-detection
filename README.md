@@ -881,7 +881,8 @@ The other tabs:
   An option keeps the follow-ups it opens wherever it is moved. A new option
   goes just before Not stated, and its id is made from its text unless you
   type one. On the root question you edit the subjects the same way, and a
-  subject keeps its own questions and `ask` list.
+  subject keeps its own questions and `ask` list. An older one-question file
+  gets no pencils: edit it in *Edit the JSON*.
 
   Some questions appear in more than one place on purpose. The money
   questions, for example, are asked under several subjects. When a question

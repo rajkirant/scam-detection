@@ -3480,8 +3480,8 @@ PAGE = r"""<!doctype html>
                     margin:0 -6px;
                     background:color-mix(in srgb, var(--accent) 9%, transparent); }
   .tq-opt.tq-dim { opacity:.45; }
-  /* the Question tree's Edit mode: a pencil on every card, and the card
-     turns into a form for its question */
+  /* the Question tree's Edit mode: a pencil on every card, which opens
+     its question's form in a dialog over the tree */
   .tq-hint { font-size:12px; color:var(--dim); margin:2px 0 4px; }
   .tq-hint summary { cursor:pointer; width:max-content; }
   .tq-hint div { white-space:pre-wrap; margin-top:2px; }
@@ -3510,7 +3510,8 @@ PAGE = r"""<!doctype html>
   .te-row input[type=number][disabled] { opacity:.5; }
   .te-row .te-text { padding:6px 9px; }
   .te-row .te-newid { width:150px; padding:6px 9px; font:12px var(--mono); }
-  .te-id { font:11.5px var(--mono); color:var(--dim); white-space:nowrap; }
+  .te-id { font:11.5px var(--mono); color:var(--dim); max-width:180px;
+           overflow-wrap:anywhere; }
   .te-row label.inline { margin:0; }
   .te-row label.inline { font-size:12px; white-space:nowrap; }
   .te-row .te-del { color:var(--bad); }
@@ -3525,7 +3526,7 @@ PAGE = r"""<!doctype html>
   .te-err { color:var(--bad); font-size:12.5px; margin-top:8px; white-space:pre-wrap; }
   /* on a phone each row is the text on its own line, then its controls,
      then its id */
-  @media (max-width: 640px) {
+  @media (max-width: 760px) {
     .tq-dialog { padding:14px 12px; }
     .te-row { grid-template-columns:auto auto 74px 1fr auto; }
     .te-row .te-text { grid-column:1 / -1; order:-1; }
@@ -6376,6 +6377,17 @@ const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
 // someone - and reloading while reading an answer comes back to the answer
 // pane rather than to the benchmark form.
 function showPage(name) {
+  // the Question tree's form is a modal on the MCQ page: leaving the page by
+  // the Back button or a typed address must not leave it open, out of sight,
+  // with every other control blocked behind it
+  if (name !== 'mcq' && $('mcqeditdlg').open) {
+    if (mcqEditing && mcqEditing.dirty
+        && !confirm('Drop the changes to the question you are editing?')) {
+      history.replaceState(null, '', '#mcq');
+      return;
+    }
+    mcqEditClose();
+  }
   if (location.hash.slice(1).split('/')[0] !== name)
     history.replaceState(null, '', name === 'bench' ? location.pathname : '#' + name);
   for (const b of $('pages').querySelectorAll('button'))
@@ -7845,11 +7857,17 @@ function paintVerdict(r) {
 let MCQ = null, mcqFile = null, mcqOnto = null;
 let mcqBuildRun = null, mcqBuildTimer = null;
 // the saved question picked for "Your own question", and a training run
-let mcqSaved = null, mcqTrainRun = null, mcqTrainTimer = null;
+let mcqSaved = null, mcqTrainRun = null, mcqTrainTimer = null, mcqBooting = false;
 
 async function mcqBoot() {
+  // a double click on the page's button calls this twice before the first
+  // reply sets MCQ; a second boot would load the file again over the first,
+  // and over any form opened in between
+  if (mcqBooting) return;
+  mcqBooting = true;
   const cfg = await api('/api/mcq/config');
   if (cfg.error || !cfg.datasets) {
+    mcqBooting = false;
     $('mcqerr').textContent = cfg.error || 'unexpected reply from /api/mcq/config';
     return;
   }
@@ -7910,20 +7928,37 @@ async function mcqBoot() {
   $('mcqsave').onclick = () => mcqSave('edit');
   $('mcqjson').addEventListener('input', mcqJsonCheck);
   $('mcqtreeedit').onchange = mcqTreeRedraw;
-  // Escape closes the form like Cancel: it asks first when there are changes
-  $('mcqeditdlg').addEventListener('cancel', e => {
-    e.preventDefault();
-    if (mcqEditing && mcqEditing.dirty
-        && !confirm('Drop the changes to this question?')) return;
-    mcqEditFocus(mcqEditClose());
-  });
-  // applied but unsaved edits live only in this page
-  window.addEventListener('beforeunload', e => {
-    if (mcqFile && (mcqDirty() || (mcqEditing && mcqEditing.dirty))) {
+  // once, though a quick double click on the page's button boots it twice
+  if (!mcqEditWired) {
+    mcqEditWired = true;
+    const dlg = $('mcqeditdlg');
+    // Escape closes the form like Cancel, asking first when there are
+    // changes. It is caught here, before the browser treats it as a request
+    // to close: a browser may close a dialog on a repeated Escape whatever
+    // the answer to "keep?" was.
+    dlg.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
       e.preventDefault();
-      e.returnValue = '';
-    }
-  });
+      mcqEditEscape();
+    });
+    // any other request to close it, such as a phone's back gesture: asked
+    // the same way, when the browser lets it be refused
+    dlg.addEventListener('cancel', e => {
+      if (!e.cancelable) return;
+      e.preventDefault();
+      mcqEditEscape();
+    });
+    // closed by the browser rather than by mcqEditClose: forget the form,
+    // so that the pencils open forms again
+    dlg.addEventListener('close', () => { if (mcqEditing) mcqEditFocus(mcqEditClose()); });
+    // applied but unsaved edits live only in this page
+    window.addEventListener('beforeunload', e => {
+      if (mcqFile && (mcqDirty() || (mcqEditing && mcqEditing.dirty))) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+  }
   $('mcqtreesavego').onclick = () => mcqSave('tree');
   $('mcqtreediscard').onclick = mcqDiscard;
   // one name to save under, typed in either tab
@@ -8467,7 +8502,7 @@ const mcqDirty = () => $('mcqjson').value !== mcqLoadedText;
 // locator mcq_ontology.edit_question takes); the cards with a pencil, by
 // number; and the form that is open, if one is
 let mcqTreeObj = null, mcqTreeNote = null, mcqTreeLoc = new Map(),
-    mcqTreeCards = [], mcqEditing = null;
+    mcqTreeCards = [], mcqEditing = null, mcqEditWired = false;
 
 const mcqNum = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
 const mcqFmt = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2)
@@ -8689,6 +8724,13 @@ function mcqEditOpen(n) {
   $('mcqeprompt').focus();
 }
 
+// Escape or Cancel: close, asking first when the form was changed
+function mcqEditEscape() {
+  if (mcqEditing && mcqEditing.dirty
+      && !confirm('Drop the changes to this question?')) return;
+  mcqEditFocus(mcqEditClose());
+}
+
 // close the form; returns the number of the card it was for
 function mcqEditClose() {
   const dlg = $('mcqeditdlg');
@@ -8716,8 +8758,8 @@ function mcqEditForm(card) {
     .map((op, i) => mcqEditRow(op && typeof op === 'object' ? op : {}, i, root)).join('');
   const what = root ? 'subject' : 'option';
   return `<div class="tq-edit">
-    <div class="tq-q" id="mcqedittitle">${root ? 'The root question: what the call is about'
-      : 'Editing a ' + esc(card.tag) + ' question'}<span class="tq-tag">${
+    <div class="tq-q"><span id="mcqedittitle">${root ? 'The root question: what the call is about'
+      : 'Editing a ' + esc(card.tag) + ' question'}</span> <span class="tq-tag">${
       root ? 'it picks the subject; it does not decide the verdict' : esc(q.id || '')}</span></div>
     ${card.tag === 'common' ? '<div class="hint">A common question: the change '
       + 'applies to every subject that asks it.</div>' : ''}
@@ -8825,8 +8867,7 @@ function mcqEditClick(e, form) {
     mcqEditRecorded(form);
     fresh.querySelector('.te-text').focus();
   } else if (b.classList.contains('te-cancel')) {
-    if (mcqEditing.dirty && !confirm('Drop the changes to this question?')) return;
-    mcqEditFocus(mcqEditClose());
+    mcqEditEscape();
     return;
   } else if (b.classList.contains('te-apply')) {
     mcqEditApply(form);
