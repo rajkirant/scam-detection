@@ -765,6 +765,31 @@ check("a place that is not a question's is refused",
         ["common_questions", True], ["prompt"], "common_questions/0", None)],
       [True] * 7)
 check("nothing is changed by a refused edit", M.dumps(o) == snap, True)
+many = rows(pq)
+many["options"] += [{"from": None, "text": "x", "value": 0}] * 5000
+check("thousands of rows are refused before any is looked at",
+      "between 2 and 20 options; there are 5006" in (edit_fails(o, ploc, many)
+                                                      or ""), True)
+huge = rows(pq)
+huge["options"][0]["value"] = 10 ** 400
+check("a number too big for a float is refused like any bad value",
+      "must be a number from -1 to 1" in (edit_fails(o, ploc, huge) or ""), True)
+
+o = raw()
+ploc = ["common_questions", ci(o, "pressure")]
+pq = M.question_at(o, ploc)
+e = rows(pq, prompt="How are time\nand  secrecy handled?",
+         hint="Being polite\nis not pressure.")
+e["options"][0]["text"] = "A threat\nof harm"
+e["options"].insert(5, {"from": None, "text": "Foo bar", "value": 0})
+e["options"].insert(6, {"from": None, "id": "foo_bar", "text": "Other", "value": 0})
+M.edit_question(o, ploc, e)
+check("line breaks and runs of spaces become one space, as the loader reads "
+      "them; a typed id is kept, and a made one steps round it",
+      (pq["prompt"], pq["hint"], pq["options"][0]["text"],
+       [x["id"] for x in pq["options"][5:7]]),
+      ("How are time and secrecy handled?", "Being polite is not pressure.",
+       "A threat of harm", ["foo_bar_2", "foo_bar"]))
 
 o = raw()
 e = {"prompt": "What is this call mainly about?",

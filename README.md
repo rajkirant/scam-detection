@@ -739,8 +739,9 @@ starting points, and only training changes them.
 **Hints.** A question may also carry a `"hint"`: a sentence or two for the
 model on what counts and what does not. For example, a caller saying their
 own name or company is not a way to check them. The hint goes into that
-question's prompt, after the options, as "About this question: …". It is
-not shown on the page, but you can see and edit it in *Edit the JSON*.
+question's prompt, after the options, as "About this question: …". The
+*Question tree* tab shows it, folded, under its question. You can change it
+there with ✎ Edit (see below) or in *Edit the JSON*.
 Hints sit on the questions the model misread: the recorded-message question,
 how the call came about, sensitive details, whether money is asked for, how it
 would move and into what kind of account (in every copy), what the caller asks
@@ -866,7 +867,35 @@ The other tabs:
   values, red for scam and green for legitimate, and follow-ups branching off
   the option that opens them. It ends with the range this path can score.
   It follows the editor as you type, labelled as unsaved, once the JSON
-  parses, and is redrawn from the file when you save.
+  parses, and is redrawn from the file when you save. Each question's hint
+  is shown folded under it.
+
+  **Editing on the tree.** Tick *Edit questions* and a ✎ Edit appears on
+  every question and on the root question. It opens a form over the page
+  with:
+  - the question's wording and its hint;
+  - whether it is *recorded*: every option then scores 0 and needs no quote;
+  - its options, each with its text, its value from -1 to 1 and whether it is
+    an *absence* option. Options can be moved up or down, added or removed.
+
+  An option keeps the follow-ups it opens wherever it is moved. A new option
+  goes just before Not stated, and its id is made from its text unless you
+  type one. On the root question you edit the subjects the same way, and a
+  subject keeps its own questions and `ask` list.
+
+  Some questions appear in more than one place on purpose. The money
+  questions, for example, are asked under several subjects. When a question
+  has identical copies, the form offers to change them all at once, and does
+  so unless you untick the box.
+
+  **Apply** checks the question by the same rules as Save, then changes the
+  editor's text, which you can see in *Edit the JSON*. Nothing is written
+  until **Save**, at the top of the tab, so several questions can be edited
+  and saved together. **Discard edits** goes back to the file as saved.
+  Cancel or Escape closes the form, and asks first if you changed anything.
+  The page also asks before you leave it, or before another file replaces
+  edits that are not saved. A training run that finishes while you have
+  edits adds its file to the list but does not open it.
 - **Edit the JSON:** the file itself. It is saved only if every question has
   an `id`, a `prompt` and 2–20 options, and every option an `id`, a `text`
   and a `value` from -1 to 1 (0 for `not_mentioned` and for recorded

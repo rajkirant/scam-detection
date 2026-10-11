@@ -102,7 +102,7 @@ _LOGPROBS_OK = None          # None = not tried yet; False = this Ollama has non
 #   ask                    a subject's order for its call: its own question
 #                          ids and common/<id>, e.g. urgency first for a bank
 #                          call, then where the money is to go
-#   question               {id, prompt, role?, options}; role "recorded"
+#   question               {id, prompt, role?, hint?, options}; role "recorded"
 #                          scores 0 on every option
 #   option                 {id, text, value -1..1, absence?, follow_up?}
 #                          follow_up questions are asked only when that
@@ -367,8 +367,9 @@ def count_questions(onto):
 
 # A question may carry a "hint": a sentence or two for the model on what
 # counts and what does not - say, that a caller naming their own company is
-# not proof of who they are. It goes into that question's prompt, and is
-# not shown on the page. Scoring the same dataset with and without hints
+# not proof of who they are. It goes into that question's prompt. The page's
+# Question tree shows it, folded, under the question, and its Edit questions
+# box changes it. Scoring the same dataset with and without hints
 # (--no-hints) shows whether they help.
 def count_hints(onto):
     return sum(1 for _, q, _ in iter_questions(onto) if q.get("hint"))
@@ -2020,17 +2021,28 @@ def edit_question(obj, locator, edit, copies=True):
     rows = edit.get("options")
     if not isinstance(rows, list):
         raise ValueError('"options" must be a list')
-    used, opts = set(), []
-    taken = {str(old[r["from"]].get("id")) for r in rows
-             if isinstance(r, dict) and _is_index(r.get("from"))
-             and 0 <= r["from"] < len(old) and isinstance(old[r["from"]], dict)}
+    if not 2 <= len(rows) <= MAX_TREE_OPTIONS:
+        raise ValueError("not applied: there must be between 2 and %d options; "
+                         "there are %d" % (MAX_TREE_OPTIONS, len(rows)))
+    if not all(isinstance(r, dict) for r in rows):
+        n = next(i for i, r in enumerate(rows, 1) if not isinstance(r, dict))
+        raise ValueError("option %d is not an object" % n)
+    # ids already spoken for: the options kept, and the ids typed for new
+    # ones - so an id made from a blank row's text never takes a typed one
+    kept = {str(old[r["from"]].get("id")) for r in rows
+            if _is_index(r.get("from")) and 0 <= r["from"] < len(old)
+            and isinstance(old[r["from"]], dict)}
+    typed = [str(r.get("id") or "").strip() for r in rows
+             if r.get("from") is None]
+    taken = kept | {t for t in typed if t}
+    used, fresh, opts = set(), set(), []
     for n, r in enumerate(rows, 1):
-        if not isinstance(r, dict):
-            raise ValueError("option %d is not an object" % n)
-        text = str(r.get("text") or "").strip()
+        # spaces and line breaks as the loader reads them, and as the model
+        # sees them
+        text = " ".join(str(r.get("text") or "").split())
         try:
             value = float(r.get("value") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             raise ValueError("option %d: the value must be a number from -1 "
                              "to 1, not %r" % (n, r.get("value")))
         if not math.isfinite(value):
@@ -2046,10 +2058,11 @@ def edit_question(obj, locator, edit, copies=True):
             o = copy.deepcopy(old[src])
         else:
             oid = str(r.get("id") or "").strip()
-            if oid and oid in taken:
+            if oid and (oid in kept or oid in fresh):
                 raise ValueError('option %d: the id "%s" is used twice'
                                  % (n, oid))
             o = {"id": oid or _slug(text, taken)}
+            fresh.add(o["id"])
             taken.add(o["id"])
             if root:
                 o["questions"] = []
@@ -2070,9 +2083,9 @@ def edit_question(obj, locator, edit, copies=True):
             o = _ordered(o, _EDIT_O_KEYS)
         opts.append(o)
     new = {k: v for k, v in q.items() if k != "options"} if not root else {}
-    new["prompt"] = str(edit.get("prompt") or "").strip()
+    new["prompt"] = " ".join(str(edit.get("prompt") or "").split())
     if not root:
-        hint = str(edit.get("hint") or "").strip()
+        hint = " ".join(str(edit.get("hint") or "").split())
         if hint:
             new["hint"] = hint
         else:
