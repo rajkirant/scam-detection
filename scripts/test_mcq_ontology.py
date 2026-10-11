@@ -621,6 +621,197 @@ check("the shipped tree's hints: on the questions that misfired, and on "
                              "/pay_or_move/payment_channel/bank_transfer/"
                              "account_type")]))
 
+print("\nediting one question, as the Question tree tab does")
+import copy                                                     # noqa: E402
+RAW = json.loads(shipped_text)
+
+
+def raw():
+    return copy.deepcopy(RAW)
+
+
+def ci(obj, qid):
+    return next(i for i, q in enumerate(obj["common_questions"])
+                if q["id"] == qid)
+
+
+def rows(q, **change):
+    """The edit the page sends for q with nothing changed - then `change`."""
+    out = {"prompt": q["prompt"], "hint": q.get("hint", ""),
+           "recorded": q.get("role") == "recorded",
+           "options": [{"from": i, "text": o["text"], "value": o["value"],
+                        "absence": bool(o.get("absence"))}
+                       for i, o in enumerate(q["options"])]}
+    out.update(change)
+    return out
+
+
+def edit_fails(obj, loc, e, copies=True):
+    try:
+        M.edit_question(obj, loc, e, copies)
+        return None
+    except ValueError as x:
+        return str(x)
+
+
+o = raw()
+loc = ["common_questions", ci(o, "pressure")]
+q = M.question_at(o, loc)
+e = rows(q, prompt="  How are time and secrecy handled in this call?  ",
+         hint="Being polite is not pressure.")
+e["options"][0]["text"] = "A threat of harm if the person does not act now"
+e["options"][1]["value"] = 0.9
+e["options"].insert(5, {"from": None, "text": "A deadline the caller sets for a reply",
+                        "value": 0.2})
+del e["options"][3]                          # offer_deadline goes
+e["options"][0], e["options"][1] = e["options"][1], e["options"][0]
+before = M.dumps(o)
+check("an unchanged edit changes nothing, and touches no copy",
+      (M.edit_question(o, loc, rows(q)), M.dumps(o) == before), ({"copies": 0}, True))
+check("an edit: prompt and hint trimmed, options reworded, revalued, moved, "
+      "added before Not stated and removed",
+      (M.edit_question(o, loc, e), q["prompt"], q["hint"],
+       [(x["id"], x["value"]) for x in q["options"]]),
+      ({"copies": 0}, "How are time and secrecy handled in this call?",
+       "Being polite is not pressure.",
+       [("secrecy", 0.9), ("threat_now", 1.0), ("stay_on_line", 0.8),
+        ("no_urgency", -0.5), ("a_deadline_the_caller_sets_for", 0.2),
+        ("not_mentioned", 0.0)]))
+check("the hint goes in the file's place for it, after the prompt",
+      list(q), ["id", "prompt", "hint", "options"])
+text = M.dumps(o)
+check("the file still writes 0 as 0.0, and every other question is as it was",
+      ('"value": 0.0' in text, M.check_ontology(json.loads(text)),
+       [x for x in o["common_questions"] if x["id"] != "pressure"]
+       == [x for x in RAW["common_questions"] if x["id"] != "pressure"],
+       o["options"] == RAW["options"]),
+      (True, [], True, True))
+check("a blank hint takes the hint out",
+      (M.edit_question(o, loc, rows(q, hint="   ")), "hint" in q), ({"copies": 0}, False))
+
+o = raw()
+loc = ["common_questions", ci(o, "caller_format")]
+q = M.question_at(o, loc)
+e = rows(q)
+e["options"].reverse()
+M.edit_question(o, loc, e)
+check("an option keeps the follow-ups it opens wherever it moves",
+      [(x["id"], [f["id"] for f in x.get("follow_up", [])]) for x in q["options"]],
+      [("not_mentioned", []), ("recording", ["recording_asks"]),
+       ("live_person", [])])
+check("a follow-up is named by its place under the option that opens it",
+      M.question_at(o, loc + ["options", 1, "follow_up", 0])["id"],
+      "recording_asks")
+
+o = raw()
+pay = ci(o, "payment_asked")
+loc = ["common_questions", pay, "options", 0, "follow_up", 0]
+q = M.question_at(o, loc)
+check("the money questions are found as copies of each other",
+      len(M.copies_of(o, q)), 3)
+e = rows(q, hint=q["hint"] + " A cheque is a bank transfer.")
+check("an edit to one copy changes every identical copy",
+      M.edit_question(o, loc, e), {"copies": 3})
+sub = next(x for x in o["options"] if x["id"] == "government")
+act = next(x for x in sub["questions"] if x["id"] == "requested_action")
+check("so the subjects still ask the same money questions as the common one",
+      act["options"][0]["follow_up"]
+      == o["common_questions"][pay]["options"][0]["follow_up"], True)
+o = raw()
+q = M.question_at(o, loc)
+check("unless copies are left out: then only this one changes",
+      (M.edit_question(o, loc, rows(q, hint="Just here."), copies=False),
+       len(M.copies_of(o, q))), ({"copies": 0}, 0))
+
+o = raw()
+loc = ["common_questions", ci(o, "contact_origin")]
+q = M.question_at(o, loc)
+check("recorded is a box: off takes the role out", (M.edit_question(
+    o, loc, rows(q, recorded=False)), "role" in q), ({"copies": 0}, False))
+snap = M.dumps(o)
+check("and a recorded question cannot score",
+      "scores 0 on every option" in (edit_fails(o, ["common_questions", ci(
+          o, "pressure")], rows(M.question_at(o, ["common_questions", ci(
+              o, "pressure")]), recorded=True)) or ""), True)
+pq = M.question_at(o, ["common_questions", ci(o, "pressure")])
+ploc = ["common_questions", ci(o, "pressure")]
+bad = rows(pq)
+bad["options"][-1]["value"] = 0.5
+check("Not stated must score 0", "not_mentioned must score 0" in
+      (edit_fails(o, ploc, bad) or ""), True)
+check("a question needs two options at least", "between 2 and 20" in
+      (edit_fails(o, ploc, rows(pq, options=rows(pq)["options"][:1])) or ""), True)
+dup = rows(pq)
+dup["options"].insert(0, {"from": None, "id": "secrecy", "text": "x", "value": 0})
+check("a new option cannot take an id the question has",
+      edit_fails(o, ploc, dup), 'option 1: the id "secrecy" is used twice')
+twice = rows(pq)
+twice["options"][1]["from"] = 0
+check("an option the question did not have is refused, not guessed",
+      "is not one the question had" in (edit_fails(o, ploc, twice) or ""), True)
+nan = rows(pq)
+nan["options"][0]["value"] = "lots"
+check("a value that is not a number is refused",
+      "must be a number from -1 to 1" in (edit_fails(o, ploc, nan) or ""), True)
+big = rows(pq)
+big["options"][0]["value"] = 1.5
+check("and so is one past 1",
+      "must be a number from -1 to 1" in (edit_fails(o, ploc, big) or ""), True)
+check("an empty question is refused", '"prompt"' in
+      (edit_fails(o, ploc, rows(pq, prompt="  ")) or ""), True)
+check("a place that is not a question's is refused",
+      [edit_fails(o, x, rows(pq)) is not None for x in
+       (["options", 0], ["common_questions", 99], ["common_questions", "0"],
+        ["common_questions", True], ["prompt"], "common_questions/0", None)],
+      [True] * 7)
+check("nothing is changed by a refused edit", M.dumps(o) == snap, True)
+
+o = raw()
+e = {"prompt": "What is this call mainly about?",
+     "options": [{"from": i, "text": s["text"], "value": s.get("value", 0)}
+                 for i, s in enumerate(o["options"])]}
+e["options"][0]["text"] = "A bank account or a card"
+e["options"][1]["value"] = 0.1
+e["options"].insert(0, {"from": None, "text": "A charity or a donation", "value": 0})
+e["options"][1], e["options"][2] = e["options"][2], e["options"][1]
+check("the root question: the subjects reworded, moved and added",
+      (M.edit_question(o, [], e), [x["id"] for x in o["options"][:3]],
+       o["options"][2]["text"]),
+      ({"copies": 0}, ["a_charity_or_a_donation", "tech_support", "bank_account"],
+       "A bank account or a card"))
+check("a new subject has no questions; a moved one keeps its own and its "
+      "ask list; a value is written only when there is one",
+      (o["options"][0], list(o["options"][1]), o["options"][1]["value"],
+       o["options"][2]["questions"] == RAW["options"][0]["questions"],
+       "value" in o["options"][2]),
+      ({"id": "a_charity_or_a_donation", "text": "A charity or a donation",
+        "questions": []}, ["id", "text", "value", "ask", "questions"], 0.1,
+       True, False))
+check("and the tree still checks, the common questions untouched",
+      (M.check_ontology(o), o["common_questions"] == RAW["common_questions"]),
+      ([], True))
+check("an older one-question file is edited as JSON, not here",
+      edit_fails(copy.deepcopy(ONTO), [], {"prompt": "x", "options": []}),
+      "this is an older one-question file - edit it as JSON instead")
+
+import web_ui                                                   # noqa: E402
+o = raw()
+ploc = ["common_questions", ci(o, "pressure")]
+e = rows(M.question_at(o, ploc), hint="Being polite is not pressure.")
+r = web_ui.mcq_edit({"text": shipped_text, "locator": ploc, "edit": e})
+check("the page's edit comes back as the file would be written, ready to "
+      "save, and nothing is written",
+      (r["copies"], r["problems"], json.loads(r["text"]) == r["ontology"],
+       r["text"].endswith("}\n"), r["text"] == M.dumps(r["ontology"]) + "\n",
+       open(os.path.join(HERE, "..", "knowledge", "mcq_ontology.json"),
+            encoding="utf-8").read() == shipped_text),
+      (0, [], True, True, True, True))
+try:
+    web_ui.mcq_edit({"text": "{not json", "locator": ploc, "edit": e})
+    check("text that does not parse is refused", False)
+except ValueError as x:
+    check("text that does not parse is refused", "does not parse" in str(x))
+
 print("\na quote after a blank line")
 check("a quote on its own line after a blank line is still read",
       M.find_quote('A\n\nQuote: "a security deposit of [Money]"'),

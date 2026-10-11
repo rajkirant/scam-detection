@@ -54,6 +54,7 @@ can import it without the venv.
 """
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -1890,6 +1891,213 @@ def to_file(onto):
     if runs:
         out["training"] = runs
     return out
+
+
+# ------------------------------------------------------ one question, edited
+# The page's Question tree edits one question at a time: its prompt, its
+# hint, whether it is recorded, and its options - their text, value, order,
+# and which are added or removed. The edit is made to the file as it was
+# read, not to the normalised tree, so what the edit does not touch - the
+# follow-ups an option opens, a subject's questions and ask list, training
+# history, key order - stays as it was, and dumps() writes it the way it
+# always has. A question is named by its place in the file:
+#
+#   []                                        the root question
+#   ["common_questions", i]                   a common question
+#   ["options", s, "questions", i]            a question of subject s
+#   <either of those> + ["options", k, "follow_up", j] ...   a follow-up
+
+_EDIT_O_KEYS = ("id", "text", "value", "absence", "follow_up")
+_EDIT_S_KEYS = ("id", "text", "value", "ask", "skip", "questions")
+
+
+def _is_index(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _locator_ok(loc):
+    if loc == []:
+        return True
+    if len(loc) >= 2 and loc[0] == "common_questions" and _is_index(loc[1]):
+        rest = loc[2:]
+    elif (len(loc) >= 4 and loc[0] == "options" and _is_index(loc[1])
+          and loc[2] == "questions" and _is_index(loc[3])):
+        rest = loc[4:]
+    else:
+        return False
+    return len(rest) % 4 == 0 and all(
+        rest[i] == "options" and _is_index(rest[i + 1])
+        and rest[i + 2] == "follow_up" and _is_index(rest[i + 3])
+        for i in range(0, len(rest), 4))
+
+
+def question_at(obj, locator):
+    """The question at `locator` in a file as read (see above), or a
+    ValueError when there is none there."""
+    loc = list(locator) if isinstance(locator, (list, tuple)) else None
+    if loc is None or not _locator_ok(loc):
+        raise ValueError("that is not the place of a question in the file")
+    cur = obj
+    for step in loc:
+        if isinstance(step, str):
+            cur = cur.get(step) if isinstance(cur, dict) else None
+        else:
+            cur = (cur[step] if isinstance(cur, list) and 0 <= step < len(cur)
+                   else None)
+        if cur is None:
+            break
+    if not isinstance(cur, dict) or not isinstance(cur.get("options"), list):
+        raise ValueError("that question is not where it was in the file - "
+                         "reload the file and try again")
+    return cur
+
+
+def _canon(q):
+    return json.dumps(q, sort_keys=True, ensure_ascii=False)
+
+
+def _all_questions(obj):
+    """Every question in a file as read, follow-ups included - not the root."""
+    out = []
+
+    def walk(qs):
+        for q in qs if isinstance(qs, list) else []:
+            if isinstance(q, dict):
+                out.append(q)
+                for o in q.get("options") or []:
+                    if isinstance(o, dict):
+                        walk(o.get("follow_up"))
+    walk(obj.get("common_questions"))
+    for s in obj.get("options") or []:
+        if isinstance(s, dict):
+            walk(s.get("questions"))
+    return out
+
+
+def copies_of(obj, q):
+    """The other questions in the file identical to q, follow-ups and all:
+    the money questions are asked under several subjects, one copy each."""
+    c = _canon(q)
+    return [x for x in _all_questions(obj) if x is not q and _canon(x) == c]
+
+
+def _ordered(d, first):
+    out = {k: d[k] for k in first if k in d}
+    out.update((k, v) for k, v in d.items() if k not in out)
+    return out
+
+
+def edit_question(obj, locator, edit, copies=True):
+    """Apply one question's edit to `obj`, a file as read, in place.
+
+    edit = {"prompt", "hint" (blank takes it out), "recorded": bool, "options":
+    [{"from": the option's index before the edit, or None for a new one,
+    "id" (a new option's; blank makes one from its text), "text", "value",
+    "absence": bool}]}. An option keeps everything else it had - the
+    follow-ups it opens, a subject's questions - wherever it moves to. The
+    root question takes only its prompt and its options (the subjects).
+
+    With `copies`, every other question in the file that was identical to
+    this one gets the same edit. Refused with a ValueError naming every
+    problem when the question would not be valid; returns {"copies": how
+    many other questions were changed too}.
+    """
+    if not isinstance(obj, dict):
+        raise ValueError("the file must hold one JSON object, {...}")
+    if _is_flat(obj):
+        raise ValueError("this is an older one-question file - edit it as "
+                         "JSON instead")
+    if not isinstance(edit, dict):
+        raise ValueError("the edit must be an object")
+    if not isinstance(locator, (list, tuple)):
+        raise ValueError("that is not the place of a question in the file")
+    root = len(locator) == 0
+    q = obj if root else question_at(obj, locator)
+    if root and not isinstance(obj.get("options"), list):
+        raise ValueError("the file has no root question to edit")
+    others = copies_of(obj, q) if copies and not root else []
+    old = q["options"]
+    rows = edit.get("options")
+    if not isinstance(rows, list):
+        raise ValueError('"options" must be a list')
+    used, opts = set(), []
+    taken = {str(old[r["from"]].get("id")) for r in rows
+             if isinstance(r, dict) and _is_index(r.get("from"))
+             and 0 <= r["from"] < len(old) and isinstance(old[r["from"]], dict)}
+    for n, r in enumerate(rows, 1):
+        if not isinstance(r, dict):
+            raise ValueError("option %d is not an object" % n)
+        text = str(r.get("text") or "").strip()
+        try:
+            value = float(r.get("value") or 0)
+        except (TypeError, ValueError):
+            raise ValueError("option %d: the value must be a number from -1 "
+                             "to 1, not %r" % (n, r.get("value")))
+        if not math.isfinite(value):
+            raise ValueError("option %d: the value must be a number from -1 "
+                             "to 1" % n)
+        src = r.get("from")
+        if src is not None:
+            if (not _is_index(src) or not 0 <= src < len(old)
+                    or not isinstance(old[src], dict) or src in used):
+                raise ValueError("option %d is not one the question had - "
+                                 "reload the file and try again" % n)
+            used.add(src)
+            o = copy.deepcopy(old[src])
+        else:
+            oid = str(r.get("id") or "").strip()
+            if oid and oid in taken:
+                raise ValueError('option %d: the id "%s" is used twice'
+                                 % (n, oid))
+            o = {"id": oid or _slug(text, taken)}
+            taken.add(o["id"])
+            if root:
+                o["questions"] = []
+        o["text"] = text
+        if root:
+            # a subject's value is written only when it has one, as to_file
+            if value:
+                o["value"] = value
+            else:
+                o.pop("value", None)
+            o = _ordered(o, _EDIT_S_KEYS)
+        else:
+            o["value"] = value
+            if r.get("absence"):
+                o["absence"] = True
+            else:
+                o.pop("absence", None)
+            o = _ordered(o, _EDIT_O_KEYS)
+        opts.append(o)
+    new = {k: v for k, v in q.items() if k != "options"} if not root else {}
+    new["prompt"] = str(edit.get("prompt") or "").strip()
+    if not root:
+        hint = str(edit.get("hint") or "").strip()
+        if hint:
+            new["hint"] = hint
+        else:
+            new.pop("hint", None)
+        if edit.get("recorded"):
+            new["role"] = ROLE_RECORDED
+        elif new.get("role") == ROLE_RECORDED:
+            new.pop("role")
+    new["options"] = opts
+    probs = []
+    if root:
+        _check_question({"prompt": new["prompt"], "options": opts},
+                        "the root question", probs, root=True)
+    else:
+        new = _ordered(new, _Q_KEYS)
+        _check_question(new, "this question", probs)
+    if probs:
+        raise ValueError("not applied: " + "; ".join(probs))
+    if root:
+        obj["prompt"], obj["options"] = new["prompt"], opts
+        return {"copies": 0}
+    for target in [q] + others:
+        target.clear()
+        target.update(copy.deepcopy(new))
+    return {"copies": len(others)}
 
 
 def run_train(args):
