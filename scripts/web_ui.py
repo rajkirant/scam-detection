@@ -2418,6 +2418,8 @@ class Handler(BaseHTTPRequestHandler):
                 out = mcq_save(form)
                 sys.stderr.write("saved ontology %s\n" % out["path"])
                 return self._send(200, out)
+            if u.path == "/api/mcq/edit":
+                return self._send(200, mcq_edit(form))
             if u.path == "/api/mcq/train_question":
                 meta = start_mcq_train_run(form)
                 sys.stderr.write("started %s  train %s on %s\n"
@@ -2865,6 +2867,27 @@ def mcq_save(form):
                          "- save under another name" % path.name)
     path.write_text(mcq_ontology.dumps(obj) + "\n", encoding="utf-8")
     return mcq_read("knowledge/" + path.name)
+
+
+def mcq_edit(form):
+    """One question edited on the Question tree tab, applied to the editor's
+    text. Nothing is written here: Save writes the text, as it does after an
+    edit in the JSON tab, so several questions can be edited before one Save.
+    The text comes back as the file writer lays it out, with the tree it
+    parses to and whatever would still stop it being saved."""
+    text = str(form.get("text") or "")
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError("the JSON tab does not parse, so there is nothing to "
+                         "edit: %s (line %d, column %d)"
+                         % (e.msg, e.lineno, e.colno))
+    out = mcq_ontology.edit_question(obj, form.get("locator"),
+                                     form.get("edit"),
+                                     copies=bool(form.get("copies", True)))
+    return {"text": mcq_ontology.dumps(obj) + "\n", "ontology": obj,
+            "copies": out["copies"],
+            "problems": mcq_ontology.check_ontology(obj)}
 
 
 def mcq_country_path(rel):
@@ -3457,6 +3480,60 @@ PAGE = r"""<!doctype html>
                     margin:0 -6px;
                     background:color-mix(in srgb, var(--accent) 9%, transparent); }
   .tq-opt.tq-dim { opacity:.45; }
+  /* the Question tree's Edit mode: a pencil on every card, which opens
+     its question's form in a dialog over the tree */
+  .tq-hint { font-size:12px; color:var(--dim); margin:2px 0 4px; }
+  .tq-hint summary { cursor:pointer; width:max-content; }
+  .tq-hint div { white-space:pre-wrap; margin-top:2px; }
+  .tq-editbtn { float:right; font-size:12px; font-weight:600; padding:2px 9px;
+                margin:-2px 0 4px 8px; background:var(--panel); color:var(--accent);
+                border:1px solid var(--line); }
+  /* the form opens over the page, as wide as the screen allows, so a
+     follow-up deep in the tree gets as much room as the root */
+  .tq-dialog { width:min(780px, calc(100vw - 24px)); max-width:none;
+               max-height:calc(100vh - 32px); overflow:auto; padding:18px 20px;
+               border:1px solid var(--line); border-radius:10px;
+               background:var(--panel); color:var(--ink);
+               box-shadow:0 14px 44px rgba(0,0,0,.28); }
+  .tq-dialog::backdrop { background:rgba(0,0,0,.4); }
+  .tq-edit > label:not(.inline) { margin:12px 0 4px; }
+  .tq-edit textarea { min-height:70px; font:inherit; font-size:13px; line-height:1.5; }
+  .te-row { display:grid; align-items:center; gap:6px; padding:4px 0;
+            grid-template-columns:auto auto 74px minmax(160px,1fr) auto auto auto;
+            border-bottom:1px solid var(--line); }
+  .te-row > button { padding:3px 8px; font-size:12px; background:var(--panel);
+                     color:var(--ink); border:1px solid var(--line); }
+  .te-row > button[disabled] { opacity:.35; cursor:default; }
+  .te-row input[type=number] { width:74px; padding:6px 6px; border:1px solid var(--line);
+                               border-radius:6px; background:var(--panel);
+                               color:var(--ink); font:12.5px var(--mono); }
+  .te-row input[type=number][disabled] { opacity:.5; }
+  .te-row .te-text { padding:6px 9px; }
+  .te-row .te-newid { width:150px; padding:6px 9px; font:12px var(--mono); }
+  .te-id { font:11.5px var(--mono); color:var(--dim); max-width:180px;
+           overflow-wrap:anywhere; }
+  .te-row label.inline { margin:0; }
+  .te-row label.inline { font-size:12px; white-space:nowrap; }
+  .te-row .te-del { color:var(--bad); }
+  .te-fu { grid-column:4 / -1; font-size:11.5px; color:var(--dim); margin-top:-2px; }
+  .te-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+                margin-top:12px; }
+  .te-actions button { margin:0; }
+  .te-actions .go { width:auto; }
+  .te-actions .te-cancel, .te-add, #mcqtreediscard { background:var(--panel);
+    color:var(--ink); border:1px solid var(--line); }
+  .te-add { margin-top:8px; padding:5px 12px; font-size:12.5px; }
+  .te-err { color:var(--bad); font-size:12.5px; margin-top:8px; white-space:pre-wrap; }
+  /* on a phone each row is the text on its own line, then its controls,
+     then its id */
+  @media (max-width: 760px) {
+    .tq-dialog { padding:14px 12px; }
+    .te-row { grid-template-columns:auto auto 74px 1fr auto; }
+    .te-row .te-text { grid-column:1 / -1; order:-1; }
+    .te-row .te-id, .te-row .te-newid { grid-column:1 / -1; order:1; width:100%;
+                                        white-space:normal; overflow-wrap:anywhere; }
+    .te-fu { grid-column:1 / -1; order:2; margin-top:0; }
+  }
   .mcqopt b { font-family:var(--mono); min-width:14px; }
   .mcqopt .pill { flex:none; }
   textarea.json { min-height:420px; }
@@ -4835,8 +4912,23 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <div class="card">
         <div class="hint" style="margin-top:0" id="mcqtreenote"></div>
         <div class="tq-chips" id="mcqtreechips"></div>
+        <label class="inline" style="margin-top:12px">
+          <input type="checkbox" id="mcqtreeedit">
+          <span><b>Edit questions</b>: a ✎ on every question opens its
+            wording, its hint and its options</span>
+        </label>
+        <div id="mcqtreesave" hidden>
+          <div class="askrow" style="margin-top:12px; gap:10px">
+            <label for="mcqtreesavename" style="margin:0">Save as knowledge/</label>
+            <input type="text" id="mcqtreesavename" spellcheck="false" style="flex:1; min-width:180px">
+            <button class="go" id="mcqtreesavego" style="margin:0; width:auto">Save</button>
+            <button id="mcqtreediscard">Discard edits</button>
+          </div>
+        </div>
+        <div class="hint" id="mcqtreemsg" role="status" aria-live="polite"></div>
       </div>
       <div class="card" id="mcqtree"></div>
+      <dialog id="mcqeditdlg" class="tq-dialog" aria-labelledby="mcqedittitle"></dialog>
     </div>
 
     <div id="q-edit" hidden>
@@ -4851,10 +4943,13 @@ per held-out call, so it takes minutes, not seconds.</pre>
           -1 (legitimate) to 1 (scam). <code>not_mentioned</code> and every
           option of a <code>"role": "recorded"</code> question score 0. An
           option's <code>follow_up</code> questions are asked only when it is
-          chosen. A subject's <code>ask</code> list is the order its calls are
-          asked: its own question ids, and common ones as
-          <code>common/&lt;id&gt;</code>. Anything else in the file is kept but
-          not read.</div>
+          chosen. A question's <code>hint</code>, a sentence or two for the
+          model on what counts, goes into its prompt. A subject's
+          <code>ask</code> list is the order its calls are asked: its own
+          question ids, and common ones as <code>common/&lt;id&gt;</code>.
+          Anything else in the file is kept but not read. The Question tree
+          tab's <em>Edit questions</em> changes this same text, one question
+          at a time.</div>
         <textarea id="mcqjson" class="json" spellcheck="false"></textarea>
         <div class="askrow" style="margin-top:10px">
           <label for="mcqsavename" style="margin:0">Save as knowledge/</label>
@@ -6282,6 +6377,17 @@ const MFIELDS = {tepochs: 'epochs', tbatch: 'batch_size', tmaxlen: 'max_length',
 // someone - and reloading while reading an answer comes back to the answer
 // pane rather than to the benchmark form.
 function showPage(name) {
+  // the Question tree's form is a modal on the MCQ page: leaving the page by
+  // the Back button or a typed address must not leave it open, out of sight,
+  // with every other control blocked behind it
+  if (name !== 'mcq' && $('mcqeditdlg').open) {
+    if (mcqEditing && mcqEditing.dirty
+        && !confirm('Drop the changes to the question you are editing?')) {
+      history.replaceState(null, '', '#mcq');
+      return;
+    }
+    mcqEditClose();
+  }
   if (location.hash.slice(1).split('/')[0] !== name)
     history.replaceState(null, '', name === 'bench' ? location.pathname : '#' + name);
   for (const b of $('pages').querySelectorAll('button'))
@@ -7751,11 +7857,17 @@ function paintVerdict(r) {
 let MCQ = null, mcqFile = null, mcqOnto = null;
 let mcqBuildRun = null, mcqBuildTimer = null;
 // the saved question picked for "Your own question", and a training run
-let mcqSaved = null, mcqTrainRun = null, mcqTrainTimer = null;
+let mcqSaved = null, mcqTrainRun = null, mcqTrainTimer = null, mcqBooting = false;
 
 async function mcqBoot() {
+  // a double click on the page's button calls this twice before the first
+  // reply sets MCQ; a second boot would load the file again over the first,
+  // and over any form opened in between
+  if (mcqBooting) return;
+  mcqBooting = true;
   const cfg = await api('/api/mcq/config');
   if (cfg.error || !cfg.datasets) {
+    mcqBooting = false;
     $('mcqerr').textContent = cfg.error || 'unexpected reply from /api/mcq/config';
     return;
   }
@@ -7780,7 +7892,14 @@ async function mcqBoot() {
   $('mcqbcalls').addEventListener('input', mcqBuildForm);
   $('mcqbname').addEventListener('input', () => { $('mcqbname').dataset.typed = '1'; });
 
-  $('mcqfile').onchange = () => mcqLoad($('mcqfile').value);
+  $('mcqfile').onchange = () => {
+    // switching files reloads the editor: say so when that drops edits
+    if (mcqDirty() && !confirm('Drop your unsaved edits to ' + mcqFile + '?')) {
+      $('mcqfile').value = mcqFile;
+      return;
+    }
+    mcqLoad($('mcqfile').value);
+  };
   $('mcqload').onclick = mcqLoadRow;
   forgetRowOnEdit('mcqtranscript', 'mcqinfo');
   $('mcqtranscript').addEventListener('input', mcqSize);
@@ -7806,8 +7925,47 @@ async function mcqBoot() {
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value, skip: $('mcqevskip').value,
     quotes: $('mcqquotes').checked, hints: $('mcqhints').checked});
-  $('mcqsave').onclick = mcqSave;
+  $('mcqsave').onclick = () => mcqSave('edit');
   $('mcqjson').addEventListener('input', mcqJsonCheck);
+  $('mcqtreeedit').onchange = mcqTreeRedraw;
+  // once, though a quick double click on the page's button boots it twice
+  if (!mcqEditWired) {
+    mcqEditWired = true;
+    const dlg = $('mcqeditdlg');
+    // Escape closes the form like Cancel, asking first when there are
+    // changes. It is caught here, before the browser treats it as a request
+    // to close: a browser may close a dialog on a repeated Escape whatever
+    // the answer to "keep?" was.
+    dlg.addEventListener('keydown', e => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      mcqEditEscape();
+    });
+    // any other request to close it, such as a phone's back gesture: asked
+    // the same way, when the browser lets it be refused
+    dlg.addEventListener('cancel', e => {
+      if (!e.cancelable) return;
+      e.preventDefault();
+      mcqEditEscape();
+    });
+    // closed by the browser rather than by mcqEditClose: forget the form,
+    // so that the pencils open forms again
+    dlg.addEventListener('close', () => { if (mcqEditing) mcqEditFocus(mcqEditClose()); });
+    // applied but unsaved edits live only in this page
+    window.addEventListener('beforeunload', e => {
+      if (mcqFile && (mcqDirty() || (mcqEditing && mcqEditing.dirty))) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    });
+  }
+  $('mcqtreesavego').onclick = () => mcqSave('tree');
+  $('mcqtreediscard').onclick = mcqDiscard;
+  // one name to save under, typed in either tab
+  $('mcqsavename').addEventListener('input', () => {
+    $('mcqtreesavename').value = $('mcqsavename').value; });
+  $('mcqtreesavename').addEventListener('input', () => {
+    $('mcqsavename').value = $('mcqtreesavename').value; });
   $('mcqbgo').onclick = mcqTrainOnto;
   for (const b of $('mcqtabs').querySelectorAll('button'))
     b.onclick = () => mcqTab(b.dataset.qtab);
@@ -7828,11 +7986,15 @@ async function mcqFiles(list, pick) {
     $('mcqerr').textContent = 'knowledge/ holds no ontology - restore knowledge/mcq_ontology.json';
     return;
   }
+  mcqFileOptions(list);
+  $('mcqfile').value = list.some(o => o.path === pick) ? pick : list[0].path;
+  await mcqLoad($('mcqfile').value);
+}
+
+function mcqFileOptions(list) {
   $('mcqfile').innerHTML = list.map(o => `<option value="${esc(o.path)}">`
     + `${esc(o.name)} — ${o.options} subjects, ${o.questions} questions`
     + `${o.trained ? ', trained' : ''}</option>`).join('');
-  $('mcqfile').value = list.some(o => o.path === pick) ? pick : list[0].path;
-  await mcqLoad($('mcqfile').value);
 }
 
 async function mcqRefreshFiles(pick) {
@@ -7847,12 +8009,20 @@ async function mcqLoad(path) {
   if (r.error) { $('mcqerr').textContent = r.error; return; }
   mcqFile = r.path;
   mcqOnto = r.ontology;
+  mcqLoadedText = r.text;
   $('mcqjson').value = r.text;
-  $('mcqsavename').value = r.path.replace(/^knowledge\//, '');
-  $('mcqsavemsg').textContent = '';
+  $('mcqsavename').value = $('mcqtreesavename').value
+    = r.path.replace(/^knowledge\//, '');
+  $('mcqsavemsg').textContent = $('mcqtreemsg').textContent = '';
   mcqPaint(r);
   mcqBuildForm();
-  mcqTree(r.ontology, null);
+  // the tree is drawn from the file as written, so that an edit made on it
+  // changes only what it touches; an older one-question file is drawn as it
+  // is read, as a tree, and is edited as JSON
+  let raw = null;
+  try { raw = JSON.parse(r.text); } catch (e) { /* drawn from r.ontology */ }
+  mcqTree(r.ontology && r.ontology.converted_from ? r.ontology
+          : (raw && typeof raw === 'object' ? raw : r.ontology), null);
 }
 
 // questions in a list, follow-ups included
@@ -8295,24 +8465,28 @@ function mcqJsonCheck() {
     $('mcqsavemsg').textContent = '';
     $('mcqsavemsg').style.color = '';
     // the tree follows the edit as soon as it parses
-    mcqTree(obj, 'Showing your unsaved edits. Save to keep them.');
+    mcqTree(obj, mcqDirty() ? MCQ_UNSAVED : null);
   } catch (e) {
     $('mcqsavemsg').textContent = 'not valid JSON yet: ' + e.message;
     $('mcqsavemsg').style.color = 'var(--bad)';
   }
 }
 
-async function mcqSave() {
-  const name = $('mcqsavename').value.trim();
-  $('mcqsavemsg').style.color = 'var(--bad)';
+// from the JSON tab ('edit') or the Question tree tab ('tree'): the same
+// text, the editor's, written under the name typed in that tab
+async function mcqSave(from) {
+  const tree = from === 'tree';
+  const msg = $(tree ? 'mcqtreemsg' : 'mcqsavemsg');
+  const name = $(tree ? 'mcqtreesavename' : 'mcqsavename').value.trim();
+  msg.style.color = 'var(--bad)';
   const r = await api('/api/mcq/save', {path: 'knowledge/' + name,
                                         text: $('mcqjson').value});
-  if (r.error) { $('mcqsavemsg').textContent = r.error; return; }
+  if (r.error) { msg.textContent = r.error; return; }
   // reloading the list reloads the file, which clears this line - so say it
   // afterwards
   await mcqRefreshFiles(r.path);
-  $('mcqsavemsg').style.color = '';
-  $('mcqsavemsg').textContent = 'saved ' + r.path
+  msg.style.color = '';
+  msg.textContent = 'saved ' + r.path
     + (r.path === MCQ.default ? ' — this is the shipped file, which git '
        + 'tracks: if a later Update changes it too, Update will stop and ask. '
        + 'Saving under your own name avoids that.' : '');
@@ -8320,6 +8494,15 @@ async function mcqSave() {
 
 // ---- the question tree tab
 let mcqTreeSubject = null;
+// the editor's text as last read or saved: anything else is unsaved
+let mcqLoadedText = '';
+const MCQ_UNSAVED = 'Showing your unsaved edits. Save to keep them.';
+const mcqDirty = () => $('mcqjson').value !== mcqLoadedText;
+// what the tree was last drawn from; where each question sits in it (the
+// locator mcq_ontology.edit_question takes); the cards with a pencil, by
+// number; and the form that is open, if one is
+let mcqTreeObj = null, mcqTreeNote = null, mcqTreeLoc = new Map(),
+    mcqTreeCards = [], mcqEditing = null, mcqEditWired = false;
 
 const mcqNum = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
 const mcqFmt = v => (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(2)
@@ -8366,6 +8549,18 @@ function mcqTreeQ(q, tag, path, call) {
   const rec = q.role === 'recorded';
   const got = call ? call.answers.get(path) : null;
   if (call && !got) return '';
+  // drawing the file (no call): the hint the model is given, folded, and in
+  // Edit mode a pencil that opens this question's form
+  let pen = '', hint = '';
+  if (!call) {
+    if (q.hint) hint = `<details class="tq-hint"><summary>hint for the model</summary>`
+      + `<div>${esc(q.hint)}</div></details>`;
+    if (mcqTreeEditOn() && mcqTreeLoc.has(q)) {
+      mcqTreeCards.push({q, loc: mcqTreeLoc.get(q), tag});
+      pen = `<button class="tq-editbtn" data-card="${mcqTreeCards.length - 1}" `
+        + `aria-label="Edit the question: ${esc(q.prompt || q.id || '')}">✎ Edit</button>`;
+    }
+  }
   const opts = (q.options || []).map(op => {
     const v = mcqNum(op.value);
     const picked = got && got.option === op.id;
@@ -8390,15 +8585,21 @@ function mcqTreeQ(q, tag, path, call) {
         : 'The model gave no quote' + (got.answered ? ` (its whole reply: `
           + `“${esc(got.answered.trim())}”)` : '')}, so its pick, `
       + `<s>${esc(got.picked || '')}</s>, counts as Not stated</div>` : '';
-  return `<div class="tq-card ${rec ? 'recorded' : ''}">
+  return `<div class="tq-card ${rec ? 'recorded' : ''}">${pen}
     <div class="tq-q">${esc(q.prompt || '(no prompt)')}<span class="tq-tag">${esc(tag)}`
     + `${rec ? ' · recorded, scores 0' : ''} · ${esc(q.id || '')}</span></div>
-    ${opts}${overruled}</div>`;
+    ${hint}${opts}${overruled}</div>`;
 }
 
 // draw the tree of `o` (a parsed file, saved or being edited); note says
 // which of the two it is
 function mcqTree(o, note) {
+  mcqTreeObj = o; mcqTreeNote = note;
+  mcqTreeLoc = o && typeof o === 'object' ? mcqLocate(o) : new Map();
+  // the form was for the tree as it was drawn; a new drawing makes it stale
+  if (mcqEditing) mcqEditClose();
+  mcqTreeCards = [];
+  $('mcqtreesave').hidden = !mcqDirty();
   if (!o || !Array.isArray(o.options) || !o.options.length) {
     $('mcqtreenote').textContent = note ? 'The edit has no subjects to draw yet.'
       : 'This file cannot be drawn: it has no subjects.';
@@ -8412,7 +8613,8 @@ function mcqTree(o, note) {
   $('mcqtreenote').textContent = (note ? note + ' ' : '')
     + 'Pick a subject to see the questions its calls are asked, in order, '
     + 'with each option\'s value. Follow-ups branch off the option that opens '
-    + 'them.';
+    + 'them.' + (mcqTreeFlat(o) ? ' This is an older one-question file: edit '
+      + 'it in the JSON tab.' : '');
   $('mcqtreechips').innerHTML = subs.map(x => `<button data-s="${esc(x.id)}"`
     + ` class="${x.id === mcqTreeSubject ? 'on' : ''}">${esc(x.text || x.id)}`
     + ` <span class="muted">${count(x)}</span></button>`).join('');
@@ -8423,11 +8625,18 @@ function mcqTree(o, note) {
   const order = mcqTreeOrder(o, subj);
   let lo = mcqNum(subj.value), hi = lo;
   for (const {q} of order) { const [a, b] = mcqTreeRange(q); lo += a; hi += b; }
+  // the root question - the subjects - is card 0 when there are pencils
+  let rootPen = '';
+  if (mcqTreeEditOn()) {
+    mcqTreeCards.push({q: o, loc: [], tag: 'root', root: true});
+    rootPen = '<button class="tq-editbtn" data-card="0" aria-label="Edit the root '
+      + 'question and its subjects">✎ Edit</button>';
+  }
   const steps = order.map(({q, common}, i) => `<div class="tq-step">
       <div class="tq-num">${i + 1}</div>${mcqTreeQ(q, common ? 'common' : 'subject', '', null)}</div>`
   ).join('');
   $('mcqtree').innerHTML = `
-    <div class="tq-root"><b>${esc(o.prompt || '(no root prompt)')}</b>
+    <div class="tq-root">${rootPen}<b>${esc(o.prompt || '(no root prompt)')}</b>
       <span class="tq-v ${mcqNum(subj.value) > 0 ? 'pos' : mcqNum(subj.value) < 0 ? 'neg' : ''}">`
       + `${mcqFmt(mcqNum(subj.value))}</span> ${esc(subj.text || subj.id)}
       <span class="tq-tag">picks the subject; ${subs.length} to choose from</span></div>
@@ -8437,6 +8646,293 @@ function mcqTree(o, note) {
         legitimate, 0 neutral · this path can score from
         <b>${mcqFmt(lo)}</b> to <b>${mcqFmt(hi)}</b></div></div>
     </div>`;
+  for (const b of $('mcqtree').querySelectorAll('.tq-editbtn'))
+    b.onclick = () => mcqEditOpen(+b.dataset.card);
+}
+
+function mcqTreeRedraw() { mcqTree(mcqTreeObj, mcqTreeNote); }
+
+// an older one-question file: options with a verdict and no common
+// questions, the same test as mcq_ontology._is_flat
+function mcqTreeFlat(o) {
+  return !!o && !(o.common_questions || []).length && Array.isArray(o.options)
+    && o.options.some(x => x && typeof x === 'object' && 'verdict' in x);
+}
+
+function mcqTreeEditOn() {
+  return $('mcqtreeedit').checked && !mcqTreeFlat(mcqTreeObj);
+}
+
+// question object -> its place in the file, as mcq_ontology.question_at
+// reads it: ["common_questions", i], ["options", s, "questions", i], and
+// ["options", k, "follow_up", j] more for each follow-up
+function mcqLocate(o) {
+  const at = new Map();
+  const isQ = q => q && typeof q === 'object' && !Array.isArray(q);
+  const walk = (q, loc) => {
+    at.set(q, loc);
+    (Array.isArray(q.options) ? q.options : []).forEach((op, k) => {
+      const fu = op && Array.isArray(op.follow_up) ? op.follow_up : [];
+      fu.forEach((f, j) => { if (isQ(f)) walk(f, loc.concat(['options', k, 'follow_up', j])); });
+    });
+  };
+  (Array.isArray(o.common_questions) ? o.common_questions : []).forEach((q, i) => {
+    if (isQ(q)) walk(q, ['common_questions', i]); });
+  (Array.isArray(o.options) ? o.options : []).forEach((s, si) => {
+    const qs = s && Array.isArray(s.questions) ? s.questions : [];
+    qs.forEach((q, i) => { if (isQ(q)) walk(q, ['options', si, 'questions', i]); });
+  });
+  return at;
+}
+
+// key order does not make two questions different, as in Python's
+// json.dumps(sort_keys=True)
+function mcqCanon(v) {
+  if (Array.isArray(v)) return '[' + v.map(mcqCanon).join(',') + ']';
+  if (v && typeof v === 'object')
+    return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':'
+      + mcqCanon(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
+
+// the other questions in the drawn file identical to q: the money questions
+// are asked under several subjects, one copy each
+function mcqCopies(q) {
+  const c = mcqCanon(q);
+  let n = 0;
+  for (const x of mcqTreeLoc.keys()) if (x !== q && mcqCanon(x) === c) n++;
+  return n;
+}
+
+// ---- one question's form, in a dialog over the tree. While it is open
+// nothing else on the page can be pressed, so the form cannot be lost to a
+// subject chip, the JSON tab or Save; Cancel and Escape ask first.
+function mcqEditOpen(n) {
+  const card = mcqTreeCards[n];
+  const dlg = $('mcqeditdlg');
+  if (!card || mcqEditing || dlg.open) return;
+  dlg.innerHTML = mcqEditForm(card);
+  const form = dlg.querySelector('.tq-edit');
+  mcqEditing = {card, form, dirty: false, n};
+  form.addEventListener('input', () => { mcqEditing.dirty = true; });
+  form.addEventListener('click', e => mcqEditClick(e, form));
+  const rec = form.querySelector('.te-rec');
+  if (rec) rec.onchange = () => mcqEditRecorded(form);
+  mcqEditRecorded(form);
+  mcqEditArrows(form);
+  dlg.showModal();
+  $('mcqeprompt').focus();
+}
+
+// Escape or Cancel: close, asking first when the form was changed
+function mcqEditEscape() {
+  if (mcqEditing && mcqEditing.dirty
+      && !confirm('Drop the changes to this question?')) return;
+  mcqEditFocus(mcqEditClose());
+}
+
+// close the form; returns the number of the card it was for
+function mcqEditClose() {
+  const dlg = $('mcqeditdlg');
+  const n = mcqEditing ? mcqEditing.n : null;
+  mcqEditing = null;
+  if (dlg.open) dlg.close();
+  dlg.innerHTML = '';
+  return n;
+}
+
+// back to the pencil the form was opened from, once the tree is drawn
+function mcqEditFocus(n) {
+  const b = n === null ? null
+    : $('mcqtree').querySelector(`.tq-editbtn[data-card="${n}"]`);
+  if (b) b.focus();
+}
+
+// text as the loader reads it: line breaks and runs of spaces are one space
+const mcqOneLine = t => String(t || '').replace(/\s+/g, ' ').trim();
+
+function mcqEditForm(card) {
+  const q = card.q, root = !!card.root;
+  const copies = root ? 0 : mcqCopies(q);
+  const rows = (Array.isArray(q.options) ? q.options : [])
+    .map((op, i) => mcqEditRow(op && typeof op === 'object' ? op : {}, i, root)).join('');
+  const what = root ? 'subject' : 'option';
+  return `<div class="tq-edit">
+    <div class="tq-q"><span id="mcqedittitle">${root ? 'The root question: what the call is about'
+      : 'Editing a ' + esc(card.tag) + ' question'}</span> <span class="tq-tag">${
+      root ? 'it picks the subject; it does not decide the verdict' : esc(q.id || '')}</span></div>
+    ${card.tag === 'common' ? '<div class="hint">A common question: the change '
+      + 'applies to every subject that asks it.</div>' : ''}
+    <label for="mcqeprompt">Question</label>
+    <input type="text" class="te-prompt" id="mcqeprompt" value="${esc(mcqOneLine(q.prompt))}" spellcheck="true">
+    ${root ? '' : `<label for="mcqehint">Hint <span class="muted" style="font-weight:400">— a sentence
+      or two for the model on what counts and what does not; blank for none</span></label>
+    <textarea class="te-hint" id="mcqehint">${esc(mcqOneLine(q.hint))}</textarea>
+    <label class="inline" style="margin-top:10px"><input type="checkbox" class="te-rec"
+      ${q.role === 'recorded' ? 'checked' : ''}><span>Recorded: kept to explain the
+      verdict, every option scores 0 and needs no quote</span></label>`}
+    <label>${root ? 'Subjects' : 'Options'} <span class="muted" style="font-weight:400">—
+      value from −1 (legitimate) to +1 (scam)${root ? '' : '; the model is told they run '
+      + 'from the strongest scam sign to the strongest legitimate one, Not stated last'}</span></label>
+    <div class="te-rows">${rows}</div>
+    <button class="te-add">+ Add ${root ? 'a subject' : 'an option'}</button>
+    ${copies ? `<label class="inline" style="margin-top:10px"><input type="checkbox"
+      class="te-copies" checked><span>Also change the ${copies} identical
+      ${copies === 1 ? 'copy' : 'copies'} of this question elsewhere in the
+      tree</span></label>` : ''}
+    <div class="te-err"></div>
+    <div class="te-actions"><button class="go te-apply">Apply</button>
+      <button class="te-cancel">Cancel</button>
+      <span class="hint" style="margin:0">Apply changes the tree here; Save
+        writes the file. A new ${what}'s id is made from its text when left
+        blank.</span></div>
+  </div>`;
+}
+
+// one option (or subject) row; `from` is its index before the edit, null
+// for a new one
+function mcqEditRow(op, from, root) {
+  const kids = root ? (Array.isArray(op.questions) ? op.questions.length : 0)
+    : (Array.isArray(op.follow_up) ? op.follow_up.length : 0);
+  const nm = op.id === 'not_mentioned';
+  return `<div class="te-row" data-from="${from === null ? '' : from}" data-kids="${kids}">
+    <button class="te-up" title="Move up" aria-label="Move up">↑</button>
+    <button class="te-down" title="Move down" aria-label="Move down">↓</button>
+    <input type="number" class="te-val" step="0.1" min="-1" max="1"
+      value="${mcqNum(op.value)}" ${nm ? 'disabled data-nm="1" title="Not stated always scores 0"'
+      : 'title="value: −1 legitimate … +1 scam"'} aria-label="value">
+    <input type="text" class="te-text" value="${esc(mcqOneLine(op.text))}"
+      placeholder="the option, as the model reads it" aria-label="option text">
+    ${root ? '<span></span>' : `<label class="inline" title="An option that says
+      something did not happen: it needs no quote"><input type="checkbox" class="te-abs"
+      ${op.absence ? 'checked' : ''}>absence</label>`}
+    ${from === null ? '<input type="text" class="te-newid" placeholder="id (blank: from the text)" spellcheck="false" aria-label="new id">'
+      : `<span class="te-id" title="its id">${esc(op.id || '')}</span>`}
+    <button class="te-del" title="Remove" aria-label="Remove">✕</button>
+    ${kids ? `<div class="te-fu">${root ? `has ${kids} question${kids === 1 ? '' : 's'}
+      of its own, which go with it` : `opens ${kids} follow-up${kids === 1 ? '' : 's'},
+      which move with it`}</div>` : ''}
+  </div>`;
+}
+
+function mcqEditArrows(form) {
+  const rows = [...form.querySelectorAll('.te-row')];
+  rows.forEach((r, i) => {
+    r.querySelector('.te-up').disabled = i === 0;
+    r.querySelector('.te-down').disabled = i === rows.length - 1;
+  });
+}
+
+// recorded: every value is 0, so the boxes are set to 0 and locked - and
+// given back if the box is unticked again
+function mcqEditRecorded(form) {
+  const rec = form.querySelector('.te-rec');
+  if (!rec) return;
+  for (const v of form.querySelectorAll('.te-val')) {
+    if (v.dataset.nm) continue;
+    if (rec.checked) {
+      if (!v.disabled) v.dataset.prev = v.value;
+      v.value = 0; v.disabled = true;
+    } else if (v.disabled) {
+      v.disabled = false;
+      if (v.dataset.prev !== undefined) v.value = v.dataset.prev;
+    }
+  }
+}
+
+function mcqEditClick(e, form) {
+  const b = e.target.closest('button');
+  if (!b || !form.contains(b)) return;
+  const row = b.closest('.te-row');
+  if (b.classList.contains('te-up') && row.previousElementSibling) {
+    row.parentNode.insertBefore(row, row.previousElementSibling);
+  } else if (b.classList.contains('te-down') && row.nextElementSibling) {
+    row.parentNode.insertBefore(row.nextElementSibling, row);
+  } else if (b.classList.contains('te-del')) {
+    const kids = +row.dataset.kids;
+    const root = mcqEditing.card.root;
+    if (kids && !confirm(root
+        ? `This subject has ${kids} question${kids === 1 ? '' : 's'} of its own. Remove it and them?`
+        : `This option opens ${kids} follow-up question${kids === 1 ? '' : 's'}. Remove it and them?`)) return;
+    row.remove();
+  } else if (b.classList.contains('te-add')) {
+    const rows = form.querySelector('.te-rows');
+    const tmp = document.createElement('div');
+    tmp.innerHTML = mcqEditRow({value: 0}, null, mcqEditing.card.root);
+    const fresh = tmp.firstElementChild;
+    // a new option goes just before Not stated, as training adds them
+    const nm = [...rows.querySelectorAll('.te-row')].find(r =>
+      (r.querySelector('.te-id') || {}).textContent === 'not_mentioned');
+    rows.insertBefore(fresh, nm || null);
+    mcqEditRecorded(form);
+    fresh.querySelector('.te-text').focus();
+  } else if (b.classList.contains('te-cancel')) {
+    mcqEditEscape();
+    return;
+  } else if (b.classList.contains('te-apply')) {
+    mcqEditApply(form);
+    return;
+  } else {
+    return;
+  }
+  mcqEditing.dirty = true;
+  mcqEditArrows(form);
+}
+
+async function mcqEditApply(form) {
+  const err = form.querySelector('.te-err');
+  err.textContent = '';
+  const card = mcqEditing.card;
+  const problems = [];
+  const options = [...form.querySelectorAll('.te-row')].map((r, i) => {
+    const v = r.querySelector('.te-val');
+    const value = v.value === '' ? 0 : Number(v.value);
+    if (v.validity.badInput || !isFinite(value) || value < -1 || value > 1)
+      problems.push(`option ${i + 1}: the value must be a number from -1 to 1`);
+    if (!r.querySelector('.te-text').value.trim())
+      problems.push(`option ${i + 1} has no text`);
+    const nid = r.querySelector('.te-newid');
+    const abs = r.querySelector('.te-abs');
+    return {from: r.dataset.from === '' ? null : +r.dataset.from,
+            id: nid ? nid.value.trim() : undefined,
+            text: r.querySelector('.te-text').value, value,
+            absence: !!(abs && abs.checked)};
+  });
+  const prompt = form.querySelector('.te-prompt').value;
+  if (!prompt.trim()) problems.unshift('the question is empty');
+  if (problems.length) { err.textContent = problems.join('\n'); return; }
+  const hint = form.querySelector('.te-hint');
+  const rec = form.querySelector('.te-rec');
+  const copies = form.querySelector('.te-copies');
+  const btn = form.querySelector('.te-apply');
+  btn.disabled = true;
+  const mine = mcqEditing;
+  const r = await api('/api/mcq/edit', {
+    text: $('mcqjson').value, locator: card.loc,
+    edit: {prompt, hint: hint ? hint.value : undefined,
+           recorded: !!(rec && rec.checked), options},
+    copies: !!(copies && copies.checked)});
+  btn.disabled = false;
+  // closed with Escape while the server was answering: the edit is dropped
+  if (mcqEditing !== mine) return;
+  if (r.error) { err.textContent = r.error; return; }
+  $('mcqjson').value = r.text;
+  $('mcqsavemsg').textContent = '';
+  const n = mcqEditClose();
+  mcqTree(r.ontology, mcqDirty() ? MCQ_UNSAVED : null);
+  mcqEditFocus(n);
+  const m = $('mcqtreemsg');
+  m.style.color = r.problems.length ? 'var(--bad)' : '';
+  m.textContent = (mcqDirty() ? 'Applied' + (r.copies ? ` here and to ${r.copies} `
+      + `identical cop${r.copies === 1 ? 'y' : 'ies'}` : '')
+      + '. Not saved yet: Save writes the file.' : 'No change.')
+    + (r.problems.length ? ' The file still has problems, so it cannot be '
+       + 'saved until they are fixed: ' + r.problems.join('; ') : '');
+}
+
+async function mcqDiscard() {
+  if (!confirm('Drop every unsaved edit and reload ' + mcqFile + ' as it is saved?')) return;
+  await mcqLoad(mcqFile);
 }
 
 function mcqBuildForm() {
@@ -8480,7 +8976,26 @@ async function mcqBuildPoll() {
     return;
   }
   POLL_FAILS['mcqBuildPoll'] = 0;
-  if (runOver(r)) { await mcqRefreshFiles(mcqBuildRun.path); return; }
+  if (runOver(r)) {
+    // the trained file is opened when the run ends - unless that would throw
+    // away edits: then it is only added to the list
+    if (mcqDirty() || (mcqEditing && mcqEditing.dirty)) {
+      const cfg = await api('/api/mcq/config');
+      if (!cfg.error) {
+        MCQ.ontologies = cfg.ontologies;
+        mcqFileOptions(cfg.ontologies);
+        $('mcqfile').value = mcqFile;
+      }
+      const m = `The training run has finished and written ${mcqBuildRun.path || 'its file'}. `
+        + `It was not opened, so as to keep your unsaved edits: save or discard them, `
+        + `then pick it from the list.`;
+      $('mcqtreemsg').textContent = m;
+      $('mcqbuildlog').textContent += '\n\n' + m;
+    } else {
+      await mcqRefreshFiles(mcqBuildRun.path);
+    }
+    return;
+  }
   mcqBuildTimer = setTimeout(mcqBuildPoll, 1200);
 }
 
