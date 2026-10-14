@@ -944,6 +944,192 @@ check("the per-call CSV has the score and the three-way verdict",
       [("2.0", "scam"), ("-0.8", "legit"), ("0.0", "neutral"),
        ("1.0", "scam")])
 
+print("\nprofiles: who a call is for")
+check("the shipped facts file checks, and both countries still load with it",
+      (M.check_personal(json.load(open(os.path.join(
+          HERE, "..", "knowledge", "personal_facts.json")))),
+       len(M.load_personal()["rules"]), sorted(c["name"] for c in
+                                               M.list_countries())),
+      ([], 2, ["Ireland", "New Zealand"]))
+BANK_Q = ("Which bank does the caller say they are calling from? The person "
+          "banks with {bank}.")
+PARCEL_Q = "Does the caller ask for a charge before a parcel is delivered?"
+PERSONAL = {
+    "facts": [
+        {"id": "bank", "label": "Bank", "kind": "text",
+         "prompt": "Which bank does the person use?"},
+        {"id": "expecting_parcel", "label": "Expecting a parcel",
+         "prompt": "Is the person expecting a parcel?",
+         "options": [{"id": "yes", "text": "Yes"}, {"id": "no", "text": "No"}]}],
+    "questions": [
+        {"id": "caller_bank", "prompt": BANK_Q,
+         "options": [{"id": "own_bank", "text": "{bank}"},
+                     {"id": "other_bank", "text": "A bank that is not {bank}"},
+                     {"id": "not_mentioned", "text": "Not stated"}]},
+        {"id": "parcel_charge", "prompt": PARCEL_Q,
+         "options": [{"id": "yes", "text": "Yes: a charge before delivery"},
+                     {"id": "not_mentioned", "text": "Not stated"}]}],
+    "rules": [
+        {"facts": {"bank": "*"}, "if": {"caller_bank": ["other_bank"]},
+         "applies_to": ["bank"], "label": "scam",
+         "why": "{name} banks with {bank}.", "advice": "Call {bank}."},
+        {"facts": {"expecting_parcel": ["no"]},
+         "if": {"parcel_charge": ["yes"]}, "label": "scam",
+         "why": "{name} is not expecting a parcel."}]}
+from pathlib import Path                                         # noqa: E402
+SAVED_PERSONAL, SAVED_PROFILES = M.PERSONAL_FILE, M.PROFILES_DIR
+M.PERSONAL_FILE = Path(tmp) / "personal_facts.json"
+M.PERSONAL_FILE.write_text(json.dumps(PERSONAL))
+M.PROFILES_DIR = Path(tmp) / "profiles"
+personal = M.load_personal()
+TREE["GIFTCALL"][BANK_Q.replace("{bank}", "ANZ")] = (
+    "A bank that is not", "Your bank account is at risk")
+TREE["SHOETAX"][PARCEL_Q] = ("Yes: a charge", "import tax of 18.40 to pay")
+
+broken = json.loads(json.dumps(PERSONAL))
+broken["facts"].append({"id": "bank", "prompt": "again", "kind": "text"})
+broken["facts"].append({"id": "pets", "prompt": "Pets?",
+                        "options": [{"id": "dog", "text": "A dog"}]})
+broken["rules"].append({"facts": {"mood": ["happy"]}, "label": "scam",
+                        "why": "x"})
+broken["rules"].append({"facts": {"expecting_parcel": ["maybe"]},
+                        "label": "legit", "why": "x"})
+probs = M.check_personal(broken)
+check("a broken facts file names each problem",
+      [any(w in p for p in probs) for w in
+       ('"bank" is taken', "at least two", '"mood" is not a fact',
+        "expecting_parcel has no value maybe")], [True] * 4)
+
+check("a profile is checked against the facts and the countries",
+      [M.check_profile(x, personal) for x in (
+          {"name": "Raj", "country": "new_zealand",
+           "facts": {"bank": "ANZ", "expecting_parcel": "no"}},
+          {"name": " ", "facts": {}},
+          {"name": "Raj", "country": "Atlantis"},
+          {"name": "Raj", "facts": {"pets": "dog"}},
+          {"name": "Raj", "facts": {"expecting_parcel": "maybe"}},
+          {"name": "Raj", "facts": {"bank": "x" * 200}})],
+      [[], ["a profile needs a name"],
+       ["no country file for 'Atlantis' - the ones there are: Ireland, "
+        "New Zealand"],
+       ['"pets" is not a fact in personal_facts.json'],
+       ['the fact "expecting_parcel" can be no, yes, not \'maybe\''],
+       ['the fact "bank" is longer than 120 characters']])
+
+out_p = web_ui.mcq_profile_save({"name": " Raj ", "country": "new_zealand",
+                                 "facts": {"bank": "  ANZ ",
+                                           "expecting_parcel": ""}})
+raj = M.load_profile(M.find_profile("raj"), personal)
+check("saved from the page: one file, named after the person, the country "
+      "by its name, only the facts with a value",
+      (out_p["saved"], [p["name"] for p in out_p["profiles"]], raj),
+      ("knowledge/profiles/raj.json", ["Raj"],
+       {"name": "Raj", "country": "New Zealand", "facts": {"bank": "ANZ"}}))
+try:
+    web_ui.mcq_profile_save({"name": "raj", "facts": {}})
+    check("a second profile of the same name is refused", False)
+except ValueError as e:
+    check("a second profile of the same name is refused",
+          "already a profile called raj" in str(e))
+web_ui.mcq_profile_save({"path": "knowledge/profiles/raj.json",
+                         "name": "Raj K", "country": "new_zealand",
+                         "facts": {"bank": "ANZ"}})
+check("changing a profile keeps its file, and finds it by its new name",
+      (sorted(p.name for p in M.PROFILES_DIR.glob("*.json")),
+       M.find_profile("Raj K").name), (["raj.json"], "raj.json"))
+for bad in ("../knowledge/mcq_ontology.json", "knowledge/profiles/../x.json",
+            "/etc/passwd"):
+    try:
+        web_ui.mcq_profile_path(bad)
+        check("a path outside knowledge/profiles/ is refused: " + bad, False)
+    except ValueError:
+        check("a path outside knowledge/profiles/ is refused: " + bad, True)
+
+raj = {"name": "Raj", "country": None, "facts": {"bank": "ANZ"}}
+r = M.classify(GIFT, tree)
+STATE["payloads"].clear()
+p = M.personalise(GIFT, r, None, profile=raj, personal=personal)
+asked_prompt = STATE["payloads"][-1]["prompt"]
+check("a caller from another bank, for someone who banks with ANZ: scam, "
+      "said with their name and their bank",
+      (p["final"], p["from"], p["why"], p["advice"], p["country"],
+       [a["path"] for a in p["personal"]["answers"]]),
+      ("scam", "profile", "Raj banks with ANZ.", "Call ANZ.", None,
+       ["profile/caller_bank"]))
+check("the question names their bank, and so does its first option",
+      ("The person banks with ANZ." in asked_prompt, "A - ANZ\n" in asked_prompt),
+      (True, True))
+n0 = STATE["calls"]
+p = M.personalise(CALM, M.classify(CALM, tree), None,
+                  profile={"name": "Raj", "facts": {"bank": "ANZ"}},
+                  personal=personal)
+check("a rule for bank calls is not tried on another subject: nothing asked, "
+      "the words decide",
+      (STATE["calls"] - n0 - 3, p["final"], p["from"], p["personal"]["applies"]),
+      (0, "legit", "words", False))
+ie, nz = countries["Ireland"], countries["New Zealand"]
+nopar = {"name": "Raj", "facts": {"expecting_parcel": "no"}}
+r = M.classify(SHOE, tree)
+p = M.personalise(SHOE, r, ie, profile=nopar, personal=personal)
+check("Ireland says legitimate, but Raj expects no parcel: the more careful "
+      "label wins",
+      (p["final"], p["from"], p["country_label"], p["country"]),
+      ("scam", "profile", "legit", "Ireland"))
+p = M.personalise(SHOE, r, nz, profile={"name": "Raj", "facts": {
+    "expecting_parcel": "yes"}}, personal=personal)
+check("expecting a parcel in New Zealand: the country's rule decides",
+      (p["final"], p["from"], p["personal"]["label"]), ("scam", "country", None))
+p = M.personalise(SHOE, r, ie, profile={"name": "Raj", "facts": {}},
+                  personal=personal)
+check("a profile with no facts is the country alone",
+      (p["final"], p["from"], p["personal"], p["profile"]),
+      ("legit", "country", None, "Raj"))
+p = M.personalise(CALM, M.classify(CALM, tree), None, profile=nopar,
+                  personal=personal)
+check("no rule fits and no country: the words decide, and say so by name",
+      (p["final"], p["from"], p["why"]),
+      ("legit", "words", "Nothing known about Raj changes the verdict from "
+                         "the words."))
+
+web_ui.mcq_profile_save({"name": "Nopar", "country": "New Zealand",
+                         "facts": {"expecting_parcel": "no"}})
+ev2 = os.path.join(tmp, "ev2.csv")
+with open(ev2, "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["id", "label", "country", "text"])
+    w.writerows([[1, "scam", "Ireland", SHOE], [2, "scam", "", SHOE],
+                 [3, "nonscam", "Atlantis", CALM]])
+out2 = os.path.join(tmp, "run2.metrics.json")
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    M.main(["evaluate", "--csv", ev2, "--ontology", path, "--profile",
+            "nopar", "--out", out2])
+res = json.load(open(out2))
+rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run2.csv"))))
+check("scored for a profile: each row's own country, else the profile's; a "
+      "country with no file is none",
+      [(r["personal"], r["decided_by"], r["country"]) for r in rows],
+      [("scam", "profile", "Ireland"), ("scam", "country", "New Zealand"),
+       ("legit", "words", "")])
+check("and the metrics say whose, and what decided",
+      (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["name"],
+       res["profile"]["decided_by"], res["profile"]["unsure"]),
+      (2, 1, "Nopar", {"profile": 1, "country": 1, "words": 1}, 0))
+check("the log names the person and where each call's person lives",
+      ("for Nopar: expecting_parcel: no" in buf.getvalue(),
+       "Ireland 1, New Zealand 1, no country 1" in buf.getvalue()),
+      (True, True))
+buf = io.StringIO()
+with contextlib.redirect_stdout(buf):
+    M.main(["ask", "--text", GIFT, "--ontology", path, "--profile", "Raj K"])
+check("ask --profile: the profile's country, and its facts' rules",
+      ("personalised for a person in New Zealand" in buf.getvalue(),
+       "-> scam  (Raj K banks with ANZ.)" in buf.getvalue()), (True, True))
+out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/raj.json"})
+check("a profile is deleted from the page",
+      [p["name"] for p in out_d["profiles"]], ["Nopar"])
+M.PERSONAL_FILE, M.PROFILES_DIR = SAVED_PERSONAL, SAVED_PROFILES
+
 print("\nthe benchmark runner")
 import evaluate_mcq_ontology as E                              # noqa: E402
 bench_csv = os.path.join(tmp, "bench.csv")

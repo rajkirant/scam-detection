@@ -2420,6 +2420,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, out)
             if u.path == "/api/mcq/edit":
                 return self._send(200, mcq_edit(form))
+            if u.path == "/api/mcq/profile/save":
+                out = mcq_profile_save(form)
+                sys.stderr.write("saved profile %s\n" % out["saved"])
+                return self._send(200, out)
+            if u.path == "/api/mcq/profile/delete":
+                out = mcq_profile_delete(form)
+                sys.stderr.write("deleted profile %s\n" % form.get("path"))
+                return self._send(200, out)
             if u.path == "/api/mcq/train_question":
                 meta = start_mcq_train_run(form)
                 sys.stderr.write("started %s  train %s on %s\n"
@@ -2578,6 +2586,11 @@ def start_eval_run(page, form):
         if form.get("hints") is False:          # to measure what hints add
             flags.append("--no-hints")
             name += " (no hints)"
+        if form.get("profile"):                 # scored for one person
+            ppath = mcq_profile_path(form["profile"])
+            prof = mcq_ontology.load_profile(ppath)
+            flags += ["--profile", "knowledge/profiles/" + ppath.name]
+            name += " · for " + prof["name"]
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
             raise ValueError("a run is already going (%s). Stop it first - "
@@ -2817,6 +2830,7 @@ def mcq_config():
            "max_options": mcq_ontology.MAX_OPTIONS,
            "questions": mcq_ontology.list_questions(),
            "countries": mcq_ontology.list_countries(),
+           **mcq_people(),
            "train_calls": mcq_ontology.TRAIN_CALLS,
            "onto_calls": mcq_ontology.TRAIN_ONTOLOGY_CALLS,
            "onto_new_options": mcq_ontology.NEW_OPTIONS,
@@ -2890,6 +2904,64 @@ def mcq_edit(form):
             "problems": mcq_ontology.check_ontology(obj)}
 
 
+def mcq_people():
+    """The profiles, and the facts a profile can hold. A broken facts file
+    is reported rather than taking the page down with it."""
+    try:
+        personal = mcq_ontology.load_personal()
+    except ValueError as e:
+        return {"profiles": [], "facts": [], "facts_error": str(e)}
+    return {"profiles": mcq_ontology.list_profiles(personal),
+            "facts": personal["facts"]}
+
+
+def mcq_profile_path(rel):
+    """knowledge/profiles/<name>.json from the page, checked - or a
+    ValueError. Nothing outside knowledge/profiles/ is read or written."""
+    rel = str(rel or "").strip()
+    name = rel[len("knowledge/profiles/"):] if rel.startswith(
+        "knowledge/profiles/") else rel
+    if not mcq_ontology.PROFILE_FILE_RE.match(name):
+        raise ValueError("a profile is a .json file in knowledge/profiles/")
+    return mcq_ontology.PROFILES_DIR / name
+
+
+def mcq_profile_save(form):
+    """Write a profile from the Profiles tab: a new one when no path is
+    given, named after the person, or the one at `path`."""
+    personal = mcq_ontology.load_personal()
+    obj = {"name": form.get("name"), "country": form.get("country") or None,
+           "facts": form.get("facts") or {}}
+    probs = mcq_ontology.check_profile(obj, personal)
+    if probs:
+        raise ValueError("not saved: " + "; ".join(probs))
+    obj = mcq_ontology.clean_profile(obj)
+    if form.get("path"):
+        path = mcq_profile_path(form["path"])
+        if not path.exists():
+            raise ValueError("there is no %s to change - it may have been "
+                             "deleted" % form["path"])
+    else:
+        others = [x for x in mcq_ontology.list_profiles(personal)
+                  if x["name"].lower() == obj["name"].lower()]
+        if others:
+            raise ValueError("there is already a profile called %s"
+                             % obj["name"])
+        path = mcq_ontology.profile_path_for(obj["name"])
+    mcq_ontology.PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8")
+    return dict(mcq_people(), saved="knowledge/profiles/" + path.name)
+
+
+def mcq_profile_delete(form):
+    path = mcq_profile_path(form.get("path"))
+    if not path.exists():
+        raise ValueError("there is no %s" % form.get("path"))
+    path.unlink()
+    return mcq_people()
+
+
 def mcq_country_path(rel):
     """knowledge/countries/<name>.json from the page, checked - or a
     ValueError."""
@@ -2913,18 +2985,24 @@ def mcq_ask(form):
     hints = form.get("hints", True) is not False
     if not hints:
         onto = mcq_ontology.without_hints(onto)
-    country = None
+    country = profile = personal = None
     if form.get("country"):
         country = mcq_ontology.load_country(mcq_country_path(form["country"]))
+    # the person it is for: their facts; the country picked on the page,
+    # which picking the profile sets to theirs, says where they live
+    if form.get("profile"):
+        personal = mcq_ontology.load_personal()
+        profile = mcq_ontology.load_profile(mcq_profile_path(form["profile"]),
+                                            personal)
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
     t0 = time.time()
     try:
         res = mcq_ontology.classify(text, onto, quotes)
-        if country:
-            res["personal"] = mcq_ontology.personalise(text, res, country,
-                                                       quotes)
+        if country or profile:
+            res["personal"] = mcq_ontology.personalise(
+                text, res, country, quotes, profile=profile, personal=personal)
     except RuntimeError as e:
         raise ValueError(str(e))
     finally:
@@ -3520,7 +3598,15 @@ PAGE = r"""<!doctype html>
                 margin-top:12px; }
   .te-actions button { margin:0; }
   .te-actions .go { width:auto; }
-  .te-actions .te-cancel, .te-add, #mcqtreediscard { background:var(--panel);
+  /* the Profiles tab: one row a person */
+  .pf-row { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap;
+            padding:8px 0; border-bottom:1px solid var(--line); }
+  .pf-row:last-child { border-bottom:none; }
+  .pf-acts { margin-left:auto; display:flex; gap:8px; }
+  .pf-acts button { padding:3px 10px; font-size:12px; background:var(--panel);
+                    color:var(--ink); border:1px solid var(--line); }
+  .pf-acts .pf-del { color:var(--bad); }
+  .te-actions .te-cancel, .te-add, #mcqtreediscard, #mcqprofcancel { background:var(--panel);
     color:var(--ink); border:1px solid var(--line); }
   .te-add { margin-top:8px; padding:5px 12px; font-size:12.5px; }
   .te-err { color:var(--bad); font-size:12.5px; margin-top:8px; white-space:pre-wrap; }
@@ -4800,6 +4886,7 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <button data-qtab="eval">Score a dataset</button>
       <button data-qtab="edit">Edit the JSON</button>
       <button data-qtab="tree">Question tree</button>
+      <button data-qtab="profiles">Profiles</button>
       <button data-qtab="build">Training output</button>
       <button data-qtab="about">How it decides</button>
     </div>
@@ -4818,6 +4905,11 @@ per held-out call, so it takes minutes, not seconds.</pre>
       </div>
       <div class="persona">
         <div class="cap">Personalisation</div>
+        <div class="askrow" style="margin-top:6px">
+          <label for="mcqprofile" style="margin:0">Who it is for</label>
+          <select id="mcqprofile" style="width:auto; flex:1"></select>
+        </div>
+        <div class="hint" id="mcqprofilefacts"></div>
         <div class="askrow" style="margin-top:6px">
           <label for="mcqcountry" style="margin:0">The person lives in</label>
           <select id="mcqcountry" style="width:auto; flex:1"></select>
@@ -4897,6 +4989,13 @@ per held-out call, so it takes minutes, not seconds.</pre>
                  title="leave out the calls an earlier batch of this size took">
           <span class="hint">skip (50 leaves out what a 50-call score took)</span>
         </div>
+        <div class="askrow">
+          <label for="mcqevprofile" style="margin:0">For</label>
+          <select id="mcqevprofile" style="width:auto"></select>
+          <span class="hint" style="margin:0">with a profile, every call is
+            labelled for that person: their facts, and their country unless
+            the call's row names its own. Unsure counts as scam.</span>
+        </div>
         <button class="go" id="mcqevgo">Score every call</button>
         <div class="hint" id="mcqeverr" style="color:var(--bad)"></div>
         <div class="hint">About a dozen requests per call (one per question),
@@ -4957,6 +5056,36 @@ per held-out call, so it takes minutes, not seconds.</pre>
           <button class="go" id="mcqsave" style="margin:0">Save</button>
         </div>
         <div class="hint" id="mcqsavemsg"></div>
+      </div>
+    </div>
+
+    <div id="q-profiles" hidden>
+      <div class="card">
+        <div class="hint" style="margin-top:0">A profile is a person: a
+          name, where they live, and facts about them that can change a
+          verdict, such as which bank they use or whether they are expecting
+          a parcel. Pick one under <em>Who it is for</em> on the Classify tab,
+          or under <em>For</em> on Score a dataset. Profiles are saved in
+          <code>knowledge/profiles/</code>, which git leaves alone; the facts
+          a profile can hold, and the rules that use them, are in
+          <code>knowledge/personal_facts.json</code>.</div>
+        <div class="hint" id="mcqproferr" style="color:var(--bad)"></div>
+        <div id="mcqproflist" style="margin-top:8px"></div>
+        <div class="hint" id="mcqprofstatus" role="status" aria-live="polite"></div>
+        <button class="go" id="mcqprofnew" style="width:auto; margin-top:12px">+ New profile</button>
+      </div>
+      <div class="card tq-edit" id="mcqprofform" hidden>
+        <div class="tq-q" id="mcqproftitle">New profile</div>
+        <label for="mcqprofname">Name</label>
+        <input type="text" id="mcqprofname" maxlength="60" spellcheck="false">
+        <label for="mcqprofcountry">Lives in</label>
+        <select id="mcqprofcountry"></select>
+        <div id="mcqproffacts"></div>
+        <div class="te-err" id="mcqprofmsg"></div>
+        <div class="te-actions">
+          <button class="go" id="mcqprofsave">Save</button>
+          <button id="mcqprofcancel">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -7908,6 +8037,11 @@ async function mcqBoot() {
     + (cfg.countries || []).map(c => `<option value="${esc(c.path)}">${esc(c.name)}</option>`).join('');
   $('mcqcountry').onchange = mcqCountryLaw;
   mcqCountryLaw();
+  $('mcqprofile').onchange = mcqProfilePick;
+  $('mcqprofnew').onclick = () => mcqProfForm(null);
+  $('mcqprofsave').onclick = mcqProfSave;
+  $('mcqprofcancel').onclick = () => { $('mcqprofform').hidden = true; };
+  mcqPeople(cfg);
   $('mcqqgo').onclick = mcqQuestion;
   $('mcqquestion').addEventListener('input', mcqQuestionEdited);
   $('mcqqsaved').onchange = () => mcqSavedPick($('mcqqsaved').value);
@@ -7924,7 +8058,8 @@ async function mcqBoot() {
   evalHistory('mcq', evalIds('mcq', 'q-eval'));
   $('mcqevgo').onclick = () => evalRun('mcq', evalIds('mcq', 'q-eval'), {
     ontology: mcqFile, dataset: $('mcqeds').value, limit: $('mcqevlimit').value, skip: $('mcqevskip').value,
-    quotes: $('mcqquotes').checked, hints: $('mcqhints').checked});
+    quotes: $('mcqquotes').checked, hints: $('mcqhints').checked,
+    profile: $('mcqevprofile').value});
   $('mcqsave').onclick = () => mcqSave('edit');
   $('mcqjson').addEventListener('input', mcqJsonCheck);
   $('mcqtreeedit').onchange = mcqTreeRedraw;
@@ -7975,7 +8110,7 @@ async function mcqBoot() {
 function mcqTab(name) {
   for (const b of $('mcqtabs').querySelectorAll('button'))
     b.classList.toggle('on', b.dataset.qtab === name);
-  for (const t of ['ask', 'eval', 'edit', 'tree', 'build', 'about'])
+  for (const t of ['ask', 'eval', 'edit', 'tree', 'profiles', 'build', 'about'])
     $('q-' + t).hidden = t !== name;
 }
 
@@ -8104,7 +8239,7 @@ async function mcqAsk() {
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
     quotes: $('mcqquotes').checked, hints: $('mcqhints').checked,
-    country: $('mcqcountry').value});
+    country: $('mcqcountry').value, profile: $('mcqprofile').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -8129,32 +8264,159 @@ function mcqPersonalCard(r, wordsWord) {
                neutral: 'NEUTRAL'}[p.final] || String(p.final).toUpperCase();
   const cls = p.final === 'scam' ? 'scam' : p.final === 'legit' ? 'legitimate'
     : 'uncertain';
-  const rows = p.answers.map(a => `<div class="tq-opt tq-pick">`
+  const word = l => ({scam: 'scam', legit: 'legitimate', unsure: 'unsure'}[l] || l);
+  const rowsOf = answers => (answers || []).map(a => `<div class="tq-opt tq-pick">`
     + `<span>✓ ${a.text === null ? 'unreadable' : esc(a.text)}</span>`
     + `<span class="tq-run">${a.p === null ? '' : (100 * a.p).toFixed(0) + '%'}</span></div>`
     + `<div class="tq-asked" style="margin:0 0 4px 6px">${esc(a.question)}</div>`
     + (a.quote && a.quoted !== false ? `<div class="tq-quote" style="margin-left:6px">“${esc(a.quote)}”</div>` : '')
     + (a.quoted === false ? `<div class="tq-quote muted" style="margin-left:6px"><s>“${esc(a.quote || '')}”</s> `
        + 'not in the transcript, so it counts as Not stated</div>' : '')).join('');
+  const who = p.profile ? esc(p.profile) + (p.country ? ', in ' + esc(p.country) : '')
+    : 'a person in ' + esc(p.country);
+  const by = p.from === 'country' ? `decided by ${esc(p.country)}'s rule ${p.rule}`
+    : p.from === 'profile' ? `decided by what is known about ${esc(p.profile)}`
+      + ` (rule ${p.rule} in personal_facts.json)` : 'the words alone decide';
+  // both decided, differently: the more careful label won
+  const other = p.from === 'profile' && p.country_label && p.country_label !== p.final
+    ? `${esc(p.country)}'s rules said ${word(p.country_label)}; the more careful label wins.`
+    : p.from === 'country' && p.personal && p.personal.label && p.personal.label !== p.final
+      ? `What is known about ${esc(p.profile)} said ${word(p.personal.label)}; the more careful label wins.`
+      : '';
+  const crows = rowsOf(p.answers), prows = rowsOf(p.personal && p.personal.answers);
   return `<div class="card">
     <div class="verdict">
       <div>
         <div class="cap">For this person</div>
         <div class="big ${cls}">${big}</div>
-        <div class="hint">a person in ${esc(p.country)}</div>
+        <div class="hint">${who}</div>
       </div>
       <div style="flex:1; min-width:260px">
         <div class="cap">Why</div>
         <div>${esc(p.why)}</div>
         ${p.advice ? `<div style="margin-top:6px; font-weight:600">${esc(p.advice)}</div>` : ''}
-        <div class="hint">${p.from === 'country' ? 'decided by ' + esc(p.country)
-          + '\'s rule ' + p.rule + '; the words alone said '
-          + esc(wordsWord.toLowerCase()) : 'the words alone decide'}
-          · ${esc(p.country)}: ${esc(p.law)}${p.source ? ' (' + esc(p.source) + ')' : ''}</div>
+        ${other ? `<div class="hint">${other}</div>` : ''}
+        <div class="hint">${by}${p.from !== 'words' ? '; the words alone said '
+          + esc(wordsWord.toLowerCase()) : ''}${p.country ? ` · ${esc(p.country)}: `
+          + esc(p.law) + (p.source ? ' (' + esc(p.source) + ')' : '') : ''}</div>
       </div>
     </div>
-    ${rows ? `<div class="qp" style="margin-top:10px">${esc(p.country)}'s questions</div>${rows}` : ''}
+    ${crows ? `<div class="qp" style="margin-top:10px">${esc(p.country)}'s questions</div>${crows}` : ''}
+    ${prows ? `<div class="qp" style="margin-top:10px">What ${esc(p.profile)}'s facts ask of the call</div>${prows}` : ''}
   </div>`;
+}
+
+// ---- profiles: who a call is for
+// the lists of profiles on the page, after a load, a save or a delete
+function mcqPeople(r) {
+  MCQ.profiles = r.profiles || [];
+  MCQ.facts = r.facts || [];
+  $('mcqproferr').textContent = r.facts_error ? 'knowledge/personal_facts.json '
+    + 'does not load, so no profile can be used: ' + r.facts_error : '';
+  const opts = '<option value="">no profile</option>' + MCQ.profiles.map(p =>
+    `<option value="${esc(p.path)}">${esc(p.name)}${p.country ? ' — '
+      + esc(p.country) : ''}</option>`).join('');
+  for (const id of ['mcqprofile', 'mcqevprofile']) {
+    const was = $(id).value;
+    $(id).innerHTML = opts;
+    $(id).value = MCQ.profiles.some(p => p.path === was) ? was : '';
+  }
+  mcqProfileFacts();
+  mcqProfList();
+}
+
+// "Bank: ANZ · Expecting a parcel: No, nothing is on its way"
+function mcqFactText(p) {
+  return (MCQ.facts || []).filter(f => p.facts && p.facts[f.id]).map(f => {
+    const v = p.facts[f.id];
+    const o = (f.options || []).find(x => x.id === v);
+    return (f.label || f.id) + ': ' + (o ? o.text : v);
+  }).join(' · ');
+}
+
+// picking a profile picks where they live; the country can still be changed
+function mcqProfilePick() {
+  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
+  if (p) {
+    const c = (MCQ.countries || []).find(x => p.country
+      && x.name.toLowerCase() === p.country.toLowerCase());
+    $('mcqcountry').value = c ? c.path : '';
+    mcqCountryLaw();
+  }
+  mcqProfileFacts();
+}
+
+function mcqProfileFacts() {
+  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
+  $('mcqprofilefacts').textContent = p ? (mcqFactText(p) || 'no facts given')
+    + (p.country ? '' : ' · no country') : '';
+}
+
+function mcqProfList() {
+  const list = MCQ.profiles || [];
+  $('mcqproflist').innerHTML = list.length ? list.map((p, i) => `<div class="pf-row">
+      <b>${esc(p.name)}</b>
+      <span class="muted">${p.country ? 'lives in ' + esc(p.country) : 'no country'}</span>
+      <span class="hint" style="margin:0">${esc(mcqFactText(p) || 'no facts')}</span>
+      <span class="pf-acts"><button data-pf-edit="${i}" aria-label="Change ${esc(p.name)}">Change</button>
+        <button class="pf-del" data-pf-del="${i}" aria-label="Delete ${esc(p.name)}">Delete</button></span>
+    </div>`).join('') : '<div class="hint">No profiles yet.</div>';
+  for (const b of $('mcqproflist').querySelectorAll('[data-pf-edit]'))
+    b.onclick = () => mcqProfForm(list[+b.dataset.pfEdit]);
+  for (const b of $('mcqproflist').querySelectorAll('[data-pf-del]'))
+    b.onclick = () => mcqProfDelete(list[+b.dataset.pfDel]);
+}
+
+// the profile the form changes; null when it makes a new one
+let mcqProfEditing = null;
+
+function mcqProfForm(p) {
+  mcqProfEditing = p;
+  $('mcqproftitle').textContent = p ? 'Change ' + p.name : 'New profile';
+  $('mcqprofname').value = p ? p.name : '';
+  $('mcqprofcountry').innerHTML = '<option value="">no country - their facts alone</option>'
+    + (MCQ.countries || []).map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
+  $('mcqprofcountry').value = p && p.country ? p.country : '';
+  $('mcqproffacts').innerHTML = (MCQ.facts || []).map((f, i) => {
+    const v = (p && p.facts && p.facts[f.id]) || '';
+    const id = 'mcqpf' + i;
+    return `<label for="${id}">${esc(f.prompt)}</label>` + (f.kind === 'text'
+      ? `<input type="text" id="${id}" data-fact="${esc(f.id)}" value="${esc(v)}"
+          placeholder="${esc(f.placeholder || '')}" maxlength="120" spellcheck="false">`
+      : `<select id="${id}" data-fact="${esc(f.id)}"><option value="">not set</option>`
+        + (f.options || []).map(o => `<option value="${esc(o.id)}"${o.id === v
+          ? ' selected' : ''}>${esc(o.text)}</option>`).join('') + '</select>');
+  }).join('');
+  $('mcqprofmsg').textContent = '';
+  $('mcqprofform').hidden = false;
+  $('mcqprofname').focus();
+}
+
+async function mcqProfSave() {
+  const facts = {};
+  for (const el of $('mcqproffacts').querySelectorAll('[data-fact]'))
+    if (el.value.trim()) facts[el.dataset.fact] = el.value.trim();
+  const btn = $('mcqprofsave');
+  btn.disabled = true;
+  const r = await api('/api/mcq/profile/save', {
+    path: mcqProfEditing ? mcqProfEditing.path : '', name: $('mcqprofname').value,
+    country: $('mcqprofcountry').value, facts});
+  btn.disabled = false;
+  if (r.error) { $('mcqprofmsg').textContent = r.error; return; }
+  $('mcqprofform').hidden = true;
+  mcqPeople(r);
+  // the profile picked on Classify was the one changed: follow its country
+  if ($('mcqprofile').value === r.saved) mcqProfilePick();
+  $('mcqprofstatus').textContent = 'saved ' + r.saved;
+}
+
+async function mcqProfDelete(p) {
+  if (!confirm('Delete the profile ' + p.name + '?')) return;
+  const r = await api('/api/mcq/profile/delete', {path: p.path});
+  if (r.error) { $('mcqprofstatus').textContent = r.error; return; }
+  if (mcqProfEditing && mcqProfEditing.path === p.path) $('mcqprofform').hidden = true;
+  mcqPeople(r);
+  $('mcqprofstatus').textContent = 'deleted ' + p.path;
 }
 
 function mcqPaintAnswer(r) {

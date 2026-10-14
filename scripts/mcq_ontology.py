@@ -55,6 +55,7 @@ can import it without the venv.
 
 import argparse
 import copy
+import csv
 import json
 import math
 import os
@@ -803,39 +804,40 @@ COUNTRIES_DIR = KNOWLEDGE_DIR / "countries"
 LABELS = ("scam", "legit", "unsure")
 
 
-def check_country(obj):
-    """Every problem with a country file, as sentences; [] if none."""
-    if not isinstance(obj, dict):
-        return ["the file must hold one JSON object, {...}"]
-    probs = []
-    if not str(obj.get("name") or "").strip():
-        probs.append('"name" is missing')
-    qs = obj.get("questions")
-    _check_list(qs if isinstance(qs, list) else None, "questions", probs)
-    answers = {}
+def _answer_ids(qs):
+    """{question id: its option ids} for a list of questions."""
+    out = {}
     for q in qs if isinstance(qs, list) else []:
         if isinstance(q, dict) and isinstance(q.get("options"), list):
-            answers[q.get("id")] = {o.get("id") for o in q["options"]
-                                    if isinstance(o, dict)}
-    rules = obj.get("rules")
-    if not isinstance(rules, list) or not rules:
-        probs.append('"rules" must be a list of at least one rule')
-        rules = []
+            out[q.get("id")] = {o.get("id") for o in q["options"]
+                                if isinstance(o, dict)}
+    return out
+
+
+def _check_rules(rules, answers, probs, whose, facts=None, need_if=True):
+    """The rules of a country file or of the personal-facts file. `answers`
+    is {question id: option ids}; `facts`, when known, is {fact id: the
+    values it can take, or None for a fact typed in words}."""
     for i, r in enumerate(rules, 1):
         where = "rule %d" % i
-        if not isinstance(r, dict) or not isinstance(r.get("if"), dict) \
-                or not r["if"]:
-            probs.append('%s needs an "if": {question id: [answers]}' % where)
+        if not isinstance(r, dict):
+            probs.append("%s is not an object" % where)
+            continue
+        cond, fcond = r.get("if", {}), r.get("facts", {})
+        if not isinstance(cond, dict) or not isinstance(fcond, dict) \
+                or (need_if and not cond) or not (cond or fcond):
+            probs.append('%s needs an "if": {question id: [answers]}%s'
+                         % (where, "" if need_if else ', or "facts"'))
             continue
         if r.get("label") not in LABELS:
             probs.append('%s: "label" must be scam, legit or unsure, not %r'
                          % (where, r.get("label")))
         if not str(r.get("why") or "").strip():
             probs.append('%s has no "why"' % where)
-        for k, v in r["if"].items():
+        for k, v in cond.items():
             if k not in answers:
-                probs.append('%s: "%s" is not a question of this country'
-                             % (where, k))
+                probs.append('%s: "%s" is not a question of %s'
+                             % (where, k, whose))
             elif not isinstance(v, list) or not v:
                 probs.append('%s: "%s" must list the answers it accepts'
                              % (where, k))
@@ -844,6 +846,37 @@ def check_country(obj):
                 if bad:
                     probs.append("%s: %s has no answer %s"
                                  % (where, k, ", ".join(map(str, bad))))
+        for k, v in fcond.items():
+            if facts is not None and k not in facts:
+                probs.append('%s: "%s" is not a fact in %s'
+                             % (where, k, PERSONAL_FILE.name))
+            elif v != "*" and (not isinstance(v, list) or not v):
+                probs.append('%s: the fact "%s" must list the values it '
+                             'accepts, or be "*" for any value' % (where, k))
+            elif v != "*" and facts is not None and facts[k] is not None:
+                bad = [x for x in v if x not in facts[k]]
+                if bad:
+                    probs.append("%s: the fact %s has no value %s"
+                                 % (where, k, ", ".join(map(str, bad))))
+        at = r.get("applies_to")
+        if at is not None and (not isinstance(at, list) or not at):
+            probs.append('%s: "applies_to" must list subject ids' % where)
+
+
+def check_country(obj, facts=None):
+    """Every problem with a country file, as sentences; [] if none."""
+    if not isinstance(obj, dict):
+        return ["the file must hold one JSON object, {...}"]
+    probs = []
+    if not str(obj.get("name") or "").strip():
+        probs.append('"name" is missing')
+    qs = obj.get("questions")
+    _check_list(qs if isinstance(qs, list) else None, "questions", probs)
+    rules = obj.get("rules")
+    if not isinstance(rules, list) or not rules:
+        probs.append('"rules" must be a list of at least one rule')
+        rules = []
+    _check_rules(rules, _answer_ids(qs), probs, "this country", facts)
     return probs
 
 
@@ -857,7 +890,13 @@ def load_country(path):
     except json.JSONDecodeError as e:
         raise ValueError("%s is not valid JSON: %s (line %d, column %d)"
                          % (path.name, e.msg, e.lineno, e.colno))
-    probs = check_country(obj)
+    # a rule may name a person's facts: check them against the facts file,
+    # unless that file itself is broken - then only their shape is checked
+    try:
+        facts = _fact_values(load_personal()["facts"])
+    except ValueError:
+        facts = None
+    probs = check_country(obj, facts)
     if probs:
         raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
     obj = dict(obj)
@@ -895,41 +934,325 @@ def find_country(name):
                         or "none"))
 
 
-def personalise(transcript, res, country, quotes=True, timeout=300):
-    """The label for a person in this country: a classified call (`res`, from
-    classify) put through the country's questions and rules.
+# ---------------------------------------------------- profiles: who it is for
+# A profile is a person: a name, where they live, and a few facts about them
+# that can change a verdict - which bank they use, whether they are expecting
+# a parcel. The facts a profile can hold are defined in one file,
+# knowledge/personal_facts.json, beside the questions put to a call to use
+# them and the rules that turn the answers into a label, written like a
+# country's. Each profile is knowledge/profiles/<id>.json:
+#
+#   {"name": "Raj", "country": "New Zealand",
+#    "facts": {"bank": "ANZ", "expecting_parcel": "no"}}
+#
+# A rule, in a country file or in the facts file, may hold "facts": {fact id:
+# [values]} - or "*" for any value given - besides its "if", and holds only
+# for a profile with those facts. A rule in the facts file may name the
+# subjects it is for in "applies_to", and its text may name the person's
+# facts as {name}, {bank} and so on. Profiles are kept out of git: they are
+# about real people.
+PERSONAL_FILE = KNOWLEDGE_DIR / "personal_facts.json"
+PROFILES_DIR = KNOWLEDGE_DIR / "profiles"
+PROFILE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,60}[.]json$")
+FACT_TEXT_MAX = 120
+# when the country and the facts both decide: the most careful label wins
+CAUTION = {"scam": 2, "unsure": 1, "legit": 0}
 
-    Returns {"country", "law", "source", "applies": whether the call is on a
-    subject the country's rules are for, "answers": its questions' answer
-    records, "label": scam | legit | unsure, or None when no rule applies,
-    "why", "advice", "rule", "final": the label, or the words' verdict when
-    there is none, "from": "country" | "words"}.
-    """
-    out = {"country": country["name"], "law": country.get("law", ""),
-           "source": country.get("source", ""), "answers": [], "label": None,
-           "advice": None, "rule": None}
-    applies = country.get("applies_to")
-    if applies and res.get("subject") not in applies:
-        out.update(applies=False, final=res["verdict"], **{"from": "words"},
-                   why="This call is not on a subject %s's rules cover, so "
-                       "the verdict from the words stands." % country["name"])
-        return out
-    out["applies"] = True
+
+def _fact_values(facts):
+    """{fact id: its value ids, or None for a fact typed in words}."""
+    out = {}
+    for f in facts if isinstance(facts, list) else []:
+        if isinstance(f, dict) and f.get("id"):
+            out[f["id"]] = (None if f.get("kind") == "text" else
+                            {o.get("id") for o in f.get("options") or []
+                             if isinstance(o, dict)})
+    return out
+
+
+def check_personal(obj):
+    """Every problem with the personal-facts file, as sentences."""
+    if not isinstance(obj, dict):
+        return ["the file must hold one JSON object, {...}"]
+    probs, seen = [], set()
+    facts = obj.get("facts")
+    if not isinstance(facts, list):
+        probs.append('"facts" must be a list')
+        facts = []
+    for i, f in enumerate(facts, 1):
+        where = "fact %d" % i
+        if not isinstance(f, dict) or not str(f.get("id") or "").strip():
+            probs.append('%s needs an "id"' % where)
+            continue
+        if f["id"] in seen or f["id"] == "name":
+            probs.append('%s: the id "%s" is taken' % (where, f["id"]))
+        seen.add(f["id"])
+        if not str(f.get("prompt") or "").strip():
+            probs.append('%s (%s) needs a "prompt": the question the profile '
+                         'form asks' % (where, f["id"]))
+        if f.get("kind") == "text":
+            continue
+        opts = f.get("options")
+        if not isinstance(opts, list) or len(opts) < 2 or not all(
+                isinstance(o, dict) and o.get("id") and str(o.get("text") or
+                                                             "").strip()
+                for o in opts):
+            probs.append('%s (%s): "options" must list at least two, each '
+                         'with an "id" and a "text" - or set "kind": "text"'
+                         % (where, f["id"]))
+    qs = obj.get("questions", [])
+    _check_list(qs, "questions", probs)
+    rules = obj.get("rules", [])
+    if not isinstance(rules, list):
+        probs.append('"rules" must be a list')
+        rules = []
+    _check_rules(rules, _answer_ids(qs), probs, "the facts file",
+                 _fact_values(facts), need_if=False)
+    return probs
+
+
+def load_personal(path=None):
+    """The personal-facts file, checked; an empty one when there is none."""
+    path = Path(path or PERSONAL_FILE)
+    if not path.exists():
+        return {"facts": [], "questions": [], "rules": []}
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        raise ValueError("%s is not valid JSON: %s (line %d, column %d)"
+                         % (path.name, e.msg, e.lineno, e.colno))
+    probs = check_personal(obj)
+    if probs:
+        raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
+    obj = dict(obj)
+    obj["questions"] = [_norm_question(q) for q in obj.get("questions", [])]
+    obj.setdefault("rules", [])
+    return obj
+
+
+def check_profile(obj, personal=None):
+    """Every problem with a profile, as sentences; [] if none. Its country
+    must be one there is a file for, and every fact one the facts file
+    defines, with a value it allows."""
+    if not isinstance(obj, dict):
+        return ["a profile must be one JSON object, {...}"]
+    probs = []
+    if not str(obj.get("name") or "").strip():
+        probs.append("a profile needs a name")
+    elif len(str(obj["name"])) > 60:
+        probs.append("a name of 60 characters at most, please")
+    if obj.get("country"):
+        try:
+            find_country(obj["country"])
+        except ValueError as e:
+            probs.append(str(e))
+    facts = obj.get("facts", {})
+    if not isinstance(facts, dict):
+        return probs + ['"facts" must be {fact id: value}']
+    defs = _fact_values((personal or load_personal())["facts"])
+    for k, v in facts.items():
+        if k not in defs:
+            probs.append('"%s" is not a fact in %s' % (k, PERSONAL_FILE.name))
+        elif not isinstance(v, str):
+            probs.append('the fact "%s" must be text' % k)
+        elif defs[k] is None and len(v) > FACT_TEXT_MAX:
+            probs.append('the fact "%s" is longer than %d characters'
+                         % (k, FACT_TEXT_MAX))
+        elif defs[k] is not None and v and v not in defs[k]:
+            probs.append('the fact "%s" can be %s, not %r'
+                         % (k, ", ".join(sorted(defs[k])), v))
+    return probs
+
+
+def clean_profile(obj):
+    """A profile as it is written: its name, its country (a name, or none),
+    and only the facts that have a value."""
+    facts = {k: " ".join(str(v).split()) for k, v in
+             (obj.get("facts") or {}).items() if str(v or "").strip()}
+    out = {"name": " ".join(str(obj.get("name") or "").split())}
+    if obj.get("country"):
+        out["country"] = load_country(find_country(obj["country"]))["name"]
+    out["facts"] = facts
+    return out
+
+
+def load_profile(path, personal=None):
+    path = Path(path)
+    try:
+        obj = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ValueError("no profile at %s" % path)
+    except json.JSONDecodeError as e:
+        raise ValueError("%s is not valid JSON: %s (line %d, column %d)"
+                         % (path.name, e.msg, e.lineno, e.colno))
+    probs = check_profile(obj, personal)
+    if probs:
+        raise ValueError("%s: %s" % (path.name, "; ".join(probs)))
+    return clean_profile(obj)
+
+
+def list_profiles(personal=None):
+    """Every profile in knowledge/profiles/ that loads, by file name."""
+    personal = personal or load_personal()
+    out = []
+    for p in sorted(PROFILES_DIR.glob("*.json")) if PROFILES_DIR.is_dir() \
+            else []:
+        try:
+            prof = load_profile(p, personal)
+        except ValueError:
+            continue
+        out.append(dict(prof, path="knowledge/profiles/" + p.name))
+    return out
+
+
+def find_profile(name):
+    """A profile by path, by its name ("Raj") or by its file name."""
+    name = str(name)
+    # the page names a profile knowledge/profiles/<file>, as it lists them
+    shown = "knowledge/profiles/"
+    at = [PROFILES_DIR / name[len(shown):]] if name.startswith(shown) else []
+    for p in at + [Path(name), PROJECT_DIR / name]:
+        if p.is_file():
+            return p
+    key = " ".join(name.replace("_", " ").split()).lower()
+    for prof in list_profiles():
+        if key in (prof["name"].lower(),
+                   Path(prof["path"]).stem.replace("_", " ").lower()):
+            return PROFILES_DIR / Path(prof["path"]).name
+    raise ValueError("no profile %r - the ones there are: %s"
+                     % (name, ", ".join(x["name"] for x in list_profiles())
+                        or "none"))
+
+
+def profile_path_for(name, taken=()):
+    """knowledge/profiles/<id>.json for a new profile, from its name."""
+    stem = _slug(name, set(taken) | {x.stem for x in
+                                     PROFILES_DIR.glob("*.json")})
+    return PROFILES_DIR / (stem + ".json")
+
+
+def _facts_hold(cond, facts):
+    """A rule's "facts" against a profile's: each named fact must have one
+    of the values listed, or any value at all for "*"."""
+    for k, want in (cond or {}).items():
+        have = str((facts or {}).get(k) or "").strip()
+        if (want == "*" and not have) or (want != "*" and have not in want):
+            return False
+    return True
+
+
+def _fill(text, profile):
+    """{name} and {fact} in a rule's or a question's text, from the profile."""
+    if not text or not profile:
+        return text
+    vals = dict(profile.get("facts") or {}, name=profile.get("name", ""))
+    for k, v in vals.items():
+        text = text.replace("{%s}" % k, str(v))
+    return text
+
+
+def _filled(q, profile):
+    """A question with the profile's facts written into it."""
+    q = dict(q, prompt=_fill(q["prompt"], profile))
+    if q.get("hint"):
+        q["hint"] = _fill(q["hint"], profile)
+    q["options"] = [dict(o, text=_fill(o["text"], profile))
+                    for o in q["options"]]
+    return q
+
+
+def _layer(transcript, questions, rules, prefix, quotes, timeout, profile,
+           subject=None, file_applies=None):
+    """One set of questions and rules - a country's, or the facts file's -
+    put to a call. Only the rules that can hold for this person and this
+    subject are tried, and only the questions they need are asked."""
+    facts = (profile or {}).get("facts") or {}
+    live = [(i, r) for i, r in enumerate(rules, 1)
+            if _facts_hold(r.get("facts"), facts)
+            and (not r.get("applies_to") or subject in r["applies_to"])]
+    out = {"answers": [], "label": None, "why": None, "advice": None,
+           "rule": None}
+    if file_applies is False:
+        return dict(out, applies=False)
+    needed = {k for _, r in live for k in (r.get("if") or {})}
     chosen = {}
-    for q in country["questions"]:
-        a = ask(transcript, q, {}, quotes=quotes, timeout=timeout)
-        rec = _answer_record("country/" + q["id"], q, a)
+    for q in questions:
+        # a country asks all of its questions, as it always has; the facts
+        # file only the ones a rule that can hold needs
+        if prefix == "profile" and q["id"] not in needed:
+            continue
+        fq = _filled(q, profile)
+        a = ask(transcript, fq, {}, quotes=quotes, timeout=timeout)
+        rec = _answer_record("%s/%s" % (prefix, q["id"]), fq, a)
         out["answers"].append(rec)
         chosen[q["id"]] = rec["option"]
-    for i, rule in enumerate(country["rules"], 1):
-        if all(chosen.get(k) in v for k, v in rule["if"].items()):
-            out.update(label=rule["label"], why=rule["why"], rule=i,
-                       advice=rule.get("advice"), final=rule["label"],
-                       **{"from": "country"})
-            return out
-    out.update(final=res["verdict"], why="None of %s's rules applies, so the "
-               "verdict from the words stands." % country["name"],
-               **{"from": "words"})
+    out["applies"] = bool(live) or prefix == "country"
+    for i, r in live:
+        if all(chosen.get(k) in v for k, v in (r.get("if") or {}).items()):
+            out.update(label=r["label"], why=_fill(r["why"], profile), rule=i,
+                       advice=_fill(r.get("advice"), profile))
+            break
+    return out
+
+
+def personalise(transcript, res, country=None, quotes=True, timeout=300,
+                profile=None, personal=None):
+    """The label for this person: a classified call (`res`, from classify)
+    put through the country's questions and rules, and through the rules
+    the profile's facts make apply.
+
+    Returns {"country", "law", "source", "applies": whether the call is on a
+    subject the country's rules are for, "answers": the country's answer
+    records, "profile": the person's name or None, "personal": the facts'
+    {"answers", "label", "why", "advice", "rule", "applies"} or None,
+    "label": scam | legit | unsure, or None when no rule applies, "why",
+    "advice", "rule": of the rule that decided, "country_label" and
+    "country_why": the country's own, "final": the label, or the words'
+    verdict when there is none, "from": "country" | "profile" | "words"}. When both decide, the
+    more careful label wins: scam, then unsure, then legit.
+    """
+    out = {"country": country["name"] if country else None,
+           "law": (country or {}).get("law", ""),
+           "source": (country or {}).get("source", ""), "answers": [],
+           "applies": None, "profile": (profile or {}).get("name"),
+           "personal": None, "label": None, "advice": None, "rule": None}
+    subject = res.get("subject")
+    decided = []
+    if country:
+        applies = country.get("applies_to")
+        c = _layer(transcript, country["questions"], country["rules"],
+                   "country", quotes, timeout, profile, subject=subject,
+                   file_applies=(None if not applies else subject in applies))
+        out["applies"], out["answers"] = c["applies"], c["answers"]
+        # kept apart, for when the facts decide instead and disagree
+        out["country_label"], out["country_why"] = c["label"], c["why"]
+        if c["label"]:
+            decided.append(("country", c))
+    if profile and personal and (profile.get("facts") or {}):
+        pl = _layer(transcript, personal.get("questions", []),
+                    personal.get("rules", []), "profile", quotes, timeout,
+                    profile, subject=subject)
+        out["personal"] = pl
+        if pl["label"]:
+            decided.append(("profile", pl))
+    if decided:
+        src, d = max(decided, key=lambda x: CAUTION[x[1]["label"]])
+        out.update(label=d["label"], why=d["why"], rule=d["rule"],
+                   advice=d["advice"], final=d["label"], **{"from": src})
+        return out
+    who = ("%s's rules" % country["name"]) if country else None
+    if country and out["applies"] is False:
+        why = ("This call is not on a subject %s cover, so the verdict from "
+               "the words stands." % who)
+    elif country:
+        why = "None of %s applies, so the verdict from the words stands." % who
+    else:
+        why = "Nothing known about %s changes the verdict from the words." \
+              % out["profile"]
+    if country and profile and (profile.get("facts") or {}):
+        why = why[:-1] + (", and nothing known about %s changes it."
+                          % profile["name"])
+    out.update(final=res["verdict"], why=why, **{"from": "words"})
     return out
 
 
@@ -1696,12 +2019,23 @@ def run_ask(args):
         onto = without_hints(onto)
     res = classify(args.text, onto, not args.no_quotes)
     _show_call(res, onto)
-    if args.country:
-        p = personalise(args.text, res,
-                        load_country(find_country(args.country)),
-                        not args.no_quotes)
-        print("\npersonalised for a person in %s: %s" % (p["country"], p["law"]))
-        for r in p["answers"]:
+    profile = personal = None
+    if args.profile:
+        personal = load_personal()
+        profile = load_profile(find_profile(args.profile), personal)
+    # the profile's country, unless --country names another
+    where = args.country or (profile or {}).get("country")
+    if where or profile:
+        country = load_country(find_country(where)) if where else None
+        p = personalise(args.text, res, country, not args.no_quotes,
+                        profile=profile, personal=personal)
+        if country:
+            print("\npersonalised for a person in %s: %s"
+                  % (p["country"], p["law"]))
+        if profile:
+            print("\nfor %s%s" % (profile["name"], "".join(
+                "; %s: %s" % (k, v) for k, v in profile["facts"].items())))
+        for r in p["answers"] + ((p["personal"] or {}).get("answers") or []):
             print("  %-40s %s" % (r["question"][:40], r["text"] or "unreadable"))
         print("-> %s  (%s)" % (p["final"], p["why"]))
         if p["advice"]:
@@ -1771,18 +2105,38 @@ def run_evaluate(args):
               "held-out set is the fairer read.")
     ctx = presize([r["text"] for r in rows], onto, quotes)
     print("  about a dozen requests per call, context window %s" % ctx)
+    profile = personal = None
+    where = []
+    if args.profile:
+        personal = load_personal()
+        profile = load_profile(find_profile(args.profile), personal)
+        where = _row_countries(args.csv, rows, profile)
+        print("  for %s: %s" % (profile["name"], "; ".join(
+            ["%s: %s" % (k, v) for k, v in profile["facts"].items()]
+            or ["no facts"])))
+        named = Counter(c["name"] if c else "no country" for c in where)
+        print("  where each call's person lives: %s" % ", ".join(
+            "%s %d" % kv for kv in sorted(named.items())))
 
     truths = [r["label"] for r in rows]
     prog = EC.Progress(len(rows), every=1)
-    preds, results = [], []
+    preds, results, personal_res = [], [], []
     stopped = None
     t0 = time.time()
     try:
-        for r, res in zip(rows, classify_all([r["text"] for r in rows], onto,
-                                             quotes)):
+        for i, (r, res) in enumerate(zip(rows, classify_all(
+                [r["text"] for r in rows], onto, quotes))):
             results.append(res)
-            # neutral (a score of exactly 0) is not called a scam
-            pred = int(res["verdict"] == "scam")
+            if profile:
+                # the label for this person; unsure is counted as a scam,
+                # since its advice is to check before paying anything
+                pr = personalise(r["text"], res, where[i], quotes,
+                                 profile=profile, personal=personal)
+                personal_res.append(pr)
+                pred = int(pr["final"] in ("scam", "unsure"))
+            else:
+                # neutral (a score of exactly 0) is not called a scam
+                pred = int(res["verdict"] == "scam")
             preds.append(pred)
             prog.tick(r, pred)
     except RuntimeError as e:
@@ -1805,6 +2159,14 @@ def run_evaluate(args):
              "%d questions asked, %d answered from logprobs, %d answers "
              "without a quote counted as not stated"
              % (asked, sum(r["measured"] for r in results), unquoted)]
+    if profile:
+        personal_res = personal_res[:len(preds)]
+        by = Counter(p["from"] for p in personal_res)
+        extra.append("for %s: %d decided by the country's rules, %d by their "
+                     "facts, %d by the words alone; %d unsure, counted as scam"
+                     % (profile["name"], by["country"], by["profile"],
+                        by["words"],
+                        sum(1 for p in personal_res if p["final"] == "unsure")))
     extra += [""] + subject_table(onto, results, truths)
     EC.report(m, base, elapsed, len(preds), extra)
     if args.out:
@@ -1816,7 +2178,13 @@ def run_evaluate(args):
                           "verdict3": [r["verdict"] for r in results],
                           "prob_scam": [round(pct(r["score"]) / 100, 4)
                                         for r in results],
-                          "reason": [explain(r) for r in results]},
+                          "reason": [explain(r) for r in results],
+                          **({"personal": [p["final"] for p in personal_res],
+                              "decided_by": [p["from"] for p in personal_res],
+                              "country": [p["country"] or ""
+                                          for p in personal_res],
+                              "personal_why": [p["why"] for p in personal_res]}
+                             if profile else {})},
                          {"kind": "mcq", "ontology": str(args.ontology),
                           "question": onto["prompt"],
                           "trained_on": trained,
@@ -1827,8 +2195,46 @@ def run_evaluate(args):
                           "neutral": neutral, "questions_asked": asked,
                           "unquoted": unquoted, "quotes": quotes,
                           "hints": not args.no_hints, "stopped": stopped,
-                          "measured": sum(r["measured"] for r in results)})
+                          "measured": sum(r["measured"] for r in results),
+                          "profile": (dict(profile, decided_by=dict(Counter(
+                              p["from"] for p in personal_res)), unsure=sum(
+                              1 for p in personal_res
+                              if p["final"] == "unsure"))
+                              if profile else None)})
     return m
+
+
+def _row_countries(csv_path, rows, profile):
+    """For each row, the country its person lives in, loaded: the row's own
+    `country` column when it names a country with a file; no country when
+    it names one without; the profile's country when it names none."""
+    try:
+        with open(csv_path, newline="", encoding="utf-8-sig",
+                  errors="replace") as f:
+            raw = list(csv.DictReader(f))
+    except OSError:
+        raw = []
+    col = next((c for c in (raw[0] if raw else {}) if c.lower() == "country"),
+               None)
+    cache = {}
+
+    def load(name):
+        if name not in cache:
+            try:
+                cache[name] = load_country(find_country(name))
+            except ValueError:
+                cache[name] = None
+        return cache[name]
+    out = []
+    for r in rows:
+        own = (raw[r["row"]].get(col) or "").strip() if col and \
+            r["row"] < len(raw) else ""
+        if own:
+            out.append(load(own))
+        else:
+            out.append(load(profile["country"]) if profile.get("country")
+                       else None)
+    return out
 
 
 def dumps(obj, width=180, indent=0):
@@ -2163,6 +2569,10 @@ def build_parser():
     a.add_argument("--text", required=True)
     walk_flags(a)
     hint_flag(a)
+    a.add_argument("--profile", default=None,
+                   help="who the call is for: a profile's name, file name or "
+                        "path in knowledge/profiles/ - its country and facts "
+                        "personalise the label")
     a.add_argument("--country", default=None,
                    help="where the person lives: a country name (\"New "
                         "Zealand\") or file in knowledge/countries/, whose "
@@ -2208,6 +2618,10 @@ def build_parser():
                          "size took: --limit 50 --skip 50 is the next 50")
     ev.add_argument("--text-col", default=None)
     ev.add_argument("--label-col", default=None)
+    ev.add_argument("--profile", default=None,
+                    help="score every call as if it were for this person: "
+                         "their facts, and their country unless a row has "
+                         "its own country column")
     ev.add_argument("--out", default=None,
                     help="write <out>.json and a per-call CSV in results/")
     ev.set_defaults(func=run_evaluate)
