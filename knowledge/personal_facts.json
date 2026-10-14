@@ -1,0 +1,50 @@
+{
+  "facts": [
+    {"id": "bank", "label": "Bank", "kind": "text", "prompt": "Which bank does the person use?", "placeholder": "such as ANZ - or two, as ANZ, Kiwibank"},
+    {
+      "id": "expecting_parcel",
+      "label": "Expecting a parcel",
+      "prompt": "Is the person expecting a parcel or a delivery?",
+      "options": [{"id": "yes", "text": "Yes, something is on its way"}, {"id": "no", "text": "No, nothing is on its way"}]
+    }
+  ],
+  "questions": [
+    {
+      "id": "caller_bank",
+      "prompt": "Which bank does the caller say they are calling from?",
+      "hint": "The person banks with {bank}. Choose {bank} only when the caller names it. A different bank, or a card or payment company calling about another bank's account, is a bank that is not {bank}.",
+      "options": [
+        {"id": "own_bank", "text": "{bank}"},
+        {"id": "other_bank", "text": "A bank that is not {bank}"},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
+    },
+    {
+      "id": "parcel_charge",
+      "prompt": "Does the caller ask the person to pay a charge, or to give card or personal details, before a parcel can be delivered?",
+      "options": [
+        {"id": "yes", "text": "Yes: a charge, or details, before delivery"},
+        {"id": "no", "text": "No such request", "absence": true},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "facts": {"bank": "*"},
+      "if": {"caller_bank": ["other_bank"]},
+      "applies_to": ["bank_account"],
+      "label": "scam",
+      "why": "{name} banks with {bank}. Another bank holds no account of theirs to protect, fix or check.",
+      "advice": "Hang up. If you are worried about your money, call {bank} on the number on your card."
+    },
+    {
+      "facts": {"expecting_parcel": ["no"]},
+      "if": {"parcel_charge": ["yes"]},
+      "applies_to": ["delivery"],
+      "label": "scam",
+      "why": "{name} is not expecting a parcel, so a charge or details to release one cannot be for anything of theirs.",
+      "advice": "Don't pay and don't give details. If you did order something, check with the shop you ordered from."
+    }
+  ]
+}

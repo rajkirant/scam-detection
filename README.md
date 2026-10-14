@@ -818,6 +818,60 @@ the list on the next page load. On the command line:
 The same call, labelled for each country, is in
 `datasets/personalisation_2.csv`.
 
+**Profiles: who the call is for.** A profile is a person: a name, where they
+live, and facts about them that can change a verdict. Make one on the
+**Profiles** tab: give a name, pick a country (or none), and answer the
+facts. Then pick it under **Who it is for**, above *The person lives in*.
+Picking a profile sets the country to theirs; you can still change it. The
+call is then labelled for that person by their country's rules and by the
+rules their facts make apply. Two facts ship:
+
+| Fact | When it decides |
+|------|-----------------|
+| **Bank**, typed in, such as `ANZ` | A bank call from a bank that is not theirs is a scam: another bank holds no account of theirs. |
+| **Expecting a parcel**, yes or no | When they are not expecting one, a charge or details to release a parcel is a scam. |
+
+A fact's rule asks the call only the questions it needs, and only on the
+subjects it is for: a bank call for someone with a bank, a delivery call for
+someone not expecting a parcel. The questions name the person's facts, as
+in "Which bank does the caller say they are calling from? The person banks
+with ANZ." When the country and the facts both decide, the more careful
+label wins: scam, then unsure, then legitimate. The **For this person** card
+says which decided, and what the other said. A fact left unset, such as no
+bank, makes no rule apply.
+
+On **Score a dataset**, pick a profile under **For** to label every call for
+that person. A row with its own `country` column keeps that country; a row
+naming a country with no file gets none; any other row gets the profile's.
+*Unsure* counts as scam there, since its advice is to check before paying.
+The per-call CSV adds `personal`, `decided_by`, `country` and
+`personal_why` columns, and the run is named "… · for <name>" on the Results
+tab. On the command line, `--profile` takes a profile's name, file name or
+path: `python scripts/mcq_ontology.py ask --text "…" --profile Raj`, or
+`evaluate --csv … --profile Raj`.
+
+Profiles are saved in `knowledge/profiles/<name>.json`, which git leaves
+alone: they are about real people, and an Update never touches them. The
+facts a profile can hold, the questions they raise and their rules are in
+`knowledge/personal_facts.json`, written like a country file:
+
+```json
+{"facts": [{"id": "bank", "label": "Bank", "kind": "text", "prompt": "Which bank does the person use?"},
+           {"id": "expecting_parcel", "label": "Expecting a parcel", "prompt": "Is the person expecting a parcel or a delivery?",
+            "options": [{"id": "yes", "text": "Yes"}, {"id": "no", "text": "No"}]}],
+ "questions": [{"id": "caller_bank", "prompt": "Which bank does the caller say they are calling from?", "options": [...]}],
+ "rules": [{"facts": {"bank": "*"}, "if": {"caller_bank": ["other_bank"]}, "applies_to": ["bank_account"],
+            "label": "scam", "why": "{name} banks with {bank}. ...", "advice": "..."}]}
+```
+
+- `facts`: what the profile form asks. A fact has options, or `"kind":
+  "text"` for one typed in.
+- A rule's `facts` holds only for a profile with those values; `"*"` means
+  any value given. Its `if` is answered by the call, as in a country file.
+  `applies_to` names the subjects it is for, and `{name}`, `{bank}` and so on
+  in any text are filled from the profile.
+- A country's rules can name facts too, with the same `"facts": {...}`.
+
 **Your own question about this call** sits under it, in the Ask tab. Type
 any question about the loaded transcript:
 - **With options:** list them in the question, as `A) … B) …`, one per line
@@ -861,7 +915,10 @@ then `python scripts/mcq_ontology.py question --saved knowledge/questions/asks.j
 The other tabs:
 - **Score a dataset:** the shared run below, about a dozen requests per call.
   Its card adds a table of which subject the scam and legitimate calls were
-  routed to, and how many scored exactly 0.
+  routed to, and how many scored exactly 0. Pick a profile under *For* to
+  label each call for that person (see *Profiles* above).
+- **Profiles:** the people calls can be labelled for, made, changed and
+  deleted here (see *Profiles* above).
 - **Question tree:** a picture of the file. Pick a subject to see the
   questions its calls are asked, in order: each question's options with their
   values, red for scam and green for legitimate, and follow-ups branching off
