@@ -1030,6 +1030,23 @@ def load_personal(path=None):
     return obj
 
 
+def named_country(name):
+    """A country file by its name ("New Zealand"), its file name
+    ("new_zealand") or knowledge/countries/<file> - never by any other path,
+    since a profile's country comes from the page."""
+    key = " ".join(str(name or "").replace("_", " ").split()).lower()
+    if key.endswith(".json"):
+        key = key[:-5]
+    key = key.split("/")[-1] if key.startswith("knowledge/countries/") else key
+    for c in list_countries():
+        if key in (c["name"].lower(),
+                   Path(c["path"]).stem.replace("_", " ").lower()):
+            return PROJECT_DIR / c["path"]
+    raise ValueError("no country called %r - the ones there are: %s"
+                     % (str(name), ", ".join(c["name"] for c in
+                                             list_countries()) or "none"))
+
+
 def check_profile(obj, personal=None):
     """Every problem with a profile, as sentences; [] if none. Its country
     must be one there is a file for, and every fact one the facts file
@@ -1043,7 +1060,7 @@ def check_profile(obj, personal=None):
         probs.append("a name of 60 characters at most, please")
     if obj.get("country"):
         try:
-            find_country(obj["country"])
+            named_country(obj["country"])
         except ValueError as e:
             probs.append(str(e))
     facts = obj.get("facts", {})
@@ -1071,7 +1088,7 @@ def clean_profile(obj):
              (obj.get("facts") or {}).items() if str(v or "").strip()}
     out = {"name": " ".join(str(obj.get("name") or "").split())}
     if obj.get("country"):
-        out["country"] = load_country(find_country(obj["country"]))["name"]
+        out["country"] = load_country(named_country(obj["country"]))["name"]
     out["facts"] = facts
     return out
 
@@ -1091,37 +1108,65 @@ def load_profile(path, personal=None):
     return clean_profile(obj)
 
 
-def list_profiles(personal=None):
-    """Every profile in knowledge/profiles/ that loads, by file name."""
+def list_profiles(personal=None, broken=False):
+    """Every profile in knowledge/profiles/ that loads, by file name. With
+    `broken`, the ones that do not load as well - say, after their country's
+    file was removed - with their "problems", so the page can show them to be
+    changed or deleted rather than have them vanish."""
     personal = personal or load_personal()
     out = []
     for p in sorted(PROFILES_DIR.glob("*.json")) if PROFILES_DIR.is_dir() \
             else []:
         try:
             prof = load_profile(p, personal)
-        except ValueError:
+        except ValueError as e:
+            if broken:
+                try:
+                    raw = json.loads(p.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    raw = {}
+                raw = raw if isinstance(raw, dict) else {}
+                facts = raw.get("facts")
+                out.append({"name": str(raw.get("name") or p.stem),
+                            "country": raw.get("country") or None,
+                            "facts": facts if isinstance(facts, dict) else {},
+                            "path": "knowledge/profiles/" + p.name,
+                            "problems": [str(e)]})
             continue
         out.append(dict(prof, path="knowledge/profiles/" + p.name))
     return out
 
 
+def _key(text):
+    return " ".join(str(text).replace("_", " ").split()).lower()
+
+
 def find_profile(name):
-    """A profile by path, by its name ("Raj") or by its file name."""
+    """A profile by its path, its name ("Raj") or its file name ("raj",
+    "raj.json") - the name first, so a profile renamed on the page is not
+    found by the file name it was made with. Two profiles of one name is
+    an error, not a guess."""
     name = str(name)
-    # the page names a profile knowledge/profiles/<file>, as it lists them
     shown = "knowledge/profiles/"
-    at = [PROFILES_DIR / name[len(shown):]] if name.startswith(shown) else []
-    for p in at + [Path(name), PROJECT_DIR / name]:
-        if p.is_file():
-            return p
-    key = " ".join(name.replace("_", " ").split()).lower()
-    for prof in list_profiles():
-        if key in (prof["name"].lower(),
-                   Path(prof["path"]).stem.replace("_", " ").lower()):
-            return PROFILES_DIR / Path(prof["path"]).name
+    if name.endswith(".json"):
+        at = ([PROFILES_DIR / name[len(shown):]] if name.startswith(shown)
+              else [PROFILES_DIR / name]) + [Path(name), PROJECT_DIR / name]
+        for p in at:
+            if p.is_file():
+                return p
+    profs = list_profiles()
+    key = _key(name[:-5] if name.endswith(".json") else name)
+    for field in ("name", "stem"):
+        hits = [x for x in profs if key == _key(
+            x["name"] if field == "name" else Path(x["path"]).stem)]
+        if len(hits) > 1:
+            raise ValueError("more than one profile is called %r: %s - name "
+                             "one by its file" % (name, ", ".join(
+                                 x["path"] for x in hits)))
+        if hits:
+            return PROFILES_DIR / Path(hits[0]["path"]).name
     raise ValueError("no profile %r - the ones there are: %s"
-                     % (name, ", ".join(x["name"] for x in list_profiles())
-                        or "none"))
+                     % (name, ", ".join(x["name"] for x in profs) or "none"))
 
 
 def profile_path_for(name, taken=()):
@@ -1190,7 +1235,8 @@ def _layer(transcript, questions, rules, prefix, quotes, timeout, profile,
     for i, r in live:
         if all(chosen.get(k) in v for k, v in (r.get("if") or {}).items()):
             out.update(label=r["label"], why=_fill(r["why"], profile), rule=i,
-                       advice=_fill(r.get("advice"), profile))
+                       advice=_fill(r.get("advice"), profile),
+                       why_template=r["why"])
             break
     return out
 
@@ -1206,7 +1252,8 @@ def personalise(transcript, res, country=None, quotes=True, timeout=300,
     records, "profile": the person's name or None, "personal": the facts'
     {"answers", "label", "why", "advice", "rule", "applies"} or None,
     "label": scam | legit | unsure, or None when no rule applies, "why",
-    "advice", "rule": of the rule that decided, "country_label" and
+    "advice", "rule": of the rule that decided, "why_template": its "why"
+    with {name} and the facts unfilled, "country_label" and
     "country_why": the country's own, "final": the label, or the words'
     verdict when there is none, "from": "country" | "profile" | "words"}. When both decide, the
     more careful label wins: scam, then unsure, then legit.
@@ -1215,7 +1262,8 @@ def personalise(transcript, res, country=None, quotes=True, timeout=300,
            "law": (country or {}).get("law", ""),
            "source": (country or {}).get("source", ""), "answers": [],
            "applies": None, "profile": (profile or {}).get("name"),
-           "personal": None, "label": None, "advice": None, "rule": None}
+           "personal": None, "label": None, "advice": None, "rule": None,
+           "why_template": None}
     subject = res.get("subject")
     decided = []
     if country:
@@ -1238,7 +1286,8 @@ def personalise(transcript, res, country=None, quotes=True, timeout=300,
     if decided:
         src, d = max(decided, key=lambda x: CAUTION[x[1]["label"]])
         out.update(label=d["label"], why=d["why"], rule=d["rule"],
-                   advice=d["advice"], final=d["label"], **{"from": src})
+                   advice=d["advice"], final=d["label"],
+                   why_template=d.get("why_template"), **{"from": src})
         return out
     who = ("%s's rules" % country["name"]) if country else None
     if country and out["applies"] is False:
@@ -2178,12 +2227,24 @@ def run_evaluate(args):
                           "verdict3": [r["verdict"] for r in results],
                           "prob_scam": [round(pct(r["score"]) / 100, 4)
                                         for r in results],
-                          "reason": [explain(r) for r in results],
+                          # for a profile, the reason is the rule that
+                          # decided, in its own words: the CSV may be
+                          # committed, the person's name and bank must not be
+                          "reason": [
+                              ("%s's rule %s: %s" % (
+                                  "the country" if p["from"] == "country"
+                                  else "the profile", p["rule"],
+                                  p["why_template"])
+                               if profile and p["from"] != "words"
+                               else explain(r))
+                              for r, p in zip(results, personal_res
+                                              or [{}] * len(results))],
                           **({"personal": [p["final"] for p in personal_res],
                               "decided_by": [p["from"] for p in personal_res],
                               "country": [p["country"] or ""
                                           for p in personal_res],
-                              "personal_why": [p["why"] for p in personal_res]}
+                              "personal_why": [p["why_template"] or ""
+                                               for p in personal_res]}
                              if profile else {})},
                          {"kind": "mcq", "ontology": str(args.ontology),
                           "question": onto["prompt"],
@@ -2196,11 +2257,17 @@ def run_evaluate(args):
                           "unquoted": unquoted, "quotes": quotes,
                           "hints": not args.no_hints, "stopped": stopped,
                           "measured": sum(r["measured"] for r in results),
-                          "profile": (dict(profile, decided_by=dict(Counter(
-                              p["from"] for p in personal_res)), unsure=sum(
-                              1 for p in personal_res
-                              if p["final"] == "unsure"))
-                              if profile else None)})
+                          "profile": ({"file": Path(args.profile).stem
+                                       if args.profile.endswith(".json")
+                                       else args.profile,
+                                       "country": profile.get("country"),
+                                       "facts": sorted(profile["facts"]),
+                                       "decided_by": dict(Counter(
+                                           p["from"] for p in personal_res)),
+                                       "unsure": sum(
+                                           1 for p in personal_res
+                                           if p["final"] == "unsure")}
+                                      if profile else None)})
     return m
 
 

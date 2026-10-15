@@ -2588,9 +2588,10 @@ def start_eval_run(page, form):
             name += " (no hints)"
         if form.get("profile"):                 # scored for one person
             ppath = mcq_profile_path(form["profile"])
-            prof = mcq_ontology.load_profile(ppath)
+            mcq_ontology.load_profile(ppath)    # refuse a broken one now
             flags += ["--profile", "knowledge/profiles/" + ppath.name]
-            name += " · for " + prof["name"]
+            # named by its file, not the person: the ledger is in git
+            name += " · profile " + ppath.stem
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
             raise ValueError("a run is already going (%s). Stop it first - "
@@ -2639,8 +2640,11 @@ def start_eval_run(page, form):
             flags += ["--direction", way]
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    # the name as shown can hold spaces and "·" ("... (no hints)", "...
+    # · profile raj"); the id is kept to what RUN_ID_RE lets back in
     run_id = (time.strftime("%Y%m%d_%H%M%S") + "_eval_" + page + "_"
-              + (name or "bare"))
+              + (re.sub(r"[^A-Za-z0-9_+.-]+", "_", name or "bare")
+                 .strip("_")[:80] or "bare"))
     flags += ["--out", str(run_path(run_id, "metrics.json"))]
 
     quoted = " ".join(shlex.quote(f) for f in flags)
@@ -2911,7 +2915,7 @@ def mcq_people():
         personal = mcq_ontology.load_personal()
     except ValueError as e:
         return {"profiles": [], "facts": [], "facts_error": str(e)}
-    return {"profiles": mcq_ontology.list_profiles(personal),
+    return {"profiles": mcq_ontology.list_profiles(personal, broken=True),
             "facts": personal["facts"]}
 
 
@@ -2936,18 +2940,17 @@ def mcq_profile_save(form):
     if probs:
         raise ValueError("not saved: " + "; ".join(probs))
     obj = mcq_ontology.clean_profile(obj)
-    if form.get("path"):
-        path = mcq_profile_path(form["path"])
-        if not path.exists():
-            raise ValueError("there is no %s to change - it may have been "
-                             "deleted" % form["path"])
-    else:
-        others = [x for x in mcq_ontology.list_profiles(personal)
-                  if x["name"].lower() == obj["name"].lower()]
-        if others:
-            raise ValueError("there is already a profile called %s"
-                             % obj["name"])
-        path = mcq_ontology.profile_path_for(obj["name"])
+    path = mcq_profile_path(form["path"]) if form.get("path") else None
+    if path and not path.exists():
+        raise ValueError("there is no %s to change - it may have been "
+                         "deleted" % form["path"])
+    # one person to a name, for a new profile and for a renamed one alike
+    others = [x for x in mcq_ontology.list_profiles(personal, broken=True)
+              if mcq_ontology._key(x["name"]) == mcq_ontology._key(obj["name"])
+              and (not path or x["path"] != "knowledge/profiles/" + path.name)]
+    if others:
+        raise ValueError("there is already a profile called %s" % obj["name"])
+    path = path or mcq_ontology.profile_path_for(obj["name"])
     mcq_ontology.PROFILES_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8")
@@ -3606,6 +3609,7 @@ PAGE = r"""<!doctype html>
   .pf-acts button { padding:3px 10px; font-size:12px; background:var(--panel);
                     color:var(--ink); border:1px solid var(--line); }
   .pf-acts .pf-del { color:var(--bad); }
+  .pf-bad { color:var(--bad); font-size:12px; flex-basis:100%; }
   .te-actions .te-cancel, .te-add, #mcqtreediscard, #mcqprofcancel { background:var(--panel);
     color:var(--ink); border:1px solid var(--line); }
   .te-add { margin-top:8px; padding:5px 12px; font-size:12.5px; }
@@ -3705,6 +3709,7 @@ PAGE = r"""<!doctype html>
   .askrow { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   .askrow label.inline { font-weight:600; }
   .askrow select, .askrow input[type=text] { width:auto; padding:6px 9px; }
+  .askrow select { min-width:0; max-width:100%; }
   /* has to out-rank the "select, input[type=text]" width:100% above it */
   input[type=text].num { width:74px; }
 
@@ -4910,10 +4915,6 @@ per held-out call, so it takes minutes, not seconds.</pre>
           <select id="mcqprofile" style="width:auto; flex:1"></select>
         </div>
         <div class="hint" id="mcqprofilefacts"></div>
-        <div class="askrow" style="margin-top:6px">
-          <label for="mcqcountry" style="margin:0">The person lives in</label>
-          <select id="mcqcountry" style="width:auto; flex:1"></select>
-        </div>
         <div class="hint" id="mcqcountrylaw"></div>
       </div>
       <button class="go" id="mcqgo">Classify this call</button>
@@ -8033,15 +8034,16 @@ async function mcqBoot() {
   forgetRowOnEdit('mcqtranscript', 'mcqinfo');
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
-  $('mcqcountry').innerHTML = '<option value="">no country - the words alone</option>'
-    + (cfg.countries || []).map(c => `<option value="${esc(c.path)}">${esc(c.name)}</option>`).join('');
-  $('mcqcountry').onchange = mcqCountryLaw;
-  mcqCountryLaw();
+  // a typed or pasted transcript is not the loaded row: its country goes
+  $('mcqtranscript').addEventListener('input', () => {
+    if (mcqRowCountry) { mcqRowCountry = null; mcqCountryLaw(); }
+  });
   $('mcqprofile').onchange = mcqProfilePick;
   $('mcqprofnew').onclick = () => mcqProfForm(null);
   $('mcqprofsave').onclick = mcqProfSave;
   $('mcqprofcancel').onclick = () => { $('mcqprofform').hidden = true; };
   mcqPeople(cfg);
+  mcqCountryLaw();
   $('mcqqgo').onclick = mcqQuestion;
   $('mcqquestion').addEventListener('input', mcqQuestionEdited);
   $('mcqqsaved').onchange = () => mcqSavedPick($('mcqqsaved').value);
@@ -8208,22 +8210,42 @@ async function mcqLoadRow() {
   $('mcqinfo').innerHTML = `row ${r.idx} of ${r.total}`
     + (r.row_id ? ' · id ' + esc(r.row_id) : '')
     + (r.country ? ' · ' + esc(r.country) : '') + truthPill(r.label);
-  // a row that says where the person lives picks that country's law
-  const c = r.country && (MCQ.countries || []).find(x =>
-    x.name.toLowerCase() === r.country.trim().toLowerCase());
-  if (c) { $('mcqcountry').value = c.path; mcqCountryLaw(); }
+  // a row that says where its person lives brings its own country, as it
+  // does when a whole dataset is scored; one with no file for it, none
+  const name = (r.country || '').trim();
+  mcqRowCountry = name ? {name, path: ((MCQ.countries || []).find(x =>
+    x.name.toLowerCase() === name.toLowerCase()) || {}).path || ''} : null;
+  mcqCountryLaw();
   mcqSize();
 }
 
-// the law of the country picked, under the dropdown
+// where the person lives: the loaded row's country when it names one, else
+// the profile's - there is no separate choice, a profile carries its country
+let mcqRowCountry = null;
+function mcqCountryNow() {
+  if (mcqRowCountry) return {path: mcqRowCountry.path, name: mcqRowCountry.name,
+                             from: 'the loaded row'};
+  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
+  const c = p && p.country && (MCQ.countries || []).find(x =>
+    x.name.toLowerCase() === p.country.toLowerCase());
+  return c ? {path: c.path, name: c.name, from: 'the profile'}
+    : {path: '', name: '', from: p ? 'the profile' : ''};
+}
+
+// the law of the country in use, under the picker
 function mcqCountryLaw() {
-  const c = (MCQ.countries || []).find(x => x.path === $('mcqcountry').value);
+  const now = mcqCountryNow();
+  const c = (MCQ.countries || []).find(x => x.path === now.path);
   $('mcqcountrylaw').innerHTML = c
-    ? esc(`${c.name}: ${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules `
-      + 'decide the label where they apply. ') + `<a href="#files/${esc(c.path)}" `
-      + `style="color:var(--accent)">${esc(c.path)}</a>`
-    : 'Pick where the person lives to personalise the label: the same call can '
-      + 'be normal in one country and a scam in another.';
+    ? esc(`Lives in ${c.name}, from ${now.from}. ${c.law}${c.source ? ' ('
+      + c.source + ')' : ''} Its rules decide the label where they apply. `)
+      + `<a href="#files/${esc(c.path)}" style="color:var(--accent)">${esc(c.path)}</a>`
+    : now.from === 'the loaded row'
+      ? esc(`The loaded row's person lives in ${now.name}, which has no country `
+        + 'file, so no country\'s rules apply.')
+      : now.from ? 'This profile has no country, so no country\'s rules apply.'
+      : 'Pick who it is for to personalise the label: their country\'s law and '
+        + 'the facts about them. Make people on the Profiles tab.';
 }
 
 async function mcqAsk() {
@@ -8239,7 +8261,7 @@ async function mcqAsk() {
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
     quotes: $('mcqquotes').checked, hints: $('mcqhints').checked,
-    country: $('mcqcountry').value, profile: $('mcqprofile').value});
+    country: mcqCountryNow().path, profile: $('mcqprofile').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -8313,43 +8335,41 @@ function mcqPeople(r) {
   MCQ.facts = r.facts || [];
   $('mcqproferr').textContent = r.facts_error ? 'knowledge/personal_facts.json '
     + 'does not load, so no profile can be used: ' + r.facts_error : '';
-  const opts = '<option value="">no profile</option>' + MCQ.profiles.map(p =>
+  // a profile that no longer loads is listed below to be mended, not offered
+  const usable = MCQ.profiles.filter(p => !p.problems);
+  const opts = '<option value="">no profile</option>' + usable.map(p =>
     `<option value="${esc(p.path)}">${esc(p.name)}${p.country ? ' — '
       + esc(p.country) : ''}</option>`).join('');
   for (const id of ['mcqprofile', 'mcqevprofile']) {
     const was = $(id).value;
     $(id).innerHTML = opts;
-    $(id).value = MCQ.profiles.some(p => p.path === was) ? was : '';
+    $(id).value = usable.some(p => p.path === was) ? was : '';
   }
+  MCQ.facts_error = r.facts_error || '';
   mcqProfileFacts();
+  mcqCountryLaw();
   mcqProfList();
 }
 
 // "Bank: ANZ · Expecting a parcel: No, nothing is on its way"
 function mcqFactText(p) {
-  return (MCQ.facts || []).filter(f => p.facts && p.facts[f.id]).map(f => {
+  return (MCQ.facts || []).filter(f => p.facts && typeof p.facts[f.id] === 'string'
+                                       && p.facts[f.id]).map(f => {
     const v = p.facts[f.id];
     const o = (f.options || []).find(x => x.id === v);
     return (f.label || f.id) + ': ' + (o ? o.text : v);
   }).join(' · ');
 }
 
-// picking a profile picks where they live; the country can still be changed
+// picking a profile picks where they live, with it
 function mcqProfilePick() {
-  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
-  if (p) {
-    const c = (MCQ.countries || []).find(x => p.country
-      && x.name.toLowerCase() === p.country.toLowerCase());
-    $('mcqcountry').value = c ? c.path : '';
-    mcqCountryLaw();
-  }
   mcqProfileFacts();
+  mcqCountryLaw();
 }
 
 function mcqProfileFacts() {
   const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
-  $('mcqprofilefacts').textContent = p ? (mcqFactText(p) || 'no facts given')
-    + (p.country ? '' : ' · no country') : '';
+  $('mcqprofilefacts').textContent = p ? (mcqFactText(p) || 'no facts given') : '';
 }
 
 function mcqProfList() {
@@ -8360,7 +8380,10 @@ function mcqProfList() {
       <span class="hint" style="margin:0">${esc(mcqFactText(p) || 'no facts')}</span>
       <span class="pf-acts"><button data-pf-edit="${i}" aria-label="Change ${esc(p.name)}">Change</button>
         <button class="pf-del" data-pf-del="${i}" aria-label="Delete ${esc(p.name)}">Delete</button></span>
-    </div>`).join('') : '<div class="hint">No profiles yet.</div>';
+      ${p.problems ? `<span class="pf-bad">Can't be used until it is changed: `
+        + `${esc(p.problems.join('; '))}</span>` : ''}
+    </div>`).join('') : `<div class="hint">${MCQ.facts_error ? 'Profiles cannot be '
+      + 'read until the facts file loads.' : 'No profiles yet.'}</div>`;
   for (const b of $('mcqproflist').querySelectorAll('[data-pf-edit]'))
     b.onclick = () => mcqProfForm(list[+b.dataset.pfEdit]);
   for (const b of $('mcqproflist').querySelectorAll('[data-pf-del]'))
@@ -8376,7 +8399,9 @@ function mcqProfForm(p) {
   $('mcqprofname').value = p ? p.name : '';
   $('mcqprofcountry').innerHTML = '<option value="">no country - their facts alone</option>'
     + (MCQ.countries || []).map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
-  $('mcqprofcountry').value = p && p.country ? p.country : '';
+  // a country with no file any more (a profile to mend) shows as none
+  $('mcqprofcountry').value = p && p.country && (MCQ.countries || []).some(c =>
+    c.name === p.country) ? p.country : '';
   $('mcqproffacts').innerHTML = (MCQ.facts || []).map((f, i) => {
     const v = (p && p.facts && p.facts[f.id]) || '';
     const id = 'mcqpf' + i;

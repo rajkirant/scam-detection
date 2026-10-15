@@ -1010,7 +1010,7 @@ check("a profile is checked against the facts and the countries",
           {"name": "Raj", "facts": {"expecting_parcel": "maybe"}},
           {"name": "Raj", "facts": {"bank": "x" * 200}})],
       [[], ["a profile needs a name"],
-       ["no country file for 'Atlantis' - the ones there are: Ireland, "
+       ["no country called 'Atlantis' - the ones there are: Ireland, "
         "New Zealand"],
        ['"pets" is not a fact in personal_facts.json'],
        ['the fact "expecting_parcel" can be no, yes, not \'maybe\''],
@@ -1111,10 +1111,19 @@ check("scored for a profile: each row's own country, else the profile's; a "
       [(r["personal"], r["decided_by"], r["country"]) for r in rows],
       [("scam", "profile", "Ireland"), ("scam", "country", "New Zealand"),
        ("legit", "words", "")])
-check("and the metrics say whose, and what decided",
-      (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["name"],
-       res["profile"]["decided_by"], res["profile"]["unsure"]),
-      (2, 1, "Nopar", {"profile": 1, "country": 1, "words": 1}, 0))
+check("and the metrics say which profile by its file, and what decided",
+      (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["file"],
+       res["profile"]["facts"], res["profile"]["decided_by"],
+       res["profile"]["unsure"]),
+      (2, 1, "nopar", ["expecting_parcel"],
+       {"profile": 1, "country": 1, "words": 1}, 0))
+csv_text = open(os.path.join(tmp, "eval_run2.csv"), encoding="utf-8").read()
+check("the per-call CSV, which may be committed, gives the rule's own words "
+      "and never the person's name",
+      ("Nopar" in csv_text, rows[0]["personal_why"], rows[0]["reason"],
+       rows[2]["personal_why"]),
+      (False, "{name} is not expecting a parcel.",
+       "the profile's rule 2: {name} is not expecting a parcel.", ""))
 check("the log names the person and where each call's person lives",
       ("for Nopar: expecting_parcel: no" in buf.getvalue(),
        "Ireland 1, New Zealand 1, no country 1" in buf.getvalue()),
@@ -1125,6 +1134,73 @@ with contextlib.redirect_stdout(buf):
 check("ask --profile: the profile's country, and its facts' rules",
       ("personalised for a person in New Zealand" in buf.getvalue(),
        "-> scam  (Raj K banks with ANZ.)" in buf.getvalue()), (True, True))
+try:
+    web_ui.mcq_profile_save({"path": "knowledge/profiles/nopar.json",
+                             "name": "raj k", "facts": {}})
+    check("renaming onto another profile's name is refused", False)
+except ValueError as e:
+    check("renaming onto another profile's name is refused",
+          "already a profile called raj k" in str(e))
+check("a country from the page is a name, never a path",
+      [M.check_profile({"name": "x", "country": c}, personal) != []
+       for c in ("/etc/passwd", "../knowledge/countries/ireland.json",
+                 str(Path(HERE).parent / "knowledge/countries/ireland.json"))]
+      + [M.check_profile({"name": "x", "country": c}, personal) == []
+         for c in ("Ireland", "new_zealand", "knowledge/countries/ireland.json")],
+      [True] * 6)
+(M.PROFILES_DIR / "sam.json").write_text(json.dumps(
+    {"name": "Raj K", "facts": {}}))
+try:
+    M.find_profile("Raj K")
+    check("two profiles of one name: an error, not a guess", False)
+except ValueError as e:
+    check("two profiles of one name: an error, not a guess",
+          "more than one profile is called 'Raj K'" in str(e))
+(M.PROFILES_DIR / "sam.json").write_text(json.dumps(
+    {"name": "Sam", "facts": {}}))
+(M.PROFILES_DIR / "raj_2.json").write_text(json.dumps(
+    {"name": "Raj", "facts": {}}))
+check("a name before a file name: 'Raj' is Raj, not raj.json renamed Raj K",
+      [M.find_profile(x).name for x in ("Raj", "raj", "Raj K", "raj_2.json",
+                                         "knowledge/profiles/sam.json")],
+      ["raj_2.json", "raj_2.json", "raj.json", "raj_2.json", "sam.json"])
+(M.PROFILES_DIR / "lost.json").write_text(json.dumps(
+    {"name": "Lost", "country": "Atlantis", "facts": {"bank": "X"}}))
+(M.PROFILES_DIR / "torn.json").write_text("{not json")
+listed = {p["name"]: p.get("problems") for p in
+          M.list_profiles(personal, broken=True)}
+check("a profile that no longer loads is listed with why, to be mended - "
+      "and is never offered to classify",
+      ("Lost" in listed and bool(listed["Lost"]), "torn" in listed,
+       [p["name"] for p in M.list_profiles(personal)
+        if p["name"] in ("Lost", "torn")]),
+      (True, True, []))
+for f in ("lost.json", "torn.json", "sam.json", "raj_2.json"):
+    (M.PROFILES_DIR / f).unlink()
+
+import types                                                    # noqa: E402
+popen = web_ui.subprocess.Popen
+web_ui.subprocess.Popen = lambda *a, **k: types.SimpleNamespace(pid=0)
+try:
+    started = [web_ui.start_eval_run("mcq", dict(
+        {"dataset": web_ui.datasets()[0]["path"], "ontology": "",
+         "profile": "knowledge/profiles/nopar.json"}, **extra))
+        for extra in ({}, {"hints": False})]
+finally:
+    web_ui.subprocess.Popen = popen
+check("a run scored for a profile has an id the server takes back, and is "
+      "named by the profile's file, not the person",
+      [(bool(web_ui.RUN_ID_RE.match(m["id"])), m["model_name"])
+       for m in started],
+      [(True, "mcq_ontology · profile nopar"),
+       (True, "mcq_ontology (no hints) · profile nopar")])
+for m in started:
+    for ext in ("json", "log"):
+        try:
+            web_ui.run_path(m["id"], ext).unlink()
+        except OSError:
+            pass
+    web_ui.LIVE.pop(m["id"], None)
 out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/raj.json"})
 check("a profile is deleted from the page",
       [p["name"] for p in out_d["profiles"]], ["Nopar"])
