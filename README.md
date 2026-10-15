@@ -772,9 +772,12 @@ transcript.
 The *Personalisation* box above *Classify this call* has one choice, **Who it
 is for**: a profile (see *Profiles* below), which says where the person
 lives. The country's law and its source show under it. Loading a dataset row
-that has a `country` column uses that row's country instead, as scoring a
-dataset does; a row naming a country with no file uses none. Typing in the
-transcript box goes back to the profile's country.
+that has a `country` column uses that row's country instead, matched as
+scoring a dataset matches it (`New Zealand`, `new_zealand` and `new-zealand`
+alike); a row naming a country with no file uses none. The line under the
+picker then says so, with a button to use the profile's country instead.
+Picking a profile, or typing in the transcript box, goes back to the
+profile's country.
 
 With a country in use, the call is classified as usual. Then the country's
 own questions are put to it, one request each: whether a tax, duty or customs
@@ -813,8 +816,10 @@ A country file is short:
 - `applies_to` (optional): the subjects (root option ids) the rules are for.
   A call on another subject is not asked the country's questions.
 
-Add a country by saving another file in `knowledge/countries/`. It appears in
-the list on the next page load. On the command line:
+Add a country by saving another file in `knowledge/countries/`. On the next
+page load it is in the *Lives in* list of the Profiles form: to use it on the
+Classify tab, make or change a profile that lives there, or load a dataset
+row whose `country` column names it. On the command line:
 `python scripts/mcq_ontology.py ask --text "…" --country "New Zealand"`.
 
 The same call, labelled for each country, is in
@@ -824,7 +829,9 @@ The same call, labelled for each country, is in
 live, and facts about them that can change a verdict. Make one on the
 **Profiles** tab: give a name, pick a country (or none), and answer the
 facts. Then pick it under **Who it is for** on the Classify tab: its country
-is the one used, and there is no separate country to pick. The call is then
+is the one used (a loaded dataset row that names its own country uses that
+one instead, see above), and there is no separate country to pick. The call
+is then
 labelled for that person by their country's rules and by the
 rules their facts make apply. Two facts ship:
 
@@ -849,14 +856,18 @@ naming a country with no file gets none; any other row gets the profile's.
 The per-call CSV adds `personal`, `decided_by`, `country` and
 `personal_why` columns. Its `personal_why` and `reason` give the deciding
 rule in its own words, with `{name}` and the facts left unfilled, and the run
-is named "… · profile <file name>" on the Results tab: the CSVs and the
-results ledger may be committed, so the person's name and bank are kept out
-of them. On the command line, `--profile` takes a profile's name, file name or
+is named after the profile's file, as "… · profile_1", on the Results tab:
+the CSVs and the results ledger may be committed, so the person's name and
+bank are kept out of them. The score card says which profile a run was for,
+and how many calls the country's rules, the person's facts and the words
+alone decided. On the command line, `--profile` takes a profile's name, file name or
 path: `python scripts/mcq_ontology.py ask --text "…" --profile Raj`, or
 `evaluate --csv … --profile Raj`.
 
-Profiles are saved in `knowledge/profiles/<name>.json`, which git leaves
-alone: they are about real people, and an Update never touches them. Two
+Profiles are saved in `knowledge/profiles/profile_<n>.json`, which git
+leaves alone: they are about real people, and an Update never touches them.
+The file name is a number, not the person's name, since runs are named after
+it. Two
 profiles cannot share a name. A profile that stops loading, say because its
 country's file was removed, stays on the Profiles tab with the reason, to be
 changed or deleted, and is not offered until it is fixed. `--profile` finds a

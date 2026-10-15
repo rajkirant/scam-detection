@@ -1034,10 +1034,13 @@ def named_country(name):
     """A country file by its name ("New Zealand"), its file name
     ("new_zealand") or knowledge/countries/<file> - never by any other path,
     since a profile's country comes from the page."""
-    key = " ".join(str(name or "").replace("_", " ").split()).lower()
+    key = str(name or "").strip()
+    if key.startswith("knowledge/countries/"):
+        key = key[len("knowledge/countries/"):]
     if key.endswith(".json"):
         key = key[:-5]
-    key = key.split("/")[-1] if key.startswith("knowledge/countries/") else key
+    # "New Zealand", "new_zealand", "new-zealand", "New  Zealand" alike
+    key = re.sub(r"[\s_-]+", " ", key).strip().lower()
     for c in list_countries():
         if key in (c["name"].lower(),
                    Path(c["path"]).stem.replace("_", " ").lower()):
@@ -1169,11 +1172,15 @@ def find_profile(name):
                      % (name, ", ".join(x["name"] for x in profs) or "none"))
 
 
-def profile_path_for(name, taken=()):
-    """knowledge/profiles/<id>.json for a new profile, from its name."""
-    stem = _slug(name, set(taken) | {x.stem for x in
-                                     PROFILES_DIR.glob("*.json")})
-    return PROFILES_DIR / (stem + ".json")
+def profile_path_for(name=None):
+    """knowledge/profiles/profile_<n>.json for a new profile: the first
+    number free. Not the person's name: a run scored for a profile is named
+    by its file, and run names reach files git tracks."""
+    have = {x.name for x in PROFILES_DIR.glob("*.json")}
+    n = 1
+    while "profile_%d.json" % n in have:
+        n += 1
+    return PROFILES_DIR / ("profile_%d.json" % n)
 
 
 def _facts_hold(cond, facts):
@@ -2257,9 +2264,7 @@ def run_evaluate(args):
                           "unquoted": unquoted, "quotes": quotes,
                           "hints": not args.no_hints, "stopped": stopped,
                           "measured": sum(r["measured"] for r in results),
-                          "profile": ({"file": Path(args.profile).stem
-                                       if args.profile.endswith(".json")
-                                       else args.profile,
+                          "profile": ({"file": find_profile(args.profile).stem,
                                        "country": profile.get("country"),
                                        "facts": sorted(profile["facts"]),
                                        "decided_by": dict(Counter(
@@ -2288,7 +2293,7 @@ def _row_countries(csv_path, rows, profile):
     def load(name):
         if name not in cache:
             try:
-                cache[name] = load_country(find_country(name))
+                cache[name] = load_country(named_country(name))
             except ValueError:
                 cache[name] = None
         return cache[name]

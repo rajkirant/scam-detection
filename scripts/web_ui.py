@@ -1414,9 +1414,16 @@ def dataset_row(path, idx):
     idx = max(0, min(int(idx), len(rows) - 1))
     row = rows[idx]
     cell = lambda i: row[i] if 0 <= i < len(row) else ""
+    # the country file the row's country names, matched the way a scored
+    # dataset matches it, so a call gets the same country on both tabs
+    try:
+        cpath = (mcq_ontology.named_country(cell(ci)).relative_to(PROJECT_DIR)
+                 .as_posix() if cell(ci).strip() else "")
+    except ValueError:
+        cpath = ""
     return {"idx": idx, "total": len(rows), "text": cell(ti),
             "label": cell(li), "row_id": cell(ii), "country": cell(ci),
-            "dataset": path}
+            "country_path": cpath, "dataset": path}
 
 
 def bert_verdict(form):
@@ -2590,8 +2597,9 @@ def start_eval_run(page, form):
             ppath = mcq_profile_path(form["profile"])
             mcq_ontology.load_profile(ppath)    # refuse a broken one now
             flags += ["--profile", "knowledge/profiles/" + ppath.name]
-            # named by its file, not the person: the ledger is in git
-            name += " · profile " + ppath.stem
+            # named by its file (profile_<n>), not the person: the ledger
+            # and the per-call CSV's file name are in git
+            name += " · " + ppath.stem
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
             raise ValueError("a run is already going (%s). Stop it first - "
@@ -2925,8 +2933,13 @@ def mcq_profile_path(rel):
     rel = str(rel or "").strip()
     name = rel[len("knowledge/profiles/"):] if rel.startswith(
         "knowledge/profiles/") else rel
-    if not mcq_ontology.PROFILE_FILE_RE.match(name):
-        raise ValueError("a profile is a .json file in knowledge/profiles/")
+    # a name the page makes, or exactly the name of a file already there -
+    # one put there by hand, with a dot or a space in it, is listed too, so
+    # it must be usable and deletable; an exact match cannot leave the folder
+    if not (mcq_ontology.PROFILE_FILE_RE.match(name) or name in {
+            x.name for x in mcq_ontology.PROFILES_DIR.glob("*.json")}):
+        raise ValueError("a profile is a .json file in knowledge/profiles/, "
+                         "named with letters, digits, dash or underscore")
     return mcq_ontology.PROFILES_DIR / name
 
 
@@ -2950,7 +2963,7 @@ def mcq_profile_save(form):
               and (not path or x["path"] != "knowledge/profiles/" + path.name)]
     if others:
         raise ValueError("there is already a profile called %s" % obj["name"])
-    path = path or mcq_ontology.profile_path_for(obj["name"])
+    path = path or mcq_ontology.profile_path_for()
     mcq_ontology.PROFILES_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8")
@@ -2977,8 +2990,9 @@ def mcq_country_path(rel):
 
 
 def mcq_ask(form):
-    """Walk one transcript through the ontology's tree of questions, and,
-    with a country picked, personalise the label for a person there."""
+    """Walk one transcript through the ontology's tree of questions and,
+    given a country and/or a profile, personalise the label for that
+    person."""
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
@@ -2991,8 +3005,9 @@ def mcq_ask(form):
     country = profile = personal = None
     if form.get("country"):
         country = mcq_ontology.load_country(mcq_country_path(form["country"]))
-    # the person it is for: their facts; the country picked on the page,
-    # which picking the profile sets to theirs, says where they live
+    # the person it is for: their facts. Where they live comes separately,
+    # as form["country"]: the page sends the loaded row's country, or else
+    # the profile's (mcqCountryNow), so the profile's own is not read here
     if form.get("profile"):
         personal = mcq_ontology.load_personal()
         profile = mcq_ontology.load_profile(mcq_profile_path(form["profile"]),
@@ -7298,12 +7313,34 @@ function evalCard(d) {
   // The LLM was never fitted on anything, so none of the three applies to
   // it; what matters there is which prompt was used, which is below.
   if (d.kind === 'mcq') {
+    // scored for a profile: the label is the person's, not the score's sign
+    const pf = d.profile && typeof d.profile === 'object' ? d.profile : null;
     notes.push('Scored with <code>' + esc(d.ontology || '') + '</code>: '
       + (d.questions_asked ?? '?') + ' questions asked over ' + d.calls
       + ' calls, quotes ' + (d.quotes === false ? 'off' : 'required')
       + (d.unquoted ? ', ' + d.unquoted + ' answers without a quote counted as '
-         + 'Not stated' : '') + '. The verdict is the sign of the summed answer '
-      + 'values; a score of 0 is neutral and counted as not scam.');
+         + 'Not stated' : '') + '. ' + (pf
+        ? 'The verdict is the label for this profile: where a country\'s or the '
+          + 'person\'s rule applies, it decides, and unsure counts as scam; '
+          + 'elsewhere it is the sign of the summed answer values, with 0 '
+          + 'counted as not scam.'
+        : 'The verdict is the sign of the summed answer values; a score of 0 is '
+          + 'neutral and counted as not scam.'));
+    if (pf) {
+      const by = pf.decided_by || {};
+      notes.push('Labelled for the profile <code>' + esc(pf.file || '') + '</code>'
+        + (pf.country ? ', in ' + esc(pf.country) + ' unless a row names its '
+           + 'own country' : '') + ': decided by the country\'s rules '
+        + (by.country || 0) + ', by the person\'s facts ' + (by.profile || 0)
+        + ', by the words alone ' + (by.words || 0) + '; ' + (pf.unsure || 0)
+        + ' unsure, counted as scam. Each call below shows p(scam) from the '
+        + 'words alone, and the rule that decided where one did.');
+      // the reasons keep {name} and the facts unfilled, to stay out of git
+      for (const k of ['false_scam', 'missed_scam', 'unreadable'])
+        for (const x of (d.misses && d.misses[k]) || [])
+          if (x.reason) x.reason = x.reason.replace(/\{name\}/g, 'the person')
+            .replace(/\{(\w+)\}/g, (m, f) => 'their ' + f.replace(/_/g, ' '));
+    }
     if ((d.trained_on || []).some(t => t && t.split('/').pop()
                                          === d.dataset.split('/').pop()))
       notes.push('<strong>This ontology was trained on this dataset.</strong> '
@@ -8210,11 +8247,10 @@ async function mcqLoadRow() {
   $('mcqinfo').innerHTML = `row ${r.idx} of ${r.total}`
     + (r.row_id ? ' · id ' + esc(r.row_id) : '')
     + (r.country ? ' · ' + esc(r.country) : '') + truthPill(r.label);
-  // a row that says where its person lives brings its own country, as it
-  // does when a whole dataset is scored; one with no file for it, none
+  // a row that says where its person lives brings its own country, matched
+  // on the server as a scored dataset matches it; one with no file, none
   const name = (r.country || '').trim();
-  mcqRowCountry = name ? {name, path: ((MCQ.countries || []).find(x =>
-    x.name.toLowerCase() === name.toLowerCase()) || {}).path || ''} : null;
+  mcqRowCountry = name ? {name, path: r.country_path || ''} : null;
   mcqCountryLaw();
   mcqSize();
 }
@@ -8236,7 +8272,14 @@ function mcqCountryNow() {
 function mcqCountryLaw() {
   const now = mcqCountryNow();
   const c = (MCQ.countries || []).find(x => x.path === now.path);
-  $('mcqcountrylaw').innerHTML = c
+  // a loaded row's country is used over the profile's: say so, and offer
+  // the profile's back
+  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
+  const theirs = now.from === 'the loaded row' && p && (p.country || '') !== (c ? c.name : '')
+    ? ` — not ${esc(p.name)}'s ${p.country ? esc(p.country) : 'no country'}. `
+      + `<button class="link" id="mcquseprof">use ${esc(p.name)}'s instead</button>`
+    : '';
+  $('mcqcountrylaw').innerHTML = (c
     ? esc(`Lives in ${c.name}, from ${now.from}. ${c.law}${c.source ? ' ('
       + c.source + ')' : ''} Its rules decide the label where they apply. `)
       + `<a href="#files/${esc(c.path)}" style="color:var(--accent)">${esc(c.path)}</a>`
@@ -8245,7 +8288,9 @@ function mcqCountryLaw() {
         + 'file, so no country\'s rules apply.')
       : now.from ? 'This profile has no country, so no country\'s rules apply.'
       : 'Pick who it is for to personalise the label: their country\'s law and '
-        + 'the facts about them. Make people on the Profiles tab.';
+        + 'the facts about them. Make people on the Profiles tab.') + theirs;
+  const b = $('mcquseprof');
+  if (b) b.onclick = () => { mcqRowCountry = null; mcqCountryLaw(); };
 }
 
 async function mcqAsk() {
@@ -8361,8 +8406,10 @@ function mcqFactText(p) {
   }).join(' · ');
 }
 
-// picking a profile picks where they live, with it
+// picking a profile picks where they live, with it - over a loaded row's
+// country too, since picking the person came last
 function mcqProfilePick() {
+  mcqRowCountry = null;
   mcqProfileFacts();
   mcqCountryLaw();
 }

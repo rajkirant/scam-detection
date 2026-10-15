@@ -1020,10 +1020,10 @@ out_p = web_ui.mcq_profile_save({"name": " Raj ", "country": "new_zealand",
                                  "facts": {"bank": "  ANZ ",
                                            "expecting_parcel": ""}})
 raj = M.load_profile(M.find_profile("raj"), personal)
-check("saved from the page: one file, named after the person, the country "
-      "by its name, only the facts with a value",
+check("saved from the page: one file, with a neutral name, the country by "
+      "its name, only the facts with a value",
       (out_p["saved"], [p["name"] for p in out_p["profiles"]], raj),
-      ("knowledge/profiles/raj.json", ["Raj"],
+      ("knowledge/profiles/profile_1.json", ["Raj"],
        {"name": "Raj", "country": "New Zealand", "facts": {"bank": "ANZ"}}))
 try:
     web_ui.mcq_profile_save({"name": "raj", "facts": {}})
@@ -1031,12 +1031,12 @@ try:
 except ValueError as e:
     check("a second profile of the same name is refused",
           "already a profile called raj" in str(e))
-web_ui.mcq_profile_save({"path": "knowledge/profiles/raj.json",
+web_ui.mcq_profile_save({"path": "knowledge/profiles/profile_1.json",
                          "name": "Raj K", "country": "new_zealand",
                          "facts": {"bank": "ANZ"}})
 check("changing a profile keeps its file, and finds it by its new name",
       (sorted(p.name for p in M.PROFILES_DIR.glob("*.json")),
-       M.find_profile("Raj K").name), (["raj.json"], "raj.json"))
+       M.find_profile("Raj K").name), (["profile_1.json"], "profile_1.json"))
 for bad in ("../knowledge/mcq_ontology.json", "knowledge/profiles/../x.json",
             "/etc/passwd"):
     try:
@@ -1115,7 +1115,7 @@ check("and the metrics say which profile by its file, and what decided",
       (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["file"],
        res["profile"]["facts"], res["profile"]["decided_by"],
        res["profile"]["unsure"]),
-      (2, 1, "nopar", ["expecting_parcel"],
+      (2, 1, "profile_2", ["expecting_parcel"],
        {"profile": 1, "country": 1, "words": 1}, 0))
 csv_text = open(os.path.join(tmp, "eval_run2.csv"), encoding="utf-8").read()
 check("the per-call CSV, which may be committed, gives the rule's own words "
@@ -1135,7 +1135,7 @@ check("ask --profile: the profile's country, and its facts' rules",
       ("personalised for a person in New Zealand" in buf.getvalue(),
        "-> scam  (Raj K banks with ANZ.)" in buf.getvalue()), (True, True))
 try:
-    web_ui.mcq_profile_save({"path": "knowledge/profiles/nopar.json",
+    web_ui.mcq_profile_save({"path": "knowledge/profiles/profile_2.json",
                              "name": "raj k", "facts": {}})
     check("renaming onto another profile's name is refused", False)
 except ValueError as e:
@@ -1160,10 +1160,10 @@ except ValueError as e:
     {"name": "Sam", "facts": {}}))
 (M.PROFILES_DIR / "raj_2.json").write_text(json.dumps(
     {"name": "Raj", "facts": {}}))
-check("a name before a file name: 'Raj' is Raj, not raj.json renamed Raj K",
+check("a name before a file name: 'Raj' is Raj, not profile_1.json renamed Raj K",
       [M.find_profile(x).name for x in ("Raj", "raj", "Raj K", "raj_2.json",
                                          "knowledge/profiles/sam.json")],
-      ["raj_2.json", "raj_2.json", "raj.json", "raj_2.json", "sam.json"])
+      ["raj_2.json", "raj_2.json", "profile_1.json", "raj_2.json", "sam.json"])
 (M.PROFILES_DIR / "lost.json").write_text(json.dumps(
     {"name": "Lost", "country": "Atlantis", "facts": {"bank": "X"}}))
 (M.PROFILES_DIR / "torn.json").write_text("{not json")
@@ -1184,7 +1184,7 @@ web_ui.subprocess.Popen = lambda *a, **k: types.SimpleNamespace(pid=0)
 try:
     started = [web_ui.start_eval_run("mcq", dict(
         {"dataset": web_ui.datasets()[0]["path"], "ontology": "",
-         "profile": "knowledge/profiles/nopar.json"}, **extra))
+         "profile": "knowledge/profiles/profile_2.json"}, **extra))
         for extra in ({}, {"hints": False})]
 finally:
     web_ui.subprocess.Popen = popen
@@ -1192,8 +1192,8 @@ check("a run scored for a profile has an id the server takes back, and is "
       "named by the profile's file, not the person",
       [(bool(web_ui.RUN_ID_RE.match(m["id"])), m["model_name"])
        for m in started],
-      [(True, "mcq_ontology · profile nopar"),
-       (True, "mcq_ontology (no hints) · profile nopar")])
+      [(True, "mcq_ontology · profile_2"),
+       (True, "mcq_ontology (no hints) · profile_2")])
 for m in started:
     for ext in ("json", "log"):
         try:
@@ -1201,7 +1201,30 @@ for m in started:
         except OSError:
             pass
     web_ui.LIVE.pop(m["id"], None)
-out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/raj.json"})
+check("a country is found by its name however a dataset spells it, and "
+      "never by a path",
+      ([M.named_country(x).name for x in ("New Zealand", "new_zealand",
+                                           "new-zealand", "NEW  ZEALAND",
+                                           "knowledge/countries/ireland.json")],
+       [bool(M.check_profile({"name": "x", "country": c}, personal))
+        for c in ("/etc/passwd", "knowledge/countries/../countries/ireland.json")]),
+      (["new_zealand.json"] * 4 + ["ireland.json"], [True, True]))
+odd = M.PROFILES_DIR / "mum v2.json"
+odd.write_text(json.dumps({"name": "Mum", "country": "Ireland", "facts": {}}))
+check("a profile file named by hand, with a space or a dot, can be used and "
+      "deleted; a name outside the folder still cannot",
+      (web_ui.mcq_profile_path("knowledge/profiles/mum v2.json") == odd,
+       [p["name"] for p in web_ui.mcq_profile_delete(
+           {"path": "knowledge/profiles/mum v2.json"})["profiles"]],
+       odd.exists()),
+      (True, ["Raj K", "Nopar"], False))
+check("a dataset row gives the country file its country names, as scoring "
+      "matches it",
+      [web_ui.dataset_row("datasets/personalisation_2.csv", i)["country_path"]
+       for i in (0, 1)],
+      ["knowledge/countries/%s.json" % r["country"].lower().replace(" ", "_")
+       for r in PERSONAL_ROWS])
+out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/profile_1.json"})
 check("a profile is deleted from the page",
       [p["name"] for p in out_d["profiles"]], ["Nopar"])
 M.PERSONAL_FILE, M.PROFILES_DIR = SAVED_PERSONAL, SAVED_PROFILES
