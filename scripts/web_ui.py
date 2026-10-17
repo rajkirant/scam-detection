@@ -75,7 +75,7 @@ BASELINES = [
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
-    ("mcq",      "MCQ ontology LLM",       "a tree of questions, summed answer values (mcq_ontology.json)", True),
+    ("mcq",      "MCQ ontology",          "the MCQ ontology page's tree of questions, summed answer values", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
 
@@ -479,6 +479,8 @@ def start_run(form):
                              "call twice; it cannot run on a single transcript")
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
+    mcq = (mcq_bench_choices(form.get("mcq"))
+           if {"mcq", "all"} & set(baselines) else None)
     # One model, not a choice: run_all.sh uses it for every LLM baseline.
     model = ollama_ctx.MODEL if any(known[b][3] for b in baselines) else ""
 
@@ -499,6 +501,12 @@ def start_run(form):
         # run_all.sh resolves the twin the same way; the path above is only
         # so this server can refuse a bad pair before starting anything
         flags.append("--stripped")
+    if mcq:
+        flags += ["--mcq-ontology", mcq["ontology"]]
+        if not mcq["hints"]:
+            flags.append("--mcq-no-hints")
+        if not mcq["quotes"]:
+            flags.append("--mcq-no-quotes")
 
     # $1 is the script and "${@:2}" the flags, so nothing here is re-parsed as
     # shell syntax. The marker records the exit status in the log itself.
@@ -530,6 +538,8 @@ def start_run(form):
             "baseline": ",".join(baselines), "baselines": baselines,
             "limit": limit, "model": model, "started": time.time(),
             "stripped": stripped}
+    if mcq:
+        meta["mcq"] = mcq
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -918,6 +928,14 @@ def ledger_sync():
                     "calls": x["tp"] + x["fp"] + x["fn"] + x["tn"],
                     "stripped_test": bool(meta.get("stripped")),
                 }
+                if key == "mcq" and meta.get("mcq"):
+                    # the tree and its switches are as much the system as
+                    # the model is; a run from before they could be picked
+                    # used knowledge/mcq_ontology.json, hints and quotes on
+                    entry["model"] = " · ".join(
+                        t for t in (entry["model"], mcq_bench_text(meta["mcq"]))
+                        if t)
+                    entry["mcq"] = meta["mcq"]
                 for k in ("acc", "p", "r", "f1", "tp", "fp", "fn", "tn"):
                     entry[k] = x[k]
                 if x.get("stripped"):
@@ -2217,6 +2235,7 @@ class Handler(BaseHTTPRequestHandler):
                                  for k, l, n, h, _, x in KB_MODES],
                     "kb": kb_state(),
                     "idx_pool": idx_pool(),
+                    "mcq": mcq_bench_config(),
                 })
             if u.path == "/api/kb":
                 return self._send(200, {"kb": kb_state()})
@@ -2830,6 +2849,41 @@ def mcq_datasets():
     """The datasets. Any of them can be built from: the categories are read
     from the transcripts, not from a column."""
     return datasets()
+
+
+def mcq_bench_config():
+    """The ontologies the Benchmark form's MCQ ontology box offers, and the
+    one it starts on. A file that will not load is left off the list; it must
+    never stop the Benchmark page drawing."""
+    try:
+        files = mcq_ontology.list_ontologies()
+    except Exception:
+        files = []
+    return {"ontologies": files, "default": MCQ_DEFAULT}
+
+
+def mcq_bench_choices(form):
+    """The benchmark's `mcq` baseline, set the way the MCQ page's Score a
+    dataset is - an ontology file, and its hints and quotes on or off - and
+    checked before anything starts. Never a profile, nor a country: the
+    benchmark scores the words alone, like every other row of its table."""
+    form = form or {}
+    if not isinstance(form, dict):
+        raise ValueError("bad MCQ ontology settings")
+    path = mcq_path(form.get("ontology"))
+    mcq_ontology.load_ontology(path)              # refuse a broken file now
+    return {"ontology": "knowledge/" + path.name,
+            "hints": form.get("hints") is not False,
+            "quotes": form.get("quotes") is not False}
+
+
+def mcq_bench_text(mcq):
+    """How a run's MCQ settings read in the Results table, the way a score's
+    do on the MCQ page: mcq_ontology, my_tree (no hints)."""
+    off = [w for w, on in (("no hints", mcq.get("hints", True)),
+                           ("no quotes", mcq.get("quotes", True))) if not on]
+    return Path(mcq.get("ontology") or MCQ_DEFAULT).stem + (
+        " (%s)" % ", ".join(off) if off else "")
 
 
 def mcq_config():
@@ -3847,6 +3901,23 @@ PAGE = r"""<!doctype html>
           instructions first — and keeps only about half the window, so a call
           that does not fit comes back as a confident verdict on its last few
           minutes.</div>
+      </div>
+
+      <div id="mcqbox" hidden>
+        <label for="bmcqfile">MCQ ontology</label>
+        <select id="bmcqfile"></select>
+        <label class="inline" style="margin-top:6px">
+          <input type="checkbox" id="bmcqquotes" checked>
+          <span><span class="name">Require a quote for each answer</span></span>
+        </label>
+        <label class="inline" style="margin-top:6px">
+          <input type="checkbox" id="bmcqhints" checked>
+          <span><span class="name">Use the questions' hints</span></span>
+        </label>
+        <div class="hint">The tree of questions the MCQ ontology page draws,
+          edits and scores, set the way that page is until it is changed
+          here. No profile and no country: the benchmark scores the words
+          alone.</div>
       </div>
 
       <button class="go" id="go">Run</button>
@@ -5337,6 +5408,9 @@ async function boot() {
   // stays readable on hover
   $('ollama').title = $('ollama').textContent;
 
+  benchMcqFiles((CFG.mcq || {}).ontologies || [], (CFG.mcq || {}).default);
+  for (const id of ['bmcqfile', 'bmcqquotes', 'bmcqhints'])
+    $(id).addEventListener('change', () => { $(id).dataset.set = '1'; });
   for (const c of checks()) c.onchange = onBaselines;
   $('clearhist').onclick = clearFinished;
   $('pickall').onclick = () => setAll(true);
@@ -5423,9 +5497,39 @@ function onBaselines() {
   const sel = chosen();
   $('modelbox').hidden = !sel.some(k =>
     CFG.baselines.find(b => b.key === k).needs_model);
+  $('mcqbox').hidden = !sel.includes('mcq');
   $('go').disabled = sel.length === 0;
   $('go').textContent = sel.length > 1 ? `Run ${sel.length} baselines` : 'Run';
   if (!sel.length) $('formerr').textContent = '';
+}
+
+// The MCQ ontology box: the file and the two switches the MCQ ontology page
+// scores with, and nothing personal - a benchmark row is the words alone.
+// It follows what that page has picked until it is changed here.
+function benchMcqFiles(list, pick) {
+  const sel = $('bmcqfile'), was = sel.value;
+  sel.innerHTML = list.length ? list.map(ontoOption).join('')
+    : '<option value="">no ontology in knowledge/</option>';
+  const keep = [was, pick].find(p => p && list.some(o => o.path === p));
+  if (keep) sel.value = keep;
+}
+
+function benchMcqFollow() {
+  const sel = $('bmcqfile');
+  if (!sel.dataset.set && mcqFile && [...sel.options].some(o => o.value === mcqFile))
+    sel.value = mcqFile;
+  for (const [mine, page] of [['bmcqquotes', 'mcqquotes'], ['bmcqhints', 'mcqhints']])
+    if (!$(mine).dataset.set) $(mine).checked = $(page).checked;
+}
+
+// "MCQ my_tree.json (no hints)", for a run that had the MCQ ontology in it
+function mcqRunText(meta) {
+  const m = meta && meta.mcq;
+  if (!m) return '';
+  const off = [m.hints === false && 'no hints', m.quotes === false && 'no quotes']
+    .filter(Boolean);
+  return 'MCQ ' + String(m.ontology).replace(/^knowledge\//, '')
+    + (off.length ? ' (' + off.join(', ') + ')' : '');
 }
 
 // The three shapes run_all.sh --limit takes. Picking one here rather than
@@ -5498,6 +5602,8 @@ async function go() {
     limit: limit,
     num_ctx: $('numctx').value,
     stripped: $('stripped').checked,
+    mcq: {ontology: $('bmcqfile').value, hints: $('bmcqhints').checked,
+          quotes: $('bmcqquotes').checked},
   });
   onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }
@@ -5893,6 +5999,7 @@ function paintHeader(meta, status) {
                      : limitText(meta.limit)];
   if (meta.skip) bits.push('after the first ' + meta.skip);
   if (meta.model) bits.push(meta.model);
+  if (meta.mcq) bits.push(mcqRunText(meta));
   bits.push(new Date(meta.started * 1000).toLocaleString());
   $('runsub').textContent = bits.join(' · ');
   const pill = $('runpill');
@@ -6427,7 +6534,8 @@ async function refreshHistory() {
       ${r.label || (r.baseline + ' · ' + r.dataset.replace('datasets/',''))}
       <span class="pill ${r.status}">${r.status}</span>
       <div class="meta">${r.kind ? '' : limitText(r.limit) + ' · '}${
-        r.model ? r.model + ' · ' : ''}${new Date(r.started * 1000).toLocaleString()}</div>
+        r.model ? r.model + ' · ' : ''}${r.mcq ? esc(mcqRunText(r)) + ' · ' : ''}${
+        new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
   // the button sits inside the row, so its click must not also select the run
@@ -8059,6 +8167,9 @@ async function mcqBoot() {
   $('mcqbcalls').addEventListener('input', mcqBuildForm);
   $('mcqbname').addEventListener('input', () => { $('mcqbname').dataset.typed = '1'; });
 
+  // the Benchmark form's MCQ ontology box runs the way this page scores
+  for (const id of ['mcqquotes', 'mcqhints'])
+    $(id).addEventListener('change', benchMcqFollow);
   $('mcqfile').onchange = () => {
     // switching files reloads the editor: say so when that drops edits
     if (mcqDirty() && !confirm('Drop your unsaved edits to ' + mcqFile + '?')) {
@@ -8165,16 +8276,22 @@ async function mcqFiles(list, pick) {
   await mcqLoad($('mcqfile').value);
 }
 
-function mcqFileOptions(list) {
-  $('mcqfile').innerHTML = list.map(o => `<option value="${esc(o.path)}">`
+function ontoOption(o) {
+  return `<option value="${esc(o.path)}">`
     + `${esc(o.name)} — ${o.options} subjects, ${o.questions} questions`
-    + `${o.trained ? ', trained' : ''}</option>`).join('');
+    + `${o.trained ? ', trained' : ''}</option>`;
+}
+
+function mcqFileOptions(list) {
+  $('mcqfile').innerHTML = list.map(ontoOption).join('');
 }
 
 async function mcqRefreshFiles(pick) {
   const cfg = await api('/api/mcq/config');
   if (cfg.error) return;
   MCQ.ontologies = cfg.ontologies;
+  // a file just saved or built can be benchmarked too
+  benchMcqFiles(cfg.ontologies);
   await mcqFiles(cfg.ontologies, pick);
 }
 
@@ -8184,6 +8301,7 @@ async function mcqLoad(path) {
   mcqFile = r.path;
   mcqOnto = r.ontology;
   mcqLoadedText = r.text;
+  benchMcqFollow();
   $('mcqjson').value = r.text;
   $('mcqsavename').value = $('mcqtreesavename').value
     = r.path.replace(/^knowledge\//, '');

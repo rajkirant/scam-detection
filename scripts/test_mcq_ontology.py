@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Offline tests for mcq_ontology: the MCQ ontology LLM - a tree of questions
+Offline tests for mcq_ontology: the MCQ ontology - a tree of questions
 out of a JSON file, each answer a value, the call's score their sum - and the
 own-question features of its page.
 
@@ -1253,6 +1253,130 @@ check("the order is the benchmark's shuffled order (seed 42)",
 check("<system>_pct is the score on 0-100",
       {r["text"][:8]: r["mcq_ontology__stripped_pct"] for r in rows}["GIFTCALL"],
       "88.08")
+page_rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run.csv"))))
+check("each call gets the verdict the page's Score a dataset gave it",
+      {r["text"][:8]: r["mcq_ontology__stripped"] == "Fraud" for r in rows},
+      {r["text"][:8]: r["predicted"] == "scam" for r in page_rows})
+
+# the page's two switches, on the benchmark's runner
+hinted = json.loads(json.dumps(TREE_ONTO))
+hinted["common_questions"][0]["hint"] = "HINTMARK: a voucher is a gift card."
+hinted_path = os.path.join(tmp, "hinted.json")
+open(hinted_path, "w").write(json.dumps(hinted))
+
+
+def bench_prompts(*flags):
+    STATE["payloads"] = []
+    sys.argv = ["evaluate_mcq_ontology.py", "--csv", ev, "--ontology",
+                hinted_path, "--out", bench_csv] + list(flags)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        E.main()
+    sys.argv = argv
+    return out.getvalue(), [x["prompt"] for x in STATE["payloads"]]
+
+
+log_on, asked_on = bench_prompts()
+log_off, asked_off = bench_prompts("--no-hints", "--no-quotes")
+check("a question's hint goes into its prompt, and --no-hints leaves it out",
+      (any("HINTMARK" in q for q in asked_on),
+       any("HINTMARK" in q for q in asked_off)), (True, False))
+check("--no-quotes asks for no quote",
+      (any('write "Quote:"' in q for q in asked_on),
+       any('write "Quote:"' in q for q in asked_off)), (True, False))
+check("the run says how it was set",
+      ("hints   : 1 questions carry one" in log_on,
+       "quotes required" in log_on, "hints   : off" in log_off,
+       "quotes off" in log_off), (True, True, True, True))
+
+print("\nthe Benchmark page's MCQ ontology")
+saved_knowledge = M.KNOWLEDGE_DIR
+popen = web_ui.subprocess.Popen
+launched = []
+web_ui.subprocess.Popen = lambda argv, **k: (
+    launched.append(argv) or types.SimpleNamespace(pid=0))
+
+
+def bench_run(baselines, mcq=None):
+    """start_run as the Benchmark form calls it: the flags handed to
+    run_all.sh and the run's meta, or the error it refused with."""
+    form = {"dataset": web_ui.datasets()[0]["path"], "baselines": baselines,
+            "limit": "4"}
+    if mcq is not None:
+        form["mcq"] = mcq
+    n = len(launched)
+    try:
+        meta = web_ui.start_run(form)
+    except ValueError as e:
+        return str(e), len(launched) > n
+    for ext in ("json", "log"):
+        try:
+            web_ui.run_path(meta["id"], ext).unlink()
+        except OSError:
+            pass
+    web_ui.LIVE.pop(meta["id"], None)
+    argv = launched[-1]
+    return argv[argv.index(str(web_ui.RUN_ALL)) + 1:], meta
+
+
+try:
+    flags, meta = bench_run(["mcq"])
+    check("unset, it runs the shipped tree with hints and quotes on",
+          (flags[-2:], meta["mcq"]),
+          (["--mcq-ontology", "knowledge/mcq_ontology.json"],
+           {"ontology": "knowledge/mcq_ontology.json", "hints": True,
+            "quotes": True}))
+    M.KNOWLEDGE_DIR = Path(tmp)
+    flags, meta = bench_run(["llm_only", "mcq"], {
+        "ontology": "knowledge/hinted.json", "hints": False, "quotes": True,
+        "profile": "knowledge/profiles/profile_1.json", "country": "Ireland"})
+    check("the page's file and switches reach run_all.sh, and a profile or "
+          "a country never does",
+          (flags[flags.index("--mcq-ontology"):], meta["mcq"],
+           [f for f in flags if "profile" in f or "country" in f]),
+          (["--mcq-ontology", "knowledge/hinted.json", "--mcq-no-hints"],
+           {"ontology": "knowledge/hinted.json", "hints": False,
+            "quotes": True}, []))
+    flags, meta = bench_run(["mcq"], {"ontology": "hinted.json",
+                                      "hints": False, "quotes": False})
+    check("both switches off", flags[flags.index("--mcq-ontology"):],
+          ["--mcq-ontology", "knowledge/hinted.json", "--mcq-no-hints",
+           "--mcq-no-quotes"])
+    flags, meta = bench_run(["all"], {"ontology": "hinted.json",
+                                      "quotes": False})
+    check("all of them, the MCQ ontology among them, takes its settings too",
+          flags[flags.index("--mcq-ontology"):],
+          ["--mcq-ontology", "knowledge/hinted.json", "--mcq-no-quotes"])
+    flags, meta = bench_run(["llm_only"], {"ontology": "knowledge/nope.json",
+                                           "hints": False})
+    check("a run without the MCQ ontology carries none of its settings",
+          ([f for f in flags if f.startswith("--mcq")], "mcq" in meta),
+          ([], False))
+    for bad, why in (("knowledge/nope.json", "no ontology file"),
+                     ("../datasets/x.json", "a .json file in knowledge/"),
+                     ("knowledge/ev.csv", "a .json file in knowledge/")):
+        err, started = bench_run(["mcq"], {"ontology": bad})
+        check("%s is refused before anything starts" % bad,
+              (why in err, started), (True, False))
+    open(os.path.join(tmp, "torn.json"), "w").write("{not json")
+    err, started = bench_run(["mcq"], {"ontology": "knowledge/torn.json"})
+    check("so is a file that does not load", ("not valid JSON" in err,
+                                              started), (True, False))
+    check("the list it offers leaves out a file that does not load",
+          [o["name"] for o in web_ui.mcq_bench_config()["ontologies"]],
+          ["hinted.json", "tree.json"])
+finally:
+    web_ui.subprocess.Popen = popen
+    M.KNOWLEDGE_DIR = saved_knowledge
+check("the Results table names the tree and what was off",
+      [web_ui.mcq_bench_text(m) for m in (
+          {"ontology": "knowledge/mcq_ontology.json", "hints": True,
+           "quotes": True},
+          {"ontology": "knowledge/my_tree.json", "hints": False,
+           "quotes": True},
+          {"ontology": "knowledge/my_tree.json", "hints": False,
+           "quotes": False})],
+      ["mcq_ontology", "my_tree (no hints)", "my_tree (no hints, no quotes)"])
 
 print("\na question trained on a dataset")
 tds = os.path.join(tmp, "train.csv")

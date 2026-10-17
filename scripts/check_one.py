@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-check_one.py - run the MCQ ontology LLM on a single row from a dataset, and
+check_one.py - run the MCQ ontology on a single row from a dataset, and
 show every question it asked, the answer, its value and its quote.
 
 Usage:

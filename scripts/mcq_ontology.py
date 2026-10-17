@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mcq_ontology.py - the MCQ ontology LLM: a tree of multiple-choice questions.
+mcq_ontology.py - the MCQ ontology: a tree of multiple-choice questions.
 
 It starts from a JSON file (knowledge/mcq_ontology.json unless told
 otherwise) holding a tree of questions:

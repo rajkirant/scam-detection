@@ -48,7 +48,7 @@ The ten baselines, in escalating order:
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
-| `mcq` | MCQ ontology LLM: a tree of multiple-choice questions from `knowledge/mcq_ontology.json`; each answer has a value from -1 to 1, and the call's score is their sum (above 0 scam, below 0 legitimate, 0 neutral) | yes |
+| `mcq` | MCQ ontology: the MCQ ontology page's tree of multiple-choice questions, `knowledge/mcq_ontology.json` unless another file is picked; each answer has a value from -1 to 1, and the call's score is their sum (above 0 scam, below 0 legitimate, 0 neutral). Never for a profile | yes |
 | `bert` | fine-tuned BERT classifier, k-fold CV | no (but wants the GPU) |
 
 ---
@@ -640,7 +640,7 @@ Two things the page shows that the benchmark does not:
 ### MCQ ontology page
 
 The classifier after the LLM judge, and the `mcq` baseline from the Benchmark
-page, one call at a time. It starts from a JSON file in `knowledge/` (picked
+page, one call at a time (see *On the Benchmark page* below). It starts from a JSON file in `knowledge/` (picked
 under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
 **tree of multiple-choice questions**:
 - **The root question** asks what the call is mainly about: 15 subjects (bank
@@ -1018,6 +1018,19 @@ score a held-out one. When the ontology was trained on the dataset being
 scored, the score card says so. The content-deletion test is the other fair
 read.
 
+**On the Benchmark page.** Tick *MCQ ontology* and a box under the form says
+how it runs: which ontology file, and whether each answer needs a quote and
+the questions' hints are used. These are the three choices this page scores
+with, and the box follows the file and the two switches picked here until it
+is changed on the Benchmark page. A file saved or trained here is offered
+there straight away. It never takes a profile or a country: a benchmark row
+is the words alone, so it compares with the other baselines in the table.
+The run's line under *Recent runs* and its row on the Results tab name the
+file, with "(no hints)" or "(no quotes)" when one was off. A run from before
+the box existed used `mcq_ontology.json` with both on. From the terminal:
+`./run_all.sh -b mcq -l 0 --mcq-ontology knowledge/my_tree.json --mcq-no-hints`
+(and `--mcq-no-quotes`).
+
 ### Files page
 
 The project folder in the browser, **read only**. Click a folder to open it
@@ -1165,6 +1178,8 @@ Or answer up front and it asks nothing:
 | `-d, --dataset` | a path, or a menu number |
 | `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
+| `--mcq-ontology` | the ontology file the `mcq` baseline walks, `knowledge/mcq_ontology.json` by default |
+| `--mcq-no-hints`, `--mcq-no-quotes` | the `mcq` baseline without the questions' hints, or without a quote for each answer — the MCQ ontology page's two switches. It never takes a profile |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
 
@@ -1249,7 +1264,7 @@ python scripts/bert_baseline.py cv --csv datasets/scambait_synthetic_196.csv \
 for training on one dataset and evaluating on another, and `--cpu` to force the
 CPU.
 
-### 4. MCQ ontology LLM (a tree of questions, about a dozen requests per call)
+### 4. MCQ ontology (a tree of questions, about a dozen requests per call)
 
 ```bash
 python scripts/evaluate_mcq_ontology.py \
@@ -1264,7 +1279,10 @@ python scripts/test_mcq_ontology.py      # offline: a fake Ollama
 ```
 
 The tree comes from `knowledge/mcq_ontology.json` (`--ontology` for another,
-such as a trained file). Each answer's value is summed into the call's score:
+such as a trained file or one saved from the page's editor). It is the same
+tree, and the same scoring, as the MCQ ontology page's Score a dataset with
+no profile; the benchmark never takes one. Each answer's value is summed
+into the call's score:
 above 0 scam, below 0 legitimate, 0 neutral (counted as not scam).
 `--no-quotes` skips the supporting quotes (faster: one letter per question).
 `--no-hints` leaves the questions' hints out of the prompts, to measure what
@@ -1372,7 +1390,7 @@ python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19
 python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19 --runs 5
 ```
 
-It runs the MCQ ontology LLM on that one call and prints every question
+It runs the MCQ ontology on that one call and prints every question
 asked, the answer, its value and its quote, then the score. `--idx` uses the same shuffled order (seed 42) as
 `evaluate_mcq_ontology.py`, so idx 19 here is the same call as idx 19 in a
 prior `--limit 40` run.
