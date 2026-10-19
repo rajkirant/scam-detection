@@ -820,7 +820,9 @@ Classify tab, make or change a profile that lives there. On the command line:
 `python scripts/mcq_ontology.py ask --text "…" --country "New Zealand"`.
 
 The same call, labelled for each country, is in
-`datasets/personalisation_2.csv`.
+`datasets/personalisation_2.csv`. Its `country` column says which country
+each row's label is for. It is shown when a row is loaded, but the profile's
+country is the one used, so classify each row for a profile in that country.
 
 **Profiles: who the call is for.** A profile is a person: a name, where they
 live, and facts about them that can change a verdict. Make one on the
@@ -845,9 +847,10 @@ says which decided, and what the other said. A fact left unset, such as no
 bank, makes no rule apply.
 
 On **Score a dataset**, pick a profile under **For** to label every call for
-that person. A row with its own `country` column keeps that country; a row
-naming a country with no file gets none; any other row gets the profile's.
-*Unsure* counts as scam there, since its advice is to check before paying.
+that person, the way Classify labels one: by their country's rules and their
+facts. A row's own `country` column is not read: the profile's country is
+used for every call. *Unsure* counts as scam there, since its advice is to
+check before paying.
 The per-call CSV adds `personal`, `decided_by`, `country` and
 `personal_why` columns. Its `personal_why` and `reason` give the deciding
 rule in its own words, with `{name}` and the facts left unfilled, and the run

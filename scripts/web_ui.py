@@ -5068,8 +5068,8 @@ per held-out call, so it takes minutes, not seconds.</pre>
           <label for="mcqevprofile" style="margin:0">For</label>
           <select id="mcqevprofile" style="width:auto"></select>
           <span class="hint" style="margin:0">with a profile, every call is
-            labelled for that person: their facts, and their country unless
-            the call's row names its own. Unsure counts as scam.</span>
+            labelled for that person, as Classify labels one: their
+            country's rules and their facts. Unsure counts as scam.</span>
         </div>
         <button class="go" id="mcqevgo">Score every call</button>
         <div class="hint" id="mcqeverr" style="color:var(--bad)"></div>
@@ -7425,10 +7425,10 @@ function evalCard(d) {
     if (pf) {
       const by = pf.decided_by || {};
       notes.push('Labelled for the profile <code>' + esc(pf.file || '') + '</code>'
-        + (pf.country ? ', in ' + esc(pf.country) + ' unless a row names its '
-           + 'own country' : '') + ': decided by the country\'s rules '
-        + (by.country || 0) + ', by the person\'s facts ' + (by.profile || 0)
-        + ', by the words alone ' + (by.words || 0) + '; ' + (pf.unsure || 0)
+        + (pf.country ? ', in ' + esc(pf.country) : '') + ': decided by the '
+        + 'country\'s rules ' + (by.country || 0) + ', by the person\'s facts '
+        + (by.profile || 0) + ', by the words alone ' + (by.words || 0) + '; '
+        + (pf.unsure || 0)
         + ' unsure, counted as scam. Each call below shows p(scam) from the '
         + 'words alone, and the rule that decided where one did.');
       // the reasons keep {name} and the facts unfilled, to stay out of git

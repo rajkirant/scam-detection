@@ -1106,28 +1106,40 @@ with contextlib.redirect_stdout(buf):
             "nopar", "--out", out2])
 res = json.load(open(out2))
 rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run2.csv"))))
-check("scored for a profile: each row's own country, else the profile's; a "
-      "country with no file is none",
+check("scored for a profile: every call gets the profile's country, whatever "
+      "the row's own country column says",
       [(r["personal"], r["decided_by"], r["country"]) for r in rows],
-      [("scam", "profile", "Ireland"), ("scam", "country", "New Zealand"),
-       ("legit", "words", "")])
+      [("scam", "country", "New Zealand"), ("scam", "country", "New Zealand"),
+       ("legit", "words", "New Zealand")])
 check("and the metrics say which profile by its file, and what decided",
       (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["file"],
-       res["profile"]["facts"], res["profile"]["decided_by"],
-       res["profile"]["unsure"]),
-      (2, 1, "profile_2", ["expecting_parcel"],
-       {"profile": 1, "country": 1, "words": 1}, 0))
-csv_text = open(os.path.join(tmp, "eval_run2.csv"), encoding="utf-8").read()
+       res["profile"]["country"], res["profile"]["facts"],
+       res["profile"]["decided_by"], res["profile"]["unsure"]),
+      (2, 1, "profile_2", "New Zealand", ["expecting_parcel"],
+       {"country": 2, "words": 1}, 0))
+check("the log names the person and where they live",
+      ("for Nopar: expecting_parcel: no" in buf.getvalue(),
+       "lives in: New Zealand" in buf.getvalue()), (True, True))
+# someone in Ireland expecting no parcel: there the facts decide
+eire = web_ui.mcq_profile_save({"name": "Aoife", "country": "Ireland",
+                                "facts": {"expecting_parcel": "no"}})["saved"]
+out3 = os.path.join(tmp, "run3.metrics.json")
+with contextlib.redirect_stdout(io.StringIO()):
+    M.main(["evaluate", "--csv", ev2, "--ontology", path, "--profile",
+            "Aoife", "--out", out3])
+web_ui.mcq_profile_delete({"path": eire})
+rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run3.csv"))))
+csv_text = open(os.path.join(tmp, "eval_run3.csv"), encoding="utf-8").read()
+check("in Ireland the tax is real, but she expects no parcel: her facts "
+      "decide, on the row that names New Zealand too",
+      [(r["personal"], r["decided_by"], r["country"]) for r in rows[:2]],
+      [("scam", "profile", "Ireland")] * 2)
 check("the per-call CSV, which may be committed, gives the rule's own words "
       "and never the person's name",
-      ("Nopar" in csv_text, rows[0]["personal_why"], rows[0]["reason"],
+      ("Aoife" in csv_text, rows[0]["personal_why"], rows[0]["reason"],
        rows[2]["personal_why"]),
       (False, "{name} is not expecting a parcel.",
        "the profile's rule 2: {name} is not expecting a parcel.", ""))
-check("the log names the person and where each call's person lives",
-      ("for Nopar: expecting_parcel: no" in buf.getvalue(),
-       "Ireland 1, New Zealand 1, no country 1" in buf.getvalue()),
-      (True, True))
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     M.main(["ask", "--text", GIFT, "--ontology", path, "--profile", "Raj K"])
@@ -1201,7 +1213,7 @@ for m in started:
         except OSError:
             pass
     web_ui.LIVE.pop(m["id"], None)
-check("a country is found by its name however a dataset spells it, and "
+check("a profile's country is found by its name however it is spelled, and "
       "never by a path",
       ([M.named_country(x).name for x in ("New Zealand", "new_zealand",
                                            "new-zealand", "NEW  ZEALAND",

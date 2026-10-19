@@ -55,7 +55,6 @@ can import it without the venv.
 
 import argparse
 import copy
-import csv
 import json
 import math
 import os
@@ -2161,18 +2160,19 @@ def run_evaluate(args):
               "held-out set is the fairer read.")
     ctx = presize([r["text"] for r in rows], onto, quotes)
     print("  about a dozen requests per call, context window %s" % ctx)
-    profile = personal = None
-    where = []
+    profile = personal = country = None
     if args.profile:
         personal = load_personal()
         profile = load_profile(find_profile(args.profile), personal)
-        where = _row_countries(args.csv, rows, profile)
+        # where they live is the profile's country, for every call, as on
+        # the Classify tab: a row's own country column is not read
+        if profile.get("country"):
+            country = load_country(named_country(profile["country"]))
         print("  for %s: %s" % (profile["name"], "; ".join(
             ["%s: %s" % (k, v) for k, v in profile["facts"].items()]
             or ["no facts"])))
-        named = Counter(c["name"] if c else "no country" for c in where)
-        print("  where each call's person lives: %s" % ", ".join(
-            "%s %d" % kv for kv in sorted(named.items())))
+        print("  lives in: %s" % (country["name"] if country
+                                  else "no country - their facts alone"))
 
     truths = [r["label"] for r in rows]
     prog = EC.Progress(len(rows), every=1)
@@ -2180,13 +2180,13 @@ def run_evaluate(args):
     stopped = None
     t0 = time.time()
     try:
-        for i, (r, res) in enumerate(zip(rows, classify_all(
-                [r["text"] for r in rows], onto, quotes))):
+        for r, res in zip(rows, classify_all([r["text"] for r in rows],
+                                             onto, quotes)):
             results.append(res)
             if profile:
                 # the label for this person; unsure is counted as a scam,
                 # since its advice is to check before paying anything
-                pr = personalise(r["text"], res, where[i], quotes,
+                pr = personalise(r["text"], res, country, quotes,
                                  profile=profile, personal=personal)
                 personal_res.append(pr)
                 pred = int(pr["final"] in ("scam", "unsure"))
@@ -2274,39 +2274,6 @@ def run_evaluate(args):
                                            if p["final"] == "unsure")}
                                       if profile else None)})
     return m
-
-
-def _row_countries(csv_path, rows, profile):
-    """For each row, the country its person lives in, loaded: the row's own
-    `country` column when it names a country with a file; no country when
-    it names one without; the profile's country when it names none."""
-    try:
-        with open(csv_path, newline="", encoding="utf-8-sig",
-                  errors="replace") as f:
-            raw = list(csv.DictReader(f))
-    except OSError:
-        raw = []
-    col = next((c for c in (raw[0] if raw else {}) if c.lower() == "country"),
-               None)
-    cache = {}
-
-    def load(name):
-        if name not in cache:
-            try:
-                cache[name] = load_country(named_country(name))
-            except ValueError:
-                cache[name] = None
-        return cache[name]
-    out = []
-    for r in rows:
-        own = (raw[r["row"]].get(col) or "").strip() if col and \
-            r["row"] < len(raw) else ""
-        if own:
-            out.append(load(own))
-        else:
-            out.append(load(profile["country"]) if profile.get("country")
-                       else None)
-    return out
 
 
 def dumps(obj, width=180, indent=0):
@@ -2692,8 +2659,8 @@ def build_parser():
     ev.add_argument("--label-col", default=None)
     ev.add_argument("--profile", default=None,
                     help="score every call as if it were for this person: "
-                         "their facts, and their country unless a row has "
-                         "its own country column")
+                         "their country's rules and their facts (a row's "
+                         "own country column is not read)")
     ev.add_argument("--out", default=None,
                     help="write <out>.json and a per-call CSV in results/")
     ev.set_defaults(func=run_evaluate)
