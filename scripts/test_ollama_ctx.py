@@ -168,7 +168,7 @@ check("ask_verdict (llm_only, singh, qwen_kb, hybrid)",
 import llm_judge as J
 import mcq_ontology as M
 
-# the MCQ ontology LLM speaks to Ollama through llm_judge, not requests
+# the MCQ ontology speaks to Ollama through llm_judge, not requests
 _sent_j = []
 _real_jpost = J._post
 J._post = lambda path, payload, timeout: (_sent_j.append(payload) or

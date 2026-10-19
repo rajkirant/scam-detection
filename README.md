@@ -48,7 +48,7 @@ The ten baselines, in escalating order:
 | `qwen_kb` | the LLM generalises each fold's *training* scams into patterns, then judges held-out calls against them | yes |
 | `hybrid` | Web-RAG and Qwen-KB over one shared KB | yes |
 | `ontology` | ontology-guided RAG over `knowledge/scam_ontology.json` | yes |
-| `mcq` | MCQ ontology LLM: a tree of multiple-choice questions from `knowledge/mcq_ontology.json`; each answer has a value from -1 to 1, and the call's score is their sum (above 0 scam, below 0 legitimate, 0 neutral) | yes |
+| `mcq` | MCQ ontology: the MCQ ontology page's tree of multiple-choice questions, `knowledge/mcq_ontology.json` unless another file is picked; each answer has a value from -1 to 1, and the call's score is their sum (above 0 scam, below 0 legitimate, 0 neutral). Never for a profile | yes |
 | `bert` | fine-tuned BERT classifier, k-fold CV | no (but wants the GPU) |
 
 ---
@@ -640,7 +640,7 @@ Two things the page shows that the benchmark does not:
 ### MCQ ontology page
 
 The classifier after the LLM judge, and the `mcq` baseline from the Benchmark
-page, one call at a time. It starts from a JSON file in `knowledge/` (picked
+page, one call at a time (see *On the Benchmark page* below). It starts from a JSON file in `knowledge/` (picked
 under *Ontology* on the left; `mcq_ontology.json` by default) that holds a
 **tree of multiple-choice questions**:
 - **The root question** asks what the call is mainly about: 15 subjects (bank
@@ -769,12 +769,15 @@ collected at the border only on parcels worth over NZ$1,000. Nothing in the
 call is a usual red flag, and where the person lives is not in the
 transcript.
 
-The *Personalisation* box above *Classify this call* has one choice, **The
-person lives in**: *no country - the words alone*, or one of the files in
-`knowledge/countries/`. The country's law and its source show under it.
-Loading a dataset row that has a `country` column picks that country.
+The *Personalisation* box above *Classify this call* has one choice, **Who it
+is for**: a profile (see *Profiles* below). **The person lives in** under it
+shows that profile's country, greyed out: it comes from the profile, and
+changes only when the profile is changed on the Profiles tab. With no
+profile it reads *no country* and the words alone decide. The country's law
+and its source show under it. A loaded dataset row's `country` is shown
+beside the row, but does not change it.
 
-With a country picked, the call is classified as usual. Then the country's
+With a country in use, the call is classified as usual. Then the country's
 own questions are put to it, one request each: whether a tax, duty or customs
 charge must be paid before delivery and, in New Zealand, what the parcel is
 and what it is worth. A **For this person** card shows the label, the rule
@@ -811,18 +814,21 @@ A country file is short:
 - `applies_to` (optional): the subjects (root option ids) the rules are for.
   A call on another subject is not asked the country's questions.
 
-Add a country by saving another file in `knowledge/countries/`. It appears in
-the list on the next page load. On the command line:
+Add a country by saving another file in `knowledge/countries/`. On the next
+page load it is in the *Lives in* list of the Profiles form: to use it on the
+Classify tab, make or change a profile that lives there. On the command line:
 `python scripts/mcq_ontology.py ask --text "…" --country "New Zealand"`.
 
 The same call, labelled for each country, is in
-`datasets/personalisation_2.csv`.
+`datasets/personalisation_2.csv`. Its `country` column says which country
+each row's label is for. It is shown when a row is loaded, but the profile's
+country is the one used, so classify each row for a profile in that country.
 
 **Profiles: who the call is for.** A profile is a person: a name, where they
 live, and facts about them that can change a verdict. Make one on the
 **Profiles** tab: give a name, pick a country (or none), and answer the
-facts. Then pick it under **Who it is for**, above *The person lives in*.
-Picking a profile sets the country to theirs; you can still change it. The
+facts. Then pick it under **Who it is for** on the Classify tab: its country
+is the one used, shown under *The person lives in* and not chosen there. The
 call is then labelled for that person by their country's rules and by the
 rules their facts make apply. Two facts ship:
 
@@ -841,17 +847,29 @@ says which decided, and what the other said. A fact left unset, such as no
 bank, makes no rule apply.
 
 On **Score a dataset**, pick a profile under **For** to label every call for
-that person. A row with its own `country` column keeps that country; a row
-naming a country with no file gets none; any other row gets the profile's.
-*Unsure* counts as scam there, since its advice is to check before paying.
+that person, the way Classify labels one: by their country's rules and their
+facts. A row's own `country` column is not read: the profile's country is
+used for every call. *Unsure* counts as scam there, since its advice is to
+check before paying.
 The per-call CSV adds `personal`, `decided_by`, `country` and
-`personal_why` columns, and the run is named "… · for <name>" on the Results
-tab. On the command line, `--profile` takes a profile's name, file name or
+`personal_why` columns. Its `personal_why` and `reason` give the deciding
+rule in its own words, with `{name}` and the facts left unfilled, and the run
+is named after the profile's file, as "… · profile_1", on the Results tab:
+the CSVs and the results ledger may be committed, so the person's name and
+bank are kept out of them. The score card says which profile a run was for,
+and how many calls the country's rules, the person's facts and the words
+alone decided. On the command line, `--profile` takes a profile's name, file name or
 path: `python scripts/mcq_ontology.py ask --text "…" --profile Raj`, or
 `evaluate --csv … --profile Raj`.
 
-Profiles are saved in `knowledge/profiles/<name>.json`, which git leaves
-alone: they are about real people, and an Update never touches them. The
+Profiles are saved in `knowledge/profiles/profile_<n>.json`, which git
+leaves alone: they are about real people, and an Update never touches them.
+The file name is a number, not the person's name, since runs are named after
+it. Two
+profiles cannot share a name. A profile that stops loading, say because its
+country's file was removed, stays on the Profiles tab with the reason, to be
+changed or deleted, and is not offered until it is fixed. `--profile` finds a
+profile by its name first, then by its file name. The
 facts a profile can hold, the questions they raise and their rules are in
 `knowledge/personal_facts.json`, written like a country file:
 
@@ -997,6 +1015,19 @@ The other tabs:
 score a held-out one. When the ontology was trained on the dataset being
 scored, the score card says so. The content-deletion test is the other fair
 read.
+
+**On the Benchmark page.** Tick *MCQ ontology* and a box under the form says
+how it runs: which ontology file, and whether each answer needs a quote and
+the questions' hints are used. These are the three choices this page scores
+with, and the box follows the file and the two switches picked here until it
+is changed on the Benchmark page. A file saved or trained here is offered
+there straight away. It never takes a profile or a country: a benchmark row
+is the words alone, so it compares with the other baselines in the table.
+The run's line under *Recent runs* and its row on the Results tab name the
+file, with "(no hints)" or "(no quotes)" when one was off. A run from before
+the box existed used `mcq_ontology.json` with both on. From the terminal:
+`./run_all.sh -b mcq -l 0 --mcq-ontology knowledge/my_tree.json --mcq-no-hints`
+(and `--mcq-no-quotes`).
 
 ### Files page
 
@@ -1145,6 +1176,8 @@ Or answer up front and it asks nothing:
 | `-d, --dataset` | a path, or a menu number |
 | `-b, --baseline` | `all length bow llm_only singh webrag qwen_kb hybrid ontology mcq bert` — comma-separate for several; menu numbers work too (`-b 3,7,8`) |
 | `-l, --limit` | `0` = whole dataset, `N` = first N calls, `id:<value>` = one row by its id column, `idx:<n>` = the n-th call of a `--limit 40` style run |
+| `--mcq-ontology` | the ontology file the `mcq` baseline walks, `knowledge/mcq_ontology.json` by default |
+| `--mcq-no-hints`, `--mcq-no-quotes` | the `mcq` baseline without the questions' hints, or without a quote for each answer — the MCQ ontology page's two switches. It never takes a profile |
 | `-t, --tmux` | detach into tmux |
 | `-s, --session` | name the tmux session yourself |
 
@@ -1229,7 +1262,7 @@ python scripts/bert_baseline.py cv --csv datasets/scambait_synthetic_196.csv \
 for training on one dataset and evaluating on another, and `--cpu` to force the
 CPU.
 
-### 4. MCQ ontology LLM (a tree of questions, about a dozen requests per call)
+### 4. MCQ ontology (a tree of questions, about a dozen requests per call)
 
 ```bash
 python scripts/evaluate_mcq_ontology.py \
@@ -1244,7 +1277,10 @@ python scripts/test_mcq_ontology.py      # offline: a fake Ollama
 ```
 
 The tree comes from `knowledge/mcq_ontology.json` (`--ontology` for another,
-such as a trained file). Each answer's value is summed into the call's score:
+such as a trained file or one saved from the page's editor). It is the same
+tree, and the same scoring, as the MCQ ontology page's Score a dataset with
+no profile; the benchmark never takes one. Each answer's value is summed
+into the call's score:
 above 0 scam, below 0 legitimate, 0 neutral (counted as not scam).
 `--no-quotes` skips the supporting quotes (faster: one letter per question).
 `--no-hints` leaves the questions' hints out of the prompts, to measure what
@@ -1352,7 +1388,7 @@ python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19
 python scripts/check_one.py --csv datasets/scambait_synthetic_196.csv --idx 19 --runs 5
 ```
 
-It runs the MCQ ontology LLM on that one call and prints every question
+It runs the MCQ ontology on that one call and prints every question
 asked, the answer, its value and its quote, then the score. `--idx` uses the same shuffled order (seed 42) as
 `evaluate_mcq_ontology.py`, so idx 19 here is the same call as idx 19 in a
 prior `--limit 40` run.

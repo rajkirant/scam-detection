@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Offline tests for mcq_ontology: the MCQ ontology LLM - a tree of questions
+Offline tests for mcq_ontology: the MCQ ontology - a tree of questions
 out of a JSON file, each answer a value, the call's score their sum - and the
 own-question features of its page.
 
@@ -1010,7 +1010,7 @@ check("a profile is checked against the facts and the countries",
           {"name": "Raj", "facts": {"expecting_parcel": "maybe"}},
           {"name": "Raj", "facts": {"bank": "x" * 200}})],
       [[], ["a profile needs a name"],
-       ["no country file for 'Atlantis' - the ones there are: Ireland, "
+       ["no country called 'Atlantis' - the ones there are: Ireland, "
         "New Zealand"],
        ['"pets" is not a fact in personal_facts.json'],
        ['the fact "expecting_parcel" can be no, yes, not \'maybe\''],
@@ -1020,10 +1020,10 @@ out_p = web_ui.mcq_profile_save({"name": " Raj ", "country": "new_zealand",
                                  "facts": {"bank": "  ANZ ",
                                            "expecting_parcel": ""}})
 raj = M.load_profile(M.find_profile("raj"), personal)
-check("saved from the page: one file, named after the person, the country "
-      "by its name, only the facts with a value",
+check("saved from the page: one file, with a neutral name, the country by "
+      "its name, only the facts with a value",
       (out_p["saved"], [p["name"] for p in out_p["profiles"]], raj),
-      ("knowledge/profiles/raj.json", ["Raj"],
+      ("knowledge/profiles/profile_1.json", ["Raj"],
        {"name": "Raj", "country": "New Zealand", "facts": {"bank": "ANZ"}}))
 try:
     web_ui.mcq_profile_save({"name": "raj", "facts": {}})
@@ -1031,12 +1031,12 @@ try:
 except ValueError as e:
     check("a second profile of the same name is refused",
           "already a profile called raj" in str(e))
-web_ui.mcq_profile_save({"path": "knowledge/profiles/raj.json",
+web_ui.mcq_profile_save({"path": "knowledge/profiles/profile_1.json",
                          "name": "Raj K", "country": "new_zealand",
                          "facts": {"bank": "ANZ"}})
 check("changing a profile keeps its file, and finds it by its new name",
       (sorted(p.name for p in M.PROFILES_DIR.glob("*.json")),
-       M.find_profile("Raj K").name), (["raj.json"], "raj.json"))
+       M.find_profile("Raj K").name), (["profile_1.json"], "profile_1.json"))
 for bad in ("../knowledge/mcq_ontology.json", "knowledge/profiles/../x.json",
             "/etc/passwd"):
     try:
@@ -1106,26 +1106,147 @@ with contextlib.redirect_stdout(buf):
             "nopar", "--out", out2])
 res = json.load(open(out2))
 rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run2.csv"))))
-check("scored for a profile: each row's own country, else the profile's; a "
-      "country with no file is none",
+check("scored for a profile: every call gets the profile's country, whatever "
+      "the row's own country column says",
       [(r["personal"], r["decided_by"], r["country"]) for r in rows],
-      [("scam", "profile", "Ireland"), ("scam", "country", "New Zealand"),
-       ("legit", "words", "")])
-check("and the metrics say whose, and what decided",
-      (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["name"],
+      [("scam", "country", "New Zealand"), ("scam", "country", "New Zealand"),
+       ("legit", "words", "New Zealand")])
+check("and the metrics say which profile by its file, and what decided",
+      (res["metrics"]["tp"], res["metrics"]["tn"], res["profile"]["file"],
+       res["profile"]["country"], res["profile"]["facts"],
        res["profile"]["decided_by"], res["profile"]["unsure"]),
-      (2, 1, "Nopar", {"profile": 1, "country": 1, "words": 1}, 0))
-check("the log names the person and where each call's person lives",
+      (2, 1, "profile_2", "New Zealand", ["expecting_parcel"],
+       {"country": 2, "words": 1}, 0))
+check("the log names the person and where they live",
       ("for Nopar: expecting_parcel: no" in buf.getvalue(),
-       "Ireland 1, New Zealand 1, no country 1" in buf.getvalue()),
-      (True, True))
+       "lives in: New Zealand" in buf.getvalue()), (True, True))
+# someone in Ireland expecting no parcel: there the facts decide
+eire = web_ui.mcq_profile_save({"name": "Aoife", "country": "Ireland",
+                                "facts": {"expecting_parcel": "no"}})["saved"]
+out3 = os.path.join(tmp, "run3.metrics.json")
+with contextlib.redirect_stdout(io.StringIO()):
+    M.main(["evaluate", "--csv", ev2, "--ontology", path, "--profile",
+            "Aoife", "--out", out3])
+web_ui.mcq_profile_delete({"path": eire})
+rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run3.csv"))))
+csv_text = open(os.path.join(tmp, "eval_run3.csv"), encoding="utf-8").read()
+check("in Ireland the tax is real, but she expects no parcel: her facts "
+      "decide, on the row that names New Zealand too",
+      [(r["personal"], r["decided_by"], r["country"]) for r in rows[:2]],
+      [("scam", "profile", "Ireland")] * 2)
+check("the per-call CSV, which may be committed, gives the rule's own words "
+      "and never the person's name",
+      ("Aoife" in csv_text, rows[0]["personal_why"], rows[0]["reason"],
+       rows[2]["personal_why"]),
+      (False, "{name} is not expecting a parcel.",
+       "the profile's rule 2: {name} is not expecting a parcel.", ""))
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     M.main(["ask", "--text", GIFT, "--ontology", path, "--profile", "Raj K"])
 check("ask --profile: the profile's country, and its facts' rules",
       ("personalised for a person in New Zealand" in buf.getvalue(),
        "-> scam  (Raj K banks with ANZ.)" in buf.getvalue()), (True, True))
-out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/raj.json"})
+try:
+    web_ui.mcq_profile_save({"path": "knowledge/profiles/profile_2.json",
+                             "name": "raj k", "facts": {}})
+    check("renaming onto another profile's name is refused", False)
+except ValueError as e:
+    check("renaming onto another profile's name is refused",
+          "already a profile called raj k" in str(e))
+check("a country from the page is a name, never a path",
+      [M.check_profile({"name": "x", "country": c}, personal) != []
+       for c in ("/etc/passwd", "../knowledge/countries/ireland.json",
+                 str(Path(HERE).parent / "knowledge/countries/ireland.json"))]
+      + [M.check_profile({"name": "x", "country": c}, personal) == []
+         for c in ("Ireland", "new_zealand", "knowledge/countries/ireland.json")],
+      [True] * 6)
+(M.PROFILES_DIR / "sam.json").write_text(json.dumps(
+    {"name": "Raj K", "facts": {}}))
+try:
+    M.find_profile("Raj K")
+    check("two profiles of one name: an error, not a guess", False)
+except ValueError as e:
+    check("two profiles of one name: an error, not a guess",
+          "more than one profile is called 'Raj K'" in str(e))
+(M.PROFILES_DIR / "sam.json").write_text(json.dumps(
+    {"name": "Sam", "facts": {}}))
+(M.PROFILES_DIR / "raj_2.json").write_text(json.dumps(
+    {"name": "Raj", "facts": {}}))
+check("a name before a file name: 'Raj' is Raj, not profile_1.json renamed Raj K",
+      [M.find_profile(x).name for x in ("Raj", "raj", "Raj K", "raj_2.json",
+                                         "knowledge/profiles/sam.json")],
+      ["raj_2.json", "raj_2.json", "profile_1.json", "raj_2.json", "sam.json"])
+(M.PROFILES_DIR / "lost.json").write_text(json.dumps(
+    {"name": "Lost", "country": "Atlantis", "facts": {"bank": "X"}}))
+(M.PROFILES_DIR / "torn.json").write_text("{not json")
+listed = {p["name"]: p.get("problems") for p in
+          M.list_profiles(personal, broken=True)}
+check("a profile that no longer loads is listed with why, to be mended - "
+      "and is never offered to classify",
+      ("Lost" in listed and bool(listed["Lost"]), "torn" in listed,
+       [p["name"] for p in M.list_profiles(personal)
+        if p["name"] in ("Lost", "torn")]),
+      (True, True, []))
+for f in ("lost.json", "torn.json", "sam.json", "raj_2.json"):
+    (M.PROFILES_DIR / f).unlink()
+
+import types                                                    # noqa: E402
+popen = web_ui.subprocess.Popen
+web_ui.subprocess.Popen = lambda *a, **k: types.SimpleNamespace(pid=0)
+try:
+    started = [web_ui.start_eval_run("mcq", dict(
+        {"dataset": web_ui.datasets()[0]["path"], "ontology": "",
+         "profile": "knowledge/profiles/profile_2.json"}, **extra))
+        for extra in ({}, {"hints": False})]
+finally:
+    web_ui.subprocess.Popen = popen
+check("a run scored for a profile has an id the server takes back, and is "
+      "named by the profile's file, not the person",
+      [(bool(web_ui.RUN_ID_RE.match(m["id"])), m["model_name"])
+       for m in started],
+      [(True, "mcq_ontology · profile_2"),
+       (True, "mcq_ontology (no hints) · profile_2")])
+for m in started:
+    for ext in ("json", "log"):
+        try:
+            web_ui.run_path(m["id"], ext).unlink()
+        except OSError:
+            pass
+    web_ui.LIVE.pop(m["id"], None)
+check("a profile's country is found by its name however it is spelled, and "
+      "never by a path",
+      ([M.named_country(x).name for x in ("New Zealand", "new_zealand",
+                                           "new-zealand", "NEW  ZEALAND",
+                                           "knowledge/countries/ireland.json")],
+       [bool(M.check_profile({"name": "x", "country": c}, personal))
+        for c in ("/etc/passwd", "knowledge/countries/../countries/ireland.json")]),
+      (["new_zealand.json"] * 4 + ["ireland.json"], [True, True]))
+odd = M.PROFILES_DIR / "mum v2.json"
+odd.write_text(json.dumps({"name": "Mum", "country": "Ireland", "facts": {}}))
+check("a profile file named by hand, with a space or a dot, can be used and "
+      "deleted; a name outside the folder still cannot",
+      (web_ui.mcq_profile_path("knowledge/profiles/mum v2.json") == odd,
+       [p["name"] for p in web_ui.mcq_profile_delete(
+           {"path": "knowledge/profiles/mum v2.json"})["profiles"]],
+       odd.exists()),
+      (True, ["Raj K", "Nopar"], False))
+# Classify on the page: where the person lives is the profile's country,
+# whatever else is sent, and with no profile there is none
+saved_knowledge = M.KNOWLEDGE_DIR
+M.KNOWLEDGE_DIR = Path(tmp)
+try:
+    asked = [web_ui.mcq_ask(dict({"transcript": SHOE,
+                                  "ontology": "knowledge/tree.json",
+                                  "country": "knowledge/countries/ireland.json"},
+                                 **who))
+             for who in ({"profile": "knowledge/profiles/profile_2.json"}, {})]
+finally:
+    M.KNOWLEDGE_DIR = saved_knowledge
+check("Classify labels the call for the profile's own country, never one "
+      "sent beside it; no profile, no country",
+      (asked[0]["personal"]["country"], asked[0]["personal"]["final"],
+       "personal" in asked[1]), ("New Zealand", "scam", False))
+out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/profile_1.json"})
 check("a profile is deleted from the page",
       [p["name"] for p in out_d["profiles"]], ["Nopar"])
 M.PERSONAL_FILE, M.PROFILES_DIR = SAVED_PERSONAL, SAVED_PROFILES
@@ -1154,6 +1275,130 @@ check("the order is the benchmark's shuffled order (seed 42)",
 check("<system>_pct is the score on 0-100",
       {r["text"][:8]: r["mcq_ontology__stripped_pct"] for r in rows}["GIFTCALL"],
       "88.08")
+page_rows = list(csv.DictReader(open(os.path.join(tmp, "eval_run.csv"))))
+check("each call gets the verdict the page's Score a dataset gave it",
+      {r["text"][:8]: r["mcq_ontology__stripped"] == "Fraud" for r in rows},
+      {r["text"][:8]: r["predicted"] == "scam" for r in page_rows})
+
+# the page's two switches, on the benchmark's runner
+hinted = json.loads(json.dumps(TREE_ONTO))
+hinted["common_questions"][0]["hint"] = "HINTMARK: a voucher is a gift card."
+hinted_path = os.path.join(tmp, "hinted.json")
+open(hinted_path, "w").write(json.dumps(hinted))
+
+
+def bench_prompts(*flags):
+    STATE["payloads"] = []
+    sys.argv = ["evaluate_mcq_ontology.py", "--csv", ev, "--ontology",
+                hinted_path, "--out", bench_csv] + list(flags)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        E.main()
+    sys.argv = argv
+    return out.getvalue(), [x["prompt"] for x in STATE["payloads"]]
+
+
+log_on, asked_on = bench_prompts()
+log_off, asked_off = bench_prompts("--no-hints", "--no-quotes")
+check("a question's hint goes into its prompt, and --no-hints leaves it out",
+      (any("HINTMARK" in q for q in asked_on),
+       any("HINTMARK" in q for q in asked_off)), (True, False))
+check("--no-quotes asks for no quote",
+      (any('write "Quote:"' in q for q in asked_on),
+       any('write "Quote:"' in q for q in asked_off)), (True, False))
+check("the run says how it was set",
+      ("hints   : 1 questions carry one" in log_on,
+       "quotes required" in log_on, "hints   : off" in log_off,
+       "quotes off" in log_off), (True, True, True, True))
+
+print("\nthe Benchmark page's MCQ ontology")
+saved_knowledge = M.KNOWLEDGE_DIR
+popen = web_ui.subprocess.Popen
+launched = []
+web_ui.subprocess.Popen = lambda argv, **k: (
+    launched.append(argv) or types.SimpleNamespace(pid=0))
+
+
+def bench_run(baselines, mcq=None):
+    """start_run as the Benchmark form calls it: the flags handed to
+    run_all.sh and the run's meta, or the error it refused with."""
+    form = {"dataset": web_ui.datasets()[0]["path"], "baselines": baselines,
+            "limit": "4"}
+    if mcq is not None:
+        form["mcq"] = mcq
+    n = len(launched)
+    try:
+        meta = web_ui.start_run(form)
+    except ValueError as e:
+        return str(e), len(launched) > n
+    for ext in ("json", "log"):
+        try:
+            web_ui.run_path(meta["id"], ext).unlink()
+        except OSError:
+            pass
+    web_ui.LIVE.pop(meta["id"], None)
+    argv = launched[-1]
+    return argv[argv.index(str(web_ui.RUN_ALL)) + 1:], meta
+
+
+try:
+    flags, meta = bench_run(["mcq"])
+    check("unset, it runs the shipped tree with hints and quotes on",
+          (flags[-2:], meta["mcq"]),
+          (["--mcq-ontology", "knowledge/mcq_ontology.json"],
+           {"ontology": "knowledge/mcq_ontology.json", "hints": True,
+            "quotes": True}))
+    M.KNOWLEDGE_DIR = Path(tmp)
+    flags, meta = bench_run(["llm_only", "mcq"], {
+        "ontology": "knowledge/hinted.json", "hints": False, "quotes": True,
+        "profile": "knowledge/profiles/profile_1.json", "country": "Ireland"})
+    check("the page's file and switches reach run_all.sh, and a profile or "
+          "a country never does",
+          (flags[flags.index("--mcq-ontology"):], meta["mcq"],
+           [f for f in flags if "profile" in f or "country" in f]),
+          (["--mcq-ontology", "knowledge/hinted.json", "--mcq-no-hints"],
+           {"ontology": "knowledge/hinted.json", "hints": False,
+            "quotes": True}, []))
+    flags, meta = bench_run(["mcq"], {"ontology": "hinted.json",
+                                      "hints": False, "quotes": False})
+    check("both switches off", flags[flags.index("--mcq-ontology"):],
+          ["--mcq-ontology", "knowledge/hinted.json", "--mcq-no-hints",
+           "--mcq-no-quotes"])
+    flags, meta = bench_run(["all"], {"ontology": "hinted.json",
+                                      "quotes": False})
+    check("all of them, the MCQ ontology among them, takes its settings too",
+          flags[flags.index("--mcq-ontology"):],
+          ["--mcq-ontology", "knowledge/hinted.json", "--mcq-no-quotes"])
+    flags, meta = bench_run(["llm_only"], {"ontology": "knowledge/nope.json",
+                                           "hints": False})
+    check("a run without the MCQ ontology carries none of its settings",
+          ([f for f in flags if f.startswith("--mcq")], "mcq" in meta),
+          ([], False))
+    for bad, why in (("knowledge/nope.json", "no ontology file"),
+                     ("../datasets/x.json", "a .json file in knowledge/"),
+                     ("knowledge/ev.csv", "a .json file in knowledge/")):
+        err, started = bench_run(["mcq"], {"ontology": bad})
+        check("%s is refused before anything starts" % bad,
+              (why in err, started), (True, False))
+    open(os.path.join(tmp, "torn.json"), "w").write("{not json")
+    err, started = bench_run(["mcq"], {"ontology": "knowledge/torn.json"})
+    check("so is a file that does not load", ("not valid JSON" in err,
+                                              started), (True, False))
+    check("the list it offers leaves out a file that does not load",
+          [o["name"] for o in web_ui.mcq_bench_config()["ontologies"]],
+          ["hinted.json", "tree.json"])
+finally:
+    web_ui.subprocess.Popen = popen
+    M.KNOWLEDGE_DIR = saved_knowledge
+check("the Results table names the tree and what was off",
+      [web_ui.mcq_bench_text(m) for m in (
+          {"ontology": "knowledge/mcq_ontology.json", "hints": True,
+           "quotes": True},
+          {"ontology": "knowledge/my_tree.json", "hints": False,
+           "quotes": True},
+          {"ontology": "knowledge/my_tree.json", "hints": False,
+           "quotes": False})],
+      ["mcq_ontology", "my_tree (no hints)", "my_tree (no hints, no quotes)"])
 
 print("\na question trained on a dataset")
 tds = os.path.join(tmp, "train.csv")

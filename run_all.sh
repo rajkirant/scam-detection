@@ -27,6 +27,15 @@
 #   ./run_all.sh -b llm_only,mcq,bert -l 0    # just those three, one run
 #   ./run_all.sh -b 3,7,8 -l 0                # the same three, by number
 #
+# The MCQ ontology baseline walks each call through the tree of questions in
+# knowledge/mcq_ontology.json. It takes the same choices as the MCQ ontology
+# page's Score a dataset - another ontology file (one saved from the page's
+# editor, or trained), and its hints or its quotes turned off - but never a
+# profile: the benchmark scores the words alone.
+#
+#   ./run_all.sh -d datasets/zhi_english_646.csv -b mcq -l 0 \
+#                --mcq-ontology knowledge/my_tree.json --mcq-no-hints
+#
 # The content-deletion test scores every system twice, on the dataset and on
 # a stripped twin of it with the content words removed, and adds a
 # trusted-accuracy table. Learning systems are trained on the original text
@@ -81,7 +90,7 @@ BL_LABELS=(
   "Qwen-KB                   learns a KB from a held-out split, k-fold"
   "Hybrid                    Web-RAG + Qwen-KB over one shared KB"
   "Ontology RAG              scam_ontology.json"
-  "MCQ ontology LLM          a tree of questions, summed answer values (mcq_ontology.json)"
+  "MCQ ontology              the MCQ ontology page's tree of questions, summed answer values"
   "BERT                      fine-tuned classifier, no LLM"
 )
 
@@ -92,6 +101,7 @@ prompt() {            # prompt <text> <varname>   - read only echoes its own
 
 # ---------------------------------------------------------------- arguments
 ARG_DATASET=""; ARG_BASELINE=""; ARG_LIMIT=""; ARG_MODEL=""; ARG_STRIPPED=""
+ARG_MCQ_ONTOLOGY=""; ARG_MCQ_NO_HINTS=""; ARG_MCQ_NO_QUOTES=""
 DETACH=0; SESSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -100,6 +110,9 @@ while [[ $# -gt 0 ]]; do
     -l|--limit)    ARG_LIMIT="${2:-}";    shift 2 ;;
     -m|--model)    ARG_MODEL="${2:-}";    shift 2 ;;
     -S|--stripped) ARG_STRIPPED=1; shift ;;
+    --mcq-ontology)  ARG_MCQ_ONTOLOGY="${2:-}"; shift 2 ;;
+    --mcq-no-hints)  ARG_MCQ_NO_HINTS=1; shift ;;
+    --mcq-no-quotes) ARG_MCQ_NO_QUOTES=1; shift ;;
     -t|--tmux)     DETACH=1;              shift   ;;
     -s|--session)  SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)     awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
@@ -425,6 +438,11 @@ fi
 # ------------------------------------------------------------------- setup
 [[ -f "$DATASET" ]] || die "missing $DATASET"
 [[ "$RUN_ONTOLOGY" -eq 1 && ! -f "$ONTOLOGY" ]] && die "missing $ONTOLOGY"
+# the MCQ ontology's own choices, as its page's Score a dataset takes them
+[[ -n "$ARG_MCQ_ONTOLOGY" ]] && MCQ_ONTOLOGY="$ARG_MCQ_ONTOLOGY"
+MCQ_FLAGS=()
+[[ -n "$ARG_MCQ_NO_HINTS" ]] && MCQ_FLAGS+=(--no-hints)
+[[ -n "$ARG_MCQ_NO_QUOTES" ]] && MCQ_FLAGS+=(--no-quotes)
 [[ "$RUN_MCQ" -eq 1 && ! -f "$MCQ_ONTOLOGY" ]] && die "missing $MCQ_ONTOLOGY"
 
 # ------------------------------------------------------- detached re-exec
@@ -444,6 +462,9 @@ relaunch_cmd() {           # the exact command line the detached copy runs
   printf 'bash %q --dataset %q --baseline %q --limit %q' \
     "$SELF" "$DATASET" "$BASELINE" "$lim"
   [[ -n "$ARG_STRIPPED" ]] && printf ' --stripped'
+  [[ -n "$ARG_MCQ_ONTOLOGY" ]] && printf ' --mcq-ontology %q' "$ARG_MCQ_ONTOLOGY"
+  [[ -n "$ARG_MCQ_NO_HINTS" ]] && printf ' --mcq-no-hints'
+  [[ -n "$ARG_MCQ_NO_QUOTES" ]] && printf ' --mcq-no-quotes'
   printf '\n'
 }
 
@@ -578,6 +599,9 @@ else
   ok "limit     $( [[ "$LIMIT" -gt 0 ]] && echo "$LIMIT calls" || echo "all rows" )"
 fi
 ok "model     ${MODEL:-none needed for this baseline}"
+if [[ "$RUN_MCQ" -eq 1 ]]; then
+  ok "mcq       $MCQ_ONTOLOGY${ARG_MCQ_NO_HINTS:+, hints off}${ARG_MCQ_NO_QUOTES:+, quotes off}"
+fi
 ok "logs      $LOGDIR"
 # a single-transcript run is for reading the model reasoning, so it turns
 # on --debug where the baseline supports it (every step now streams its output
@@ -755,13 +779,13 @@ if [[ "$RUN_MCQ" -eq 1 ]]; then
   DEBUG_FLAG=""; [[ "$SINGLE_MODE" -eq 1 ]] && DEBUG_FLAG="--debug"
   # shellcheck disable=SC2086
   run_step "mcq" python -u scripts/evaluate_mcq_ontology.py \
-    --csv "$DATASET" --ontology "$MCQ_ONTOLOGY" \
+    --csv "$DATASET" --ontology "$MCQ_ONTOLOGY" ${MCQ_FLAGS[@]+"${MCQ_FLAGS[@]}"} \
     --out "$MCQ_OUT" $LIMIT_ARG $DEBUG_FLAG
   if [[ -n "$ARG_STRIPPED" ]]; then
     # shellcheck disable=SC2086
     run_step "mcq_stripped" python -u scripts/evaluate_mcq_ontology.py \
       --csv "$ARG_STRIPPED" --ontology "$MCQ_ONTOLOGY" \
-      --system mcq_ontology__stripped \
+      ${MCQ_FLAGS[@]+"${MCQ_FLAGS[@]}"} --system mcq_ontology__stripped \
       --out "${MCQ_OUT%.csv}_stripped.csv" $LIMIT_ARG $DEBUG_FLAG
   fi
 fi

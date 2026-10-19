@@ -75,7 +75,7 @@ BASELINES = [
     ("qwen_kb",  "Qwen-KB",               "learns a KB from a held-out split, k-fold", True),
     ("hybrid",   "Hybrid",                "Web-RAG + Qwen-KB over one shared KB",  True),
     ("ontology", "Ontology RAG",          "scam_ontology.json",                   True),
-    ("mcq",      "MCQ ontology LLM",       "a tree of questions, summed answer values (mcq_ontology.json)", True),
+    ("mcq",      "MCQ ontology",          "the MCQ ontology page's tree of questions, summed answer values", True),
     ("bert",     "BERT",                  "fine-tuned classifier, no LLM",        False),
 ]
 
@@ -479,6 +479,8 @@ def start_run(form):
                              "call twice; it cannot run on a single transcript")
     num_ctx = numeric(form, {"num_ctx": ("num_ctx", int, 2048, 131072, None)},
                       "num_ctx")
+    mcq = (mcq_bench_choices(form.get("mcq"))
+           if {"mcq", "all"} & set(baselines) else None)
     # One model, not a choice: run_all.sh uses it for every LLM baseline.
     model = ollama_ctx.MODEL if any(known[b][3] for b in baselines) else ""
 
@@ -499,6 +501,12 @@ def start_run(form):
         # run_all.sh resolves the twin the same way; the path above is only
         # so this server can refuse a bad pair before starting anything
         flags.append("--stripped")
+    if mcq:
+        flags += ["--mcq-ontology", mcq["ontology"]]
+        if not mcq["hints"]:
+            flags.append("--mcq-no-hints")
+        if not mcq["quotes"]:
+            flags.append("--mcq-no-quotes")
 
     # $1 is the script and "${@:2}" the flags, so nothing here is re-parsed as
     # shell syntax. The marker records the exit status in the log itself.
@@ -530,6 +538,8 @@ def start_run(form):
             "baseline": ",".join(baselines), "baselines": baselines,
             "limit": limit, "model": model, "started": time.time(),
             "stripped": stripped}
+    if mcq:
+        meta["mcq"] = mcq
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -918,6 +928,14 @@ def ledger_sync():
                     "calls": x["tp"] + x["fp"] + x["fn"] + x["tn"],
                     "stripped_test": bool(meta.get("stripped")),
                 }
+                if key == "mcq" and meta.get("mcq"):
+                    # the tree and its switches are as much the system as
+                    # the model is; a run from before they could be picked
+                    # used knowledge/mcq_ontology.json, hints and quotes on
+                    entry["model"] = " · ".join(
+                        t for t in (entry["model"], mcq_bench_text(meta["mcq"]))
+                        if t)
+                    entry["mcq"] = meta["mcq"]
                 for k in ("acc", "p", "r", "f1", "tp", "fp", "fn", "tn"):
                     entry[k] = x[k]
                 if x.get("stripped"):
@@ -1406,7 +1424,7 @@ def dataset_row(path, idx):
               "content", "body"])
     li = col(["label", "is_scam", "scam", "target", "class", "y", "ground_truth"])
     ii = col(["id", "call_id", "conv_id"])
-    ci = col(["country"])         # where the person lives, for personalising
+    ci = col(["country"])         # where the row's person lives, shown with it
     if ti < 0:
         raise ValueError("no transcript column in that dataset")
     if not rows:
@@ -2210,6 +2228,7 @@ class Handler(BaseHTTPRequestHandler):
                                  for k, l, n, h, _, x in KB_MODES],
                     "kb": kb_state(),
                     "idx_pool": idx_pool(),
+                    "mcq": mcq_bench_config(),
                 })
             if u.path == "/api/kb":
                 return self._send(200, {"kb": kb_state()})
@@ -2588,9 +2607,11 @@ def start_eval_run(page, form):
             name += " (no hints)"
         if form.get("profile"):                 # scored for one person
             ppath = mcq_profile_path(form["profile"])
-            prof = mcq_ontology.load_profile(ppath)
+            mcq_ontology.load_profile(ppath)    # refuse a broken one now
             flags += ["--profile", "knowledge/profiles/" + ppath.name]
-            name += " · for " + prof["name"]
+            # named by its file (profile_<n>), not the person: the ledger
+            # and the per-call CSV's file name are in git
+            name += " · " + ppath.stem
         running = [r for r in all_runs() if r["status"] == "running"]
         if running:
             raise ValueError("a run is already going (%s). Stop it first - "
@@ -2639,8 +2660,11 @@ def start_eval_run(page, form):
             flags += ["--direction", way]
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    # the name as shown can hold spaces and "·" ("... (no hints)", "...
+    # · profile raj"); the id is kept to what RUN_ID_RE lets back in
     run_id = (time.strftime("%Y%m%d_%H%M%S") + "_eval_" + page + "_"
-              + (name or "bare"))
+              + (re.sub(r"[^A-Za-z0-9_+.-]+", "_", name or "bare")
+                 .strip("_")[:80] or "bare"))
     flags += ["--out", str(run_path(run_id, "metrics.json"))]
 
     quoted = " ".join(shlex.quote(f) for f in flags)
@@ -2820,6 +2844,41 @@ def mcq_datasets():
     return datasets()
 
 
+def mcq_bench_config():
+    """The ontologies the Benchmark form's MCQ ontology box offers, and the
+    one it starts on. A file that will not load is left off the list; it must
+    never stop the Benchmark page drawing."""
+    try:
+        files = mcq_ontology.list_ontologies()
+    except Exception:
+        files = []
+    return {"ontologies": files, "default": MCQ_DEFAULT}
+
+
+def mcq_bench_choices(form):
+    """The benchmark's `mcq` baseline, set the way the MCQ page's Score a
+    dataset is - an ontology file, and its hints and quotes on or off - and
+    checked before anything starts. Never a profile, nor a country: the
+    benchmark scores the words alone, like every other row of its table."""
+    form = form or {}
+    if not isinstance(form, dict):
+        raise ValueError("bad MCQ ontology settings")
+    path = mcq_path(form.get("ontology"))
+    mcq_ontology.load_ontology(path)              # refuse a broken file now
+    return {"ontology": "knowledge/" + path.name,
+            "hints": form.get("hints") is not False,
+            "quotes": form.get("quotes") is not False}
+
+
+def mcq_bench_text(mcq):
+    """How a run's MCQ settings read in the Results table, the way a score's
+    do on the MCQ page: mcq_ontology, my_tree (no hints)."""
+    off = [w for w, on in (("no hints", mcq.get("hints", True)),
+                           ("no quotes", mcq.get("quotes", True))) if not on]
+    return Path(mcq.get("ontology") or MCQ_DEFAULT).stem + (
+        " (%s)" % ", ".join(off) if off else "")
+
+
 def mcq_config():
     """Everything the MCQ page needs to draw itself once."""
     cfg = {"datasets": mcq_datasets(),
@@ -2911,7 +2970,7 @@ def mcq_people():
         personal = mcq_ontology.load_personal()
     except ValueError as e:
         return {"profiles": [], "facts": [], "facts_error": str(e)}
-    return {"profiles": mcq_ontology.list_profiles(personal),
+    return {"profiles": mcq_ontology.list_profiles(personal, broken=True),
             "facts": personal["facts"]}
 
 
@@ -2921,8 +2980,13 @@ def mcq_profile_path(rel):
     rel = str(rel or "").strip()
     name = rel[len("knowledge/profiles/"):] if rel.startswith(
         "knowledge/profiles/") else rel
-    if not mcq_ontology.PROFILE_FILE_RE.match(name):
-        raise ValueError("a profile is a .json file in knowledge/profiles/")
+    # a name the page makes, or exactly the name of a file already there -
+    # one put there by hand, with a dot or a space in it, is listed too, so
+    # it must be usable and deletable; an exact match cannot leave the folder
+    if not (mcq_ontology.PROFILE_FILE_RE.match(name) or name in {
+            x.name for x in mcq_ontology.PROFILES_DIR.glob("*.json")}):
+        raise ValueError("a profile is a .json file in knowledge/profiles/, "
+                         "named with letters, digits, dash or underscore")
     return mcq_ontology.PROFILES_DIR / name
 
 
@@ -2936,18 +3000,17 @@ def mcq_profile_save(form):
     if probs:
         raise ValueError("not saved: " + "; ".join(probs))
     obj = mcq_ontology.clean_profile(obj)
-    if form.get("path"):
-        path = mcq_profile_path(form["path"])
-        if not path.exists():
-            raise ValueError("there is no %s to change - it may have been "
-                             "deleted" % form["path"])
-    else:
-        others = [x for x in mcq_ontology.list_profiles(personal)
-                  if x["name"].lower() == obj["name"].lower()]
-        if others:
-            raise ValueError("there is already a profile called %s"
-                             % obj["name"])
-        path = mcq_ontology.profile_path_for(obj["name"])
+    path = mcq_profile_path(form["path"]) if form.get("path") else None
+    if path and not path.exists():
+        raise ValueError("there is no %s to change - it may have been "
+                         "deleted" % form["path"])
+    # one person to a name, for a new profile and for a renamed one alike
+    others = [x for x in mcq_ontology.list_profiles(personal, broken=True)
+              if mcq_ontology._key(x["name"]) == mcq_ontology._key(obj["name"])
+              and (not path or x["path"] != "knowledge/profiles/" + path.name)]
+    if others:
+        raise ValueError("there is already a profile called %s" % obj["name"])
+    path = path or mcq_ontology.profile_path_for()
     mcq_ontology.PROFILES_DIR.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(obj, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8")
@@ -2962,20 +3025,10 @@ def mcq_profile_delete(form):
     return mcq_people()
 
 
-def mcq_country_path(rel):
-    """knowledge/countries/<name>.json from the page, checked - or a
-    ValueError."""
-    rel = str(rel or "").strip()
-    pre = "knowledge/countries/"
-    name = rel[len(pre):] if rel.startswith(pre) else rel
-    if not MCQ_FILE_RE.match(name):
-        raise ValueError("a country is a .json file in knowledge/countries/")
-    return mcq_ontology.COUNTRIES_DIR / name
-
-
 def mcq_ask(form):
-    """Walk one transcript through the ontology's tree of questions, and,
-    with a country picked, personalise the label for a person there."""
+    """Walk one transcript through the ontology's tree of questions and,
+    given a profile, personalise the label for that person: their country's
+    law and their facts."""
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
@@ -2986,14 +3039,16 @@ def mcq_ask(form):
     if not hints:
         onto = mcq_ontology.without_hints(onto)
     country = profile = personal = None
-    if form.get("country"):
-        country = mcq_ontology.load_country(mcq_country_path(form["country"]))
-    # the person it is for: their facts; the country picked on the page,
-    # which picking the profile sets to theirs, says where they live
+    # the person it is for: their facts, and where they live - always the
+    # profile's own country, the one the page shows; it is not a choice, so
+    # nothing the page could send takes its place
     if form.get("profile"):
         personal = mcq_ontology.load_personal()
         profile = mcq_ontology.load_profile(mcq_profile_path(form["profile"]),
                                             personal)
+        if profile.get("country"):
+            country = mcq_ontology.load_country(
+                mcq_ontology.named_country(profile["country"]))
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
@@ -3606,6 +3661,7 @@ PAGE = r"""<!doctype html>
   .pf-acts button { padding:3px 10px; font-size:12px; background:var(--panel);
                     color:var(--ink); border:1px solid var(--line); }
   .pf-acts .pf-del { color:var(--bad); }
+  .pf-bad { color:var(--bad); font-size:12px; flex-basis:100%; }
   .te-actions .te-cancel, .te-add, #mcqtreediscard, #mcqprofcancel { background:var(--panel);
     color:var(--ink); border:1px solid var(--line); }
   .te-add { margin-top:8px; padding:5px 12px; font-size:12.5px; }
@@ -3705,6 +3761,7 @@ PAGE = r"""<!doctype html>
   .askrow { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
   .askrow label.inline { font-weight:600; }
   .askrow select, .askrow input[type=text] { width:auto; padding:6px 9px; }
+  .askrow select { min-width:0; max-width:100%; }
   /* has to out-rank the "select, input[type=text]" width:100% above it */
   input[type=text].num { width:74px; }
 
@@ -3827,6 +3884,23 @@ PAGE = r"""<!doctype html>
           instructions first — and keeps only about half the window, so a call
           that does not fit comes back as a confident verdict on its last few
           minutes.</div>
+      </div>
+
+      <div id="mcqbox" hidden>
+        <label for="bmcqfile">MCQ ontology</label>
+        <select id="bmcqfile"></select>
+        <label class="inline" style="margin-top:6px">
+          <input type="checkbox" id="bmcqquotes" checked>
+          <span><span class="name">Require a quote for each answer</span></span>
+        </label>
+        <label class="inline" style="margin-top:6px">
+          <input type="checkbox" id="bmcqhints" checked>
+          <span><span class="name">Use the questions' hints</span></span>
+        </label>
+        <div class="hint">The tree of questions the MCQ ontology page draws,
+          edits and scores, set the way that page is until it is changed
+          here. No profile and no country: the benchmark scores the words
+          alone.</div>
       </div>
 
       <button class="go" id="go">Run</button>
@@ -4912,7 +4986,8 @@ per held-out call, so it takes minutes, not seconds.</pre>
         <div class="hint" id="mcqprofilefacts"></div>
         <div class="askrow" style="margin-top:6px">
           <label for="mcqcountry" style="margin:0">The person lives in</label>
-          <select id="mcqcountry" style="width:auto; flex:1"></select>
+          <select id="mcqcountry" style="width:auto; flex:1" disabled
+                  title="from the profile - change it on the Profiles tab"></select>
         </div>
         <div class="hint" id="mcqcountrylaw"></div>
       </div>
@@ -4993,8 +5068,8 @@ per held-out call, so it takes minutes, not seconds.</pre>
           <label for="mcqevprofile" style="margin:0">For</label>
           <select id="mcqevprofile" style="width:auto"></select>
           <span class="hint" style="margin:0">with a profile, every call is
-            labelled for that person: their facts, and their country unless
-            the call's row names its own. Unsure counts as scam.</span>
+            labelled for that person, as Classify labels one: their
+            country's rules and their facts. Unsure counts as scam.</span>
         </div>
         <button class="go" id="mcqevgo">Score every call</button>
         <div class="hint" id="mcqeverr" style="color:var(--bad)"></div>
@@ -5321,6 +5396,9 @@ async function boot() {
   // stays readable on hover
   $('ollama').title = $('ollama').textContent;
 
+  benchMcqFiles((CFG.mcq || {}).ontologies || [], (CFG.mcq || {}).default);
+  for (const id of ['bmcqfile', 'bmcqquotes', 'bmcqhints'])
+    $(id).addEventListener('change', () => { $(id).dataset.set = '1'; });
   for (const c of checks()) c.onchange = onBaselines;
   $('clearhist').onclick = clearFinished;
   $('pickall').onclick = () => setAll(true);
@@ -5407,9 +5485,39 @@ function onBaselines() {
   const sel = chosen();
   $('modelbox').hidden = !sel.some(k =>
     CFG.baselines.find(b => b.key === k).needs_model);
+  $('mcqbox').hidden = !sel.includes('mcq');
   $('go').disabled = sel.length === 0;
   $('go').textContent = sel.length > 1 ? `Run ${sel.length} baselines` : 'Run';
   if (!sel.length) $('formerr').textContent = '';
+}
+
+// The MCQ ontology box: the file and the two switches the MCQ ontology page
+// scores with, and nothing personal - a benchmark row is the words alone.
+// It follows what that page has picked until it is changed here.
+function benchMcqFiles(list, pick) {
+  const sel = $('bmcqfile'), was = sel.value;
+  sel.innerHTML = list.length ? list.map(ontoOption).join('')
+    : '<option value="">no ontology in knowledge/</option>';
+  const keep = [was, pick].find(p => p && list.some(o => o.path === p));
+  if (keep) sel.value = keep;
+}
+
+function benchMcqFollow() {
+  const sel = $('bmcqfile');
+  if (!sel.dataset.set && mcqFile && [...sel.options].some(o => o.value === mcqFile))
+    sel.value = mcqFile;
+  for (const [mine, page] of [['bmcqquotes', 'mcqquotes'], ['bmcqhints', 'mcqhints']])
+    if (!$(mine).dataset.set) $(mine).checked = $(page).checked;
+}
+
+// "MCQ my_tree.json (no hints)", for a run that had the MCQ ontology in it
+function mcqRunText(meta) {
+  const m = meta && meta.mcq;
+  if (!m) return '';
+  const off = [m.hints === false && 'no hints', m.quotes === false && 'no quotes']
+    .filter(Boolean);
+  return 'MCQ ' + String(m.ontology).replace(/^knowledge\//, '')
+    + (off.length ? ' (' + off.join(', ') + ')' : '');
 }
 
 // The three shapes run_all.sh --limit takes. Picking one here rather than
@@ -5482,6 +5590,8 @@ async function go() {
     limit: limit,
     num_ctx: $('numctx').value,
     stripped: $('stripped').checked,
+    mcq: {ontology: $('bmcqfile').value, hints: $('bmcqhints').checked,
+          quotes: $('bmcqquotes').checked},
   });
   onBaselines();
   if (res.error) { $('formerr').textContent = res.error; return; }
@@ -5877,6 +5987,7 @@ function paintHeader(meta, status) {
                      : limitText(meta.limit)];
   if (meta.skip) bits.push('after the first ' + meta.skip);
   if (meta.model) bits.push(meta.model);
+  if (meta.mcq) bits.push(mcqRunText(meta));
   bits.push(new Date(meta.started * 1000).toLocaleString());
   $('runsub').textContent = bits.join(' · ');
   const pill = $('runpill');
@@ -6411,7 +6522,8 @@ async function refreshHistory() {
       ${r.label || (r.baseline + ' · ' + r.dataset.replace('datasets/',''))}
       <span class="pill ${r.status}">${r.status}</span>
       <div class="meta">${r.kind ? '' : limitText(r.limit) + ' · '}${
-        r.model ? r.model + ' · ' : ''}${new Date(r.started * 1000).toLocaleString()}</div>
+        r.model ? r.model + ' · ' : ''}${r.mcq ? esc(mcqRunText(r)) + ' · ' : ''}${
+        new Date(r.started * 1000).toLocaleString()}</div>
     </a>`).join('');
   for (const a of $('hist').querySelectorAll('a')) a.onclick = () => select(a.dataset.id);
   // the button sits inside the row, so its click must not also select the run
@@ -7297,12 +7409,34 @@ function evalCard(d) {
   // The LLM was never fitted on anything, so none of the three applies to
   // it; what matters there is which prompt was used, which is below.
   if (d.kind === 'mcq') {
+    // scored for a profile: the label is the person's, not the score's sign
+    const pf = d.profile && typeof d.profile === 'object' ? d.profile : null;
     notes.push('Scored with <code>' + esc(d.ontology || '') + '</code>: '
       + (d.questions_asked ?? '?') + ' questions asked over ' + d.calls
       + ' calls, quotes ' + (d.quotes === false ? 'off' : 'required')
       + (d.unquoted ? ', ' + d.unquoted + ' answers without a quote counted as '
-         + 'Not stated' : '') + '. The verdict is the sign of the summed answer '
-      + 'values; a score of 0 is neutral and counted as not scam.');
+         + 'Not stated' : '') + '. ' + (pf
+        ? 'The verdict is the label for this profile: where a country\'s or the '
+          + 'person\'s rule applies, it decides, and unsure counts as scam; '
+          + 'elsewhere it is the sign of the summed answer values, with 0 '
+          + 'counted as not scam.'
+        : 'The verdict is the sign of the summed answer values; a score of 0 is '
+          + 'neutral and counted as not scam.'));
+    if (pf) {
+      const by = pf.decided_by || {};
+      notes.push('Labelled for the profile <code>' + esc(pf.file || '') + '</code>'
+        + (pf.country ? ', in ' + esc(pf.country) : '') + ': decided by the '
+        + 'country\'s rules ' + (by.country || 0) + ', by the person\'s facts '
+        + (by.profile || 0) + ', by the words alone ' + (by.words || 0) + '; '
+        + (pf.unsure || 0)
+        + ' unsure, counted as scam. Each call below shows p(scam) from the '
+        + 'words alone, and the rule that decided where one did.');
+      // the reasons keep {name} and the facts unfilled, to stay out of git
+      for (const k of ['false_scam', 'missed_scam', 'unreadable'])
+        for (const x of (d.misses && d.misses[k]) || [])
+          if (x.reason) x.reason = x.reason.replace(/\{name\}/g, 'the person')
+            .replace(/\{(\w+)\}/g, (m, f) => 'their ' + f.replace(/_/g, ' '));
+    }
     if ((d.trained_on || []).some(t => t && t.split('/').pop()
                                          === d.dataset.split('/').pop()))
       notes.push('<strong>This ontology was trained on this dataset.</strong> '
@@ -8021,6 +8155,9 @@ async function mcqBoot() {
   $('mcqbcalls').addEventListener('input', mcqBuildForm);
   $('mcqbname').addEventListener('input', () => { $('mcqbname').dataset.typed = '1'; });
 
+  // the Benchmark form's MCQ ontology box runs the way this page scores
+  for (const id of ['mcqquotes', 'mcqhints'])
+    $(id).addEventListener('change', benchMcqFollow);
   $('mcqfile').onchange = () => {
     // switching files reloads the editor: say so when that drops edits
     if (mcqDirty() && !confirm('Drop your unsaved edits to ' + mcqFile + '?')) {
@@ -8034,14 +8171,14 @@ async function mcqBoot() {
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
   $('mcqcountry').innerHTML = '<option value="">no country - the words alone</option>'
-    + (cfg.countries || []).map(c => `<option value="${esc(c.path)}">${esc(c.name)}</option>`).join('');
-  $('mcqcountry').onchange = mcqCountryLaw;
-  mcqCountryLaw();
+    + (cfg.countries || []).map(c => `<option value="${esc(c.path)}">${esc(c.name)}`
+      + '</option>').join('');
   $('mcqprofile').onchange = mcqProfilePick;
   $('mcqprofnew').onclick = () => mcqProfForm(null);
   $('mcqprofsave').onclick = mcqProfSave;
   $('mcqprofcancel').onclick = () => { $('mcqprofform').hidden = true; };
   mcqPeople(cfg);
+  mcqCountryLaw();
   $('mcqqgo').onclick = mcqQuestion;
   $('mcqquestion').addEventListener('input', mcqQuestionEdited);
   $('mcqqsaved').onchange = () => mcqSavedPick($('mcqqsaved').value);
@@ -8126,16 +8263,22 @@ async function mcqFiles(list, pick) {
   await mcqLoad($('mcqfile').value);
 }
 
-function mcqFileOptions(list) {
-  $('mcqfile').innerHTML = list.map(o => `<option value="${esc(o.path)}">`
+function ontoOption(o) {
+  return `<option value="${esc(o.path)}">`
     + `${esc(o.name)} — ${o.options} subjects, ${o.questions} questions`
-    + `${o.trained ? ', trained' : ''}</option>`).join('');
+    + `${o.trained ? ', trained' : ''}</option>`;
+}
+
+function mcqFileOptions(list) {
+  $('mcqfile').innerHTML = list.map(ontoOption).join('');
 }
 
 async function mcqRefreshFiles(pick) {
   const cfg = await api('/api/mcq/config');
   if (cfg.error) return;
   MCQ.ontologies = cfg.ontologies;
+  // a file just saved or built can be benchmarked too
+  benchMcqFiles(cfg.ontologies);
   await mcqFiles(cfg.ontologies, pick);
 }
 
@@ -8145,6 +8288,7 @@ async function mcqLoad(path) {
   mcqFile = r.path;
   mcqOnto = r.ontology;
   mcqLoadedText = r.text;
+  benchMcqFollow();
   $('mcqjson').value = r.text;
   $('mcqsavename').value = $('mcqtreesavename').value
     = r.path.replace(/^knowledge\//, '');
@@ -8208,22 +8352,31 @@ async function mcqLoadRow() {
   $('mcqinfo').innerHTML = `row ${r.idx} of ${r.total}`
     + (r.row_id ? ' · id ' + esc(r.row_id) : '')
     + (r.country ? ' · ' + esc(r.country) : '') + truthPill(r.label);
-  // a row that says where the person lives picks that country's law
-  const c = r.country && (MCQ.countries || []).find(x =>
-    x.name.toLowerCase() === r.country.trim().toLowerCase());
-  if (c) { $('mcqcountry').value = c.path; mcqCountryLaw(); }
   mcqSize();
 }
 
-// the law of the country picked, under the dropdown
+// Where the person lives is the profile's country, always: the dropdown shows
+// it and cannot be changed here. A profile carries its country, so the
+// Profiles tab is where it changes - and the server reads it from the
+// profile too, so nothing else can be sent in its place.
 function mcqCountryLaw() {
-  const c = (MCQ.countries || []).find(x => x.path === $('mcqcountry').value);
+  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
+  const c = p && p.country && (MCQ.countries || []).find(x =>
+    x.name.toLowerCase() === p.country.toLowerCase());
+  $('mcqcountry').value = c ? c.path : '';
   $('mcqcountrylaw').innerHTML = c
-    ? esc(`${c.name}: ${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules `
-      + 'decide the label where they apply. ') + `<a href="#files/${esc(c.path)}" `
+    ? esc(`${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules decide `
+      + 'the label where they apply. ') + `<a href="#files/${esc(c.path)}" `
       + `style="color:var(--accent)">${esc(c.path)}</a>`
-    : 'Pick where the person lives to personalise the label: the same call can '
-      + 'be normal in one country and a scam in another.';
+      + esc(` · from ${p.name}'s profile, changed on the Profiles tab`)
+    : p ? esc(p.country ? `${p.country} has no country file, so no country's `
+                          + 'rules apply.'
+                        : `${p.name}'s profile names no country, so no `
+                          + 'country\'s rules apply. Give them one on the '
+                          + 'Profiles tab.')
+    : 'Pick who it is for: their profile says where they live, and that '
+      + 'country\'s law and the facts about them personalise the label. Make '
+      + 'people on the Profiles tab.';
 }
 
 async function mcqAsk() {
@@ -8239,7 +8392,7 @@ async function mcqAsk() {
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
     quotes: $('mcqquotes').checked, hints: $('mcqhints').checked,
-    country: $('mcqcountry').value, profile: $('mcqprofile').value});
+    profile: $('mcqprofile').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -8313,43 +8466,41 @@ function mcqPeople(r) {
   MCQ.facts = r.facts || [];
   $('mcqproferr').textContent = r.facts_error ? 'knowledge/personal_facts.json '
     + 'does not load, so no profile can be used: ' + r.facts_error : '';
-  const opts = '<option value="">no profile</option>' + MCQ.profiles.map(p =>
+  // a profile that no longer loads is listed below to be mended, not offered
+  const usable = MCQ.profiles.filter(p => !p.problems);
+  const opts = '<option value="">no profile</option>' + usable.map(p =>
     `<option value="${esc(p.path)}">${esc(p.name)}${p.country ? ' — '
       + esc(p.country) : ''}</option>`).join('');
   for (const id of ['mcqprofile', 'mcqevprofile']) {
     const was = $(id).value;
     $(id).innerHTML = opts;
-    $(id).value = MCQ.profiles.some(p => p.path === was) ? was : '';
+    $(id).value = usable.some(p => p.path === was) ? was : '';
   }
+  MCQ.facts_error = r.facts_error || '';
   mcqProfileFacts();
+  mcqCountryLaw();
   mcqProfList();
 }
 
 // "Bank: ANZ · Expecting a parcel: No, nothing is on its way"
 function mcqFactText(p) {
-  return (MCQ.facts || []).filter(f => p.facts && p.facts[f.id]).map(f => {
+  return (MCQ.facts || []).filter(f => p.facts && typeof p.facts[f.id] === 'string'
+                                       && p.facts[f.id]).map(f => {
     const v = p.facts[f.id];
     const o = (f.options || []).find(x => x.id === v);
     return (f.label || f.id) + ': ' + (o ? o.text : v);
   }).join(' · ');
 }
 
-// picking a profile picks where they live; the country can still be changed
+// picking a profile picks where they live, with it
 function mcqProfilePick() {
-  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
-  if (p) {
-    const c = (MCQ.countries || []).find(x => p.country
-      && x.name.toLowerCase() === p.country.toLowerCase());
-    $('mcqcountry').value = c ? c.path : '';
-    mcqCountryLaw();
-  }
   mcqProfileFacts();
+  mcqCountryLaw();
 }
 
 function mcqProfileFacts() {
   const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
-  $('mcqprofilefacts').textContent = p ? (mcqFactText(p) || 'no facts given')
-    + (p.country ? '' : ' · no country') : '';
+  $('mcqprofilefacts').textContent = p ? (mcqFactText(p) || 'no facts given') : '';
 }
 
 function mcqProfList() {
@@ -8360,7 +8511,10 @@ function mcqProfList() {
       <span class="hint" style="margin:0">${esc(mcqFactText(p) || 'no facts')}</span>
       <span class="pf-acts"><button data-pf-edit="${i}" aria-label="Change ${esc(p.name)}">Change</button>
         <button class="pf-del" data-pf-del="${i}" aria-label="Delete ${esc(p.name)}">Delete</button></span>
-    </div>`).join('') : '<div class="hint">No profiles yet.</div>';
+      ${p.problems ? `<span class="pf-bad">Can't be used until it is changed: `
+        + `${esc(p.problems.join('; '))}</span>` : ''}
+    </div>`).join('') : `<div class="hint">${MCQ.facts_error ? 'Profiles cannot be '
+      + 'read until the facts file loads.' : 'No profiles yet.'}</div>`;
   for (const b of $('mcqproflist').querySelectorAll('[data-pf-edit]'))
     b.onclick = () => mcqProfForm(list[+b.dataset.pfEdit]);
   for (const b of $('mcqproflist').querySelectorAll('[data-pf-del]'))
@@ -8376,7 +8530,9 @@ function mcqProfForm(p) {
   $('mcqprofname').value = p ? p.name : '';
   $('mcqprofcountry').innerHTML = '<option value="">no country - their facts alone</option>'
     + (MCQ.countries || []).map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('');
-  $('mcqprofcountry').value = p && p.country ? p.country : '';
+  // a country with no file any more (a profile to mend) shows as none
+  $('mcqprofcountry').value = p && p.country && (MCQ.countries || []).some(c =>
+    c.name === p.country) ? p.country : '';
   $('mcqproffacts').innerHTML = (MCQ.facts || []).map((f, i) => {
     const v = (p && p.facts && p.facts[f.id]) || '';
     const id = 'mcqpf' + i;

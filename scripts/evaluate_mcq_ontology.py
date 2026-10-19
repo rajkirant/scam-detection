@@ -2,15 +2,18 @@
 """
 evaluate_mcq_ontology.py
 
-The benchmark's `mcq` baseline: the MCQ ontology LLM over a labelled
-transcript CSV. Each call is walked through the ontology's tree of questions
-(knowledge/mcq_ontology.json unless --ontology says otherwise) - about a
-dozen requests per call - and its score is the sum of the values of the
-answers chosen: scam above 0, legitimate below, neutral at 0 (counted as not
-scam). See mcq_ontology.py. The metric line matches combined_evaluate.py so
-the numbers drop straight into the benchmark table, and the per-call CSV
-carries <system>_pct (the score on 0-100, 50 at a score of 0) so the run's
-Scores tab plots it.
+The benchmark's `mcq` baseline: the MCQ ontology over a labelled transcript
+CSV, the same tree of questions the MCQ ontology page draws, edits and
+scores. Each call is walked through the ontology's tree
+(knowledge/mcq_ontology.json unless --ontology names another, such as one
+saved from the page's editor) - about a dozen requests per call - and its
+score is the sum of the values of the answers chosen: scam above 0,
+legitimate below, neutral at 0 (counted as not scam). See mcq_ontology.py.
+--no-hints and --no-quotes are the page's two switches. There is no profile
+here: the benchmark scores the words alone. The metric line matches
+combined_evaluate.py so the numbers drop straight into the benchmark table,
+and the per-call CSV carries <system>_pct (the score on 0-100, 50 at a score
+of 0) so the run's Scores tab plots it.
 
 Usage:
     python scripts/evaluate_mcq_ontology.py --csv datasets/zhi_english_646.csv --limit 20 --debug
@@ -114,7 +117,7 @@ def main():
     n_fraud = sum(1 for _, l in data if l == "Fraud")
 
     print("=" * 74)
-    print("MCQ ontology LLM - %d calls (%d scam, %d non-scam)"
+    print("MCQ ontology - %d calls (%d scam, %d non-scam)"
           % (len(data), n_fraud, len(data) - n_fraud))
     print("  dataset : %s" % args.csv)
     print("  ontology: %s" % args.ontology)
