@@ -1424,7 +1424,7 @@ def dataset_row(path, idx):
               "content", "body"])
     li = col(["label", "is_scam", "scam", "target", "class", "y", "ground_truth"])
     ii = col(["id", "call_id", "conv_id"])
-    ci = col(["country"])         # where the person lives, for personalising
+    ci = col(["country"])         # where the row's person lives, shown with it
     if ti < 0:
         raise ValueError("no transcript column in that dataset")
     if not rows:
@@ -1432,16 +1432,9 @@ def dataset_row(path, idx):
     idx = max(0, min(int(idx), len(rows) - 1))
     row = rows[idx]
     cell = lambda i: row[i] if 0 <= i < len(row) else ""
-    # the country file the row's country names, matched the way a scored
-    # dataset matches it, so a call gets the same country on both tabs
-    try:
-        cpath = (mcq_ontology.named_country(cell(ci)).relative_to(PROJECT_DIR)
-                 .as_posix() if cell(ci).strip() else "")
-    except ValueError:
-        cpath = ""
     return {"idx": idx, "total": len(rows), "text": cell(ti),
             "label": cell(li), "row_id": cell(ii), "country": cell(ci),
-            "country_path": cpath, "dataset": path}
+            "dataset": path}
 
 
 def bert_verdict(form):
@@ -3032,21 +3025,10 @@ def mcq_profile_delete(form):
     return mcq_people()
 
 
-def mcq_country_path(rel):
-    """knowledge/countries/<name>.json from the page, checked - or a
-    ValueError."""
-    rel = str(rel or "").strip()
-    pre = "knowledge/countries/"
-    name = rel[len(pre):] if rel.startswith(pre) else rel
-    if not MCQ_FILE_RE.match(name):
-        raise ValueError("a country is a .json file in knowledge/countries/")
-    return mcq_ontology.COUNTRIES_DIR / name
-
-
 def mcq_ask(form):
     """Walk one transcript through the ontology's tree of questions and,
-    given a country and/or a profile, personalise the label for that
-    person."""
+    given a profile, personalise the label for that person: their country's
+    law and their facts."""
     text = (form.get("transcript") or "").strip()
     if not text:
         raise ValueError("paste a transcript, or load one from a dataset")
@@ -3057,15 +3039,16 @@ def mcq_ask(form):
     if not hints:
         onto = mcq_ontology.without_hints(onto)
     country = profile = personal = None
-    if form.get("country"):
-        country = mcq_ontology.load_country(mcq_country_path(form["country"]))
-    # the person it is for: their facts. Where they live comes separately,
-    # as form["country"]: the page sends the loaded row's country, or else
-    # the profile's (mcqCountryNow), so the profile's own is not read here
+    # the person it is for: their facts, and where they live - always the
+    # profile's own country, the one the page shows; it is not a choice, so
+    # nothing the page could send takes its place
     if form.get("profile"):
         personal = mcq_ontology.load_personal()
         profile = mcq_ontology.load_profile(mcq_profile_path(form["profile"]),
                                             personal)
+        if profile.get("country"):
+            country = mcq_ontology.load_country(
+                mcq_ontology.named_country(profile["country"]))
     if not LLM_LOCK.acquire(blocking=False):
         raise ValueError("the model is already answering something - one call "
                          "at a time, or they fight for the VRAM")
@@ -5001,6 +4984,11 @@ per held-out call, so it takes minutes, not seconds.</pre>
           <select id="mcqprofile" style="width:auto; flex:1"></select>
         </div>
         <div class="hint" id="mcqprofilefacts"></div>
+        <div class="askrow" style="margin-top:6px">
+          <label for="mcqcountry" style="margin:0">The person lives in</label>
+          <select id="mcqcountry" style="width:auto; flex:1" disabled
+                  title="from the profile - change it on the Profiles tab"></select>
+        </div>
         <div class="hint" id="mcqcountrylaw"></div>
       </div>
       <button class="go" id="mcqgo">Classify this call</button>
@@ -8182,10 +8170,9 @@ async function mcqBoot() {
   forgetRowOnEdit('mcqtranscript', 'mcqinfo');
   $('mcqtranscript').addEventListener('input', mcqSize);
   $('mcqgo').onclick = mcqAsk;
-  // a typed or pasted transcript is not the loaded row: its country goes
-  $('mcqtranscript').addEventListener('input', () => {
-    if (mcqRowCountry) { mcqRowCountry = null; mcqCountryLaw(); }
-  });
+  $('mcqcountry').innerHTML = '<option value="">no country - the words alone</option>'
+    + (cfg.countries || []).map(c => `<option value="${esc(c.path)}">${esc(c.name)}`
+      + '</option>').join('');
   $('mcqprofile').onchange = mcqProfilePick;
   $('mcqprofnew').onclick = () => mcqProfForm(null);
   $('mcqprofsave').onclick = mcqProfSave;
@@ -8365,50 +8352,31 @@ async function mcqLoadRow() {
   $('mcqinfo').innerHTML = `row ${r.idx} of ${r.total}`
     + (r.row_id ? ' · id ' + esc(r.row_id) : '')
     + (r.country ? ' · ' + esc(r.country) : '') + truthPill(r.label);
-  // a row that says where its person lives brings its own country, matched
-  // on the server as a scored dataset matches it; one with no file, none
-  const name = (r.country || '').trim();
-  mcqRowCountry = name ? {name, path: r.country_path || ''} : null;
-  mcqCountryLaw();
   mcqSize();
 }
 
-// where the person lives: the loaded row's country when it names one, else
-// the profile's - there is no separate choice, a profile carries its country
-let mcqRowCountry = null;
-function mcqCountryNow() {
-  if (mcqRowCountry) return {path: mcqRowCountry.path, name: mcqRowCountry.name,
-                             from: 'the loaded row'};
+// Where the person lives is the profile's country, always: the dropdown shows
+// it and cannot be changed here. A profile carries its country, so the
+// Profiles tab is where it changes - and the server reads it from the
+// profile too, so nothing else can be sent in its place.
+function mcqCountryLaw() {
   const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
   const c = p && p.country && (MCQ.countries || []).find(x =>
     x.name.toLowerCase() === p.country.toLowerCase());
-  return c ? {path: c.path, name: c.name, from: 'the profile'}
-    : {path: '', name: '', from: p ? 'the profile' : ''};
-}
-
-// the law of the country in use, under the picker
-function mcqCountryLaw() {
-  const now = mcqCountryNow();
-  const c = (MCQ.countries || []).find(x => x.path === now.path);
-  // a loaded row's country is used over the profile's: say so, and offer
-  // the profile's back
-  const p = (MCQ.profiles || []).find(x => x.path === $('mcqprofile').value);
-  const theirs = now.from === 'the loaded row' && p && (p.country || '') !== (c ? c.name : '')
-    ? ` — not ${esc(p.name)}'s ${p.country ? esc(p.country) : 'no country'}. `
-      + `<button class="link" id="mcquseprof">use ${esc(p.name)}'s instead</button>`
-    : '';
-  $('mcqcountrylaw').innerHTML = (c
-    ? esc(`Lives in ${c.name}, from ${now.from}. ${c.law}${c.source ? ' ('
-      + c.source + ')' : ''} Its rules decide the label where they apply. `)
-      + `<a href="#files/${esc(c.path)}" style="color:var(--accent)">${esc(c.path)}</a>`
-    : now.from === 'the loaded row'
-      ? esc(`The loaded row's person lives in ${now.name}, which has no country `
-        + 'file, so no country\'s rules apply.')
-      : now.from ? 'This profile has no country, so no country\'s rules apply.'
-      : 'Pick who it is for to personalise the label: their country\'s law and '
-        + 'the facts about them. Make people on the Profiles tab.') + theirs;
-  const b = $('mcquseprof');
-  if (b) b.onclick = () => { mcqRowCountry = null; mcqCountryLaw(); };
+  $('mcqcountry').value = c ? c.path : '';
+  $('mcqcountrylaw').innerHTML = c
+    ? esc(`${c.law}${c.source ? ' (' + c.source + ')' : ''} Its rules decide `
+      + 'the label where they apply. ') + `<a href="#files/${esc(c.path)}" `
+      + `style="color:var(--accent)">${esc(c.path)}</a>`
+      + esc(` · from ${p.name}'s profile, changed on the Profiles tab`)
+    : p ? esc(p.country ? `${p.country} has no country file, so no country's `
+                          + 'rules apply.'
+                        : `${p.name}'s profile names no country, so no `
+                          + 'country\'s rules apply. Give them one on the '
+                          + 'Profiles tab.')
+    : 'Pick who it is for: their profile says where they live, and that '
+      + 'country\'s law and the facts about them personalise the label. Make '
+      + 'people on the Profiles tab.';
 }
 
 async function mcqAsk() {
@@ -8424,7 +8392,7 @@ async function mcqAsk() {
     + ' is answering the questions, one request each…</div>';
   const res = await api('/api/mcq/ask', {transcript: text, ontology: mcqFile,
     quotes: $('mcqquotes').checked, hints: $('mcqhints').checked,
-    country: mcqCountryNow().path, profile: $('mcqprofile').value});
+    profile: $('mcqprofile').value});
   $('mcqgo').disabled = false;
   $('mcqgo').textContent = 'Classify this call';
   if (res.error) {
@@ -8524,10 +8492,8 @@ function mcqFactText(p) {
   }).join(' · ');
 }
 
-// picking a profile picks where they live, with it - over a loaded row's
-// country too, since picking the person came last
+// picking a profile picks where they live, with it
 function mcqProfilePick() {
-  mcqRowCountry = null;
   mcqProfileFacts();
   mcqCountryLaw();
 }

@@ -770,14 +770,12 @@ call is a usual red flag, and where the person lives is not in the
 transcript.
 
 The *Personalisation* box above *Classify this call* has one choice, **Who it
-is for**: a profile (see *Profiles* below), which says where the person
-lives. The country's law and its source show under it. Loading a dataset row
-that has a `country` column uses that row's country instead, matched as
-scoring a dataset matches it (`New Zealand`, `new_zealand` and `new-zealand`
-alike); a row naming a country with no file uses none. The line under the
-picker then says so, with a button to use the profile's country instead.
-Picking a profile, or typing in the transcript box, goes back to the
-profile's country.
+is for**: a profile (see *Profiles* below). **The person lives in** under it
+shows that profile's country, greyed out: it comes from the profile, and
+changes only when the profile is changed on the Profiles tab. With no
+profile it reads *no country* and the words alone decide. The country's law
+and its source show under it. A loaded dataset row's `country` is shown
+beside the row, but does not change it.
 
 With a country in use, the call is classified as usual. Then the country's
 own questions are put to it, one request each: whether a tax, duty or customs
@@ -818,8 +816,7 @@ A country file is short:
 
 Add a country by saving another file in `knowledge/countries/`. On the next
 page load it is in the *Lives in* list of the Profiles form: to use it on the
-Classify tab, make or change a profile that lives there, or load a dataset
-row whose `country` column names it. On the command line:
+Classify tab, make or change a profile that lives there. On the command line:
 `python scripts/mcq_ontology.py ask --text "…" --country "New Zealand"`.
 
 The same call, labelled for each country, is in
@@ -829,10 +826,8 @@ The same call, labelled for each country, is in
 live, and facts about them that can change a verdict. Make one on the
 **Profiles** tab: give a name, pick a country (or none), and answer the
 facts. Then pick it under **Who it is for** on the Classify tab: its country
-is the one used (a loaded dataset row that names its own country uses that
-one instead, see above), and there is no separate country to pick. The call
-is then
-labelled for that person by their country's rules and by the
+is the one used, shown under *The person lives in* and not chosen there. The
+call is then labelled for that person by their country's rules and by the
 rules their facts make apply. Two facts ship:
 
 | Fact | When it decides |

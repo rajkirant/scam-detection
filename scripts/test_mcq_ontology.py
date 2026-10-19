@@ -1218,12 +1218,22 @@ check("a profile file named by hand, with a space or a dot, can be used and "
            {"path": "knowledge/profiles/mum v2.json"})["profiles"]],
        odd.exists()),
       (True, ["Raj K", "Nopar"], False))
-check("a dataset row gives the country file its country names, as scoring "
-      "matches it",
-      [web_ui.dataset_row("datasets/personalisation_2.csv", i)["country_path"]
-       for i in (0, 1)],
-      ["knowledge/countries/%s.json" % r["country"].lower().replace(" ", "_")
-       for r in PERSONAL_ROWS])
+# Classify on the page: where the person lives is the profile's country,
+# whatever else is sent, and with no profile there is none
+saved_knowledge = M.KNOWLEDGE_DIR
+M.KNOWLEDGE_DIR = Path(tmp)
+try:
+    asked = [web_ui.mcq_ask(dict({"transcript": SHOE,
+                                  "ontology": "knowledge/tree.json",
+                                  "country": "knowledge/countries/ireland.json"},
+                                 **who))
+             for who in ({"profile": "knowledge/profiles/profile_2.json"}, {})]
+finally:
+    M.KNOWLEDGE_DIR = saved_knowledge
+check("Classify labels the call for the profile's own country, never one "
+      "sent beside it; no profile, no country",
+      (asked[0]["personal"]["country"], asked[0]["personal"]["final"],
+       "personal" in asked[1]), ("New Zealand", "scam", False))
 out_d = web_ui.mcq_profile_delete({"path": "knowledge/profiles/profile_1.json"})
 check("a profile is deleted from the page",
       [p["name"] for p in out_d["profiles"]], ["Nopar"])
