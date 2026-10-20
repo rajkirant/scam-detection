@@ -1002,13 +1002,13 @@ check("a broken facts file names each problem",
 
 check("a profile is checked against the facts and the countries",
       [M.check_profile(x, personal) for x in (
-          {"name": "Raj", "country": "new_zealand",
+          {"name": "Alex", "country": "new_zealand",
            "facts": {"bank": "ANZ", "expecting_parcel": "no"}},
           {"name": " ", "facts": {}},
-          {"name": "Raj", "country": "Atlantis"},
-          {"name": "Raj", "facts": {"pets": "dog"}},
-          {"name": "Raj", "facts": {"expecting_parcel": "maybe"}},
-          {"name": "Raj", "facts": {"bank": "x" * 200}})],
+          {"name": "Alex", "country": "Atlantis"},
+          {"name": "Alex", "facts": {"pets": "dog"}},
+          {"name": "Alex", "facts": {"expecting_parcel": "maybe"}},
+          {"name": "Alex", "facts": {"bank": "x" * 200}})],
       [[], ["a profile needs a name"],
        ["no country called 'Atlantis' - the ones there are: Ireland, "
         "New Zealand"],
@@ -1016,27 +1016,27 @@ check("a profile is checked against the facts and the countries",
        ['the fact "expecting_parcel" can be no, yes, not \'maybe\''],
        ['the fact "bank" is longer than 120 characters']])
 
-out_p = web_ui.mcq_profile_save({"name": " Raj ", "country": "new_zealand",
+out_p = web_ui.mcq_profile_save({"name": " Alex ", "country": "new_zealand",
                                  "facts": {"bank": "  ANZ ",
                                            "expecting_parcel": ""}})
-raj = M.load_profile(M.find_profile("raj"), personal)
+alex = M.load_profile(M.find_profile("alex"), personal)
 check("saved from the page: one file, with a neutral name, the country by "
       "its name, only the facts with a value",
-      (out_p["saved"], [p["name"] for p in out_p["profiles"]], raj),
-      ("knowledge/profiles/profile_1.json", ["Raj"],
-       {"name": "Raj", "country": "New Zealand", "facts": {"bank": "ANZ"}}))
+      (out_p["saved"], [p["name"] for p in out_p["profiles"]], alex),
+      ("knowledge/profiles/profile_1.json", ["Alex"],
+       {"name": "Alex", "country": "New Zealand", "facts": {"bank": "ANZ"}}))
 try:
-    web_ui.mcq_profile_save({"name": "raj", "facts": {}})
+    web_ui.mcq_profile_save({"name": "alex", "facts": {}})
     check("a second profile of the same name is refused", False)
 except ValueError as e:
     check("a second profile of the same name is refused",
-          "already a profile called raj" in str(e))
+          "already a profile called alex" in str(e))
 web_ui.mcq_profile_save({"path": "knowledge/profiles/profile_1.json",
-                         "name": "Raj K", "country": "new_zealand",
+                         "name": "Alex K", "country": "new_zealand",
                          "facts": {"bank": "ANZ"}})
 check("changing a profile keeps its file, and finds it by its new name",
       (sorted(p.name for p in M.PROFILES_DIR.glob("*.json")),
-       M.find_profile("Raj K").name), (["profile_1.json"], "profile_1.json"))
+       M.find_profile("Alex K").name), (["profile_1.json"], "profile_1.json"))
 for bad in ("../knowledge/mcq_ontology.json", "knowledge/profiles/../x.json",
             "/etc/passwd"):
     try:
@@ -1045,50 +1045,50 @@ for bad in ("../knowledge/mcq_ontology.json", "knowledge/profiles/../x.json",
     except ValueError:
         check("a path outside knowledge/profiles/ is refused: " + bad, True)
 
-raj = {"name": "Raj", "country": None, "facts": {"bank": "ANZ"}}
+alex = {"name": "Alex", "country": None, "facts": {"bank": "ANZ"}}
 r = M.classify(GIFT, tree)
 STATE["payloads"].clear()
-p = M.personalise(GIFT, r, None, profile=raj, personal=personal)
+p = M.personalise(GIFT, r, None, profile=alex, personal=personal)
 asked_prompt = STATE["payloads"][-1]["prompt"]
 check("a caller from another bank, for someone who banks with ANZ: scam, "
       "said with their name and their bank",
       (p["final"], p["from"], p["why"], p["advice"], p["country"],
        [a["path"] for a in p["personal"]["answers"]]),
-      ("scam", "profile", "Raj banks with ANZ.", "Call ANZ.", None,
+      ("scam", "profile", "Alex banks with ANZ.", "Call ANZ.", None,
        ["profile/caller_bank"]))
 check("the question names their bank, and so does its first option",
       ("The person banks with ANZ." in asked_prompt, "A - ANZ\n" in asked_prompt),
       (True, True))
 n0 = STATE["calls"]
 p = M.personalise(CALM, M.classify(CALM, tree), None,
-                  profile={"name": "Raj", "facts": {"bank": "ANZ"}},
+                  profile={"name": "Alex", "facts": {"bank": "ANZ"}},
                   personal=personal)
 check("a rule for bank calls is not tried on another subject: nothing asked, "
       "the words decide",
       (STATE["calls"] - n0 - 3, p["final"], p["from"], p["personal"]["applies"]),
       (0, "legit", "words", False))
 ie, nz = countries["Ireland"], countries["New Zealand"]
-nopar = {"name": "Raj", "facts": {"expecting_parcel": "no"}}
+nopar = {"name": "Alex", "facts": {"expecting_parcel": "no"}}
 r = M.classify(SHOE, tree)
 p = M.personalise(SHOE, r, ie, profile=nopar, personal=personal)
-check("Ireland says legitimate, but Raj expects no parcel: the more careful "
+check("Ireland says legitimate, but Alex expects no parcel: the more careful "
       "label wins",
       (p["final"], p["from"], p["country_label"], p["country"]),
       ("scam", "profile", "legit", "Ireland"))
-p = M.personalise(SHOE, r, nz, profile={"name": "Raj", "facts": {
+p = M.personalise(SHOE, r, nz, profile={"name": "Alex", "facts": {
     "expecting_parcel": "yes"}}, personal=personal)
 check("expecting a parcel in New Zealand: the country's rule decides",
       (p["final"], p["from"], p["personal"]["label"]), ("scam", "country", None))
-p = M.personalise(SHOE, r, ie, profile={"name": "Raj", "facts": {}},
+p = M.personalise(SHOE, r, ie, profile={"name": "Alex", "facts": {}},
                   personal=personal)
 check("a profile with no facts is the country alone",
       (p["final"], p["from"], p["personal"], p["profile"]),
-      ("legit", "country", None, "Raj"))
+      ("legit", "country", None, "Alex"))
 p = M.personalise(CALM, M.classify(CALM, tree), None, profile=nopar,
                   personal=personal)
 check("no rule fits and no country: the words decide, and say so by name",
       (p["final"], p["from"], p["why"]),
-      ("legit", "words", "Nothing known about Raj changes the verdict from "
+      ("legit", "words", "Nothing known about Alex changes the verdict from "
                          "the words."))
 
 web_ui.mcq_profile_save({"name": "Nopar", "country": "New Zealand",
@@ -1142,17 +1142,17 @@ check("the per-call CSV, which may be committed, gives the rule's own words "
        "the profile's rule 2: {name} is not expecting a parcel.", ""))
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    M.main(["ask", "--text", GIFT, "--ontology", path, "--profile", "Raj K"])
+    M.main(["ask", "--text", GIFT, "--ontology", path, "--profile", "Alex K"])
 check("ask --profile: the profile's country, and its facts' rules",
       ("personalised for a person in New Zealand" in buf.getvalue(),
-       "-> scam  (Raj K banks with ANZ.)" in buf.getvalue()), (True, True))
+       "-> scam  (Alex K banks with ANZ.)" in buf.getvalue()), (True, True))
 try:
     web_ui.mcq_profile_save({"path": "knowledge/profiles/profile_2.json",
-                             "name": "raj k", "facts": {}})
+                             "name": "alex k", "facts": {}})
     check("renaming onto another profile's name is refused", False)
 except ValueError as e:
     check("renaming onto another profile's name is refused",
-          "already a profile called raj k" in str(e))
+          "already a profile called alex k" in str(e))
 check("a country from the page is a name, never a path",
       [M.check_profile({"name": "x", "country": c}, personal) != []
        for c in ("/etc/passwd", "../knowledge/countries/ireland.json",
@@ -1161,21 +1161,24 @@ check("a country from the page is a name, never a path",
          for c in ("Ireland", "new_zealand", "knowledge/countries/ireland.json")],
       [True] * 6)
 (M.PROFILES_DIR / "sam.json").write_text(json.dumps(
-    {"name": "Raj K", "facts": {}}))
+    {"name": "Alex K", "facts": {}}))
 try:
-    M.find_profile("Raj K")
+    M.find_profile("Alex K")
     check("two profiles of one name: an error, not a guess", False)
 except ValueError as e:
     check("two profiles of one name: an error, not a guess",
-          "more than one profile is called 'Raj K'" in str(e))
+          "more than one profile is called 'Alex K'" in str(e))
 (M.PROFILES_DIR / "sam.json").write_text(json.dumps(
     {"name": "Sam", "facts": {}}))
-(M.PROFILES_DIR / "raj_2.json").write_text(json.dumps(
-    {"name": "Raj", "facts": {}}))
-check("a name before a file name: 'Raj' is Raj, not profile_1.json renamed Raj K",
-      [M.find_profile(x).name for x in ("Raj", "raj", "Raj K", "raj_2.json",
+(M.PROFILES_DIR / "alex_2.json").write_text(json.dumps(
+    {"name": "Alex", "facts": {}}))
+check("a name before a file name: 'Alex' is Alex, not profile_1.json "
+      "renamed Alex K",
+      [M.find_profile(x).name for x in ("Alex", "alex", "Alex K",
+                                         "alex_2.json",
                                          "knowledge/profiles/sam.json")],
-      ["raj_2.json", "raj_2.json", "profile_1.json", "raj_2.json", "sam.json"])
+      ["alex_2.json", "alex_2.json", "profile_1.json", "alex_2.json",
+       "sam.json"])
 (M.PROFILES_DIR / "lost.json").write_text(json.dumps(
     {"name": "Lost", "country": "Atlantis", "facts": {"bank": "X"}}))
 (M.PROFILES_DIR / "torn.json").write_text("{not json")
@@ -1187,7 +1190,7 @@ check("a profile that no longer loads is listed with why, to be mended - "
        [p["name"] for p in M.list_profiles(personal)
         if p["name"] in ("Lost", "torn")]),
       (True, True, []))
-for f in ("lost.json", "torn.json", "sam.json", "raj_2.json"):
+for f in ("lost.json", "torn.json", "sam.json", "alex_2.json"):
     (M.PROFILES_DIR / f).unlink()
 
 import types                                                    # noqa: E402
@@ -1229,7 +1232,7 @@ check("a profile file named by hand, with a space or a dot, can be used and "
        [p["name"] for p in web_ui.mcq_profile_delete(
            {"path": "knowledge/profiles/mum v2.json"})["profiles"]],
        odd.exists()),
-      (True, ["Raj K", "Nopar"], False))
+      (True, ["Alex K", "Nopar"], False))
 # Classify on the page: where the person lives is the profile's country,
 # whatever else is sent, and with no profile there is none
 saved_knowledge = M.KNOWLEDGE_DIR

@@ -2661,7 +2661,7 @@ def start_eval_run(page, form):
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     # the name as shown can hold spaces and "·" ("... (no hints)", "...
-    # · profile raj"); the id is kept to what RUN_ID_RE lets back in
+    # · profile_1"); the id is kept to what RUN_ID_RE lets back in
     run_id = (time.strftime("%Y%m%d_%H%M%S") + "_eval_" + page + "_"
               + (re.sub(r"[^A-Za-z0-9_+.-]+", "_", name or "bare")
                  .strip("_")[:80] or "bare"))

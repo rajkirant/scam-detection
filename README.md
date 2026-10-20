@@ -859,8 +859,8 @@ the CSVs and the results ledger may be committed, so the person's name and
 bank are kept out of them. The score card says which profile a run was for,
 and how many calls the country's rules, the person's facts and the words
 alone decided. On the command line, `--profile` takes a profile's name, file name or
-path: `python scripts/mcq_ontology.py ask --text "…" --profile Raj`, or
-`evaluate --csv … --profile Raj`.
+path: `python scripts/mcq_ontology.py ask --text "…" --profile Alex`, or
+`evaluate --csv … --profile Alex`.
 
 Profiles are saved in `knowledge/profiles/profile_<n>.json`, which git
 leaves alone: they are about real people, and an Update never touches them.
@@ -1602,7 +1602,7 @@ numbers out:
 
 ```bash
 python scripts/bow_classify.py    evaluate --name bank-bow    --csv datasets/zhi_english_646.csv
-python scripts/length_classify.py evaluate --name bank-length --csv datasets/everything_7013.csv
+python scripts/length_classify.py evaluate --name bank-length --csv datasets/scamai_full_1000.csv
 python scripts/bert_classify.py   evaluate --name bank-bert   --csv datasets/zhi_english_646.csv --gpu
 python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40
 python scripts/llm_fit.py         evaluate --csv datasets/zhi_english_646.csv --limit 40 \
@@ -1878,12 +1878,17 @@ Names in brackets are the ones used in the paper.
 | `scambait_synthetic_196.csv` (Paired-196) | 196 | 98 / 98 | Topic-matched pairs (`pair_id`, `topic`): 97 complete pairs plus 2 unpaired rows, across 99 pair ids. Scam side (`source` = `youtube_asr`): real YouTube scam-baiting transcripts. Legitimate side (`source` = `authored_counterpart`): calls written to match the topic of each scam call. |
 | `scambait_bank_422.csv` | 422 | 211 / 211 | Real calls: scam transcripts from YouTube scam-baiting videos paired with legitimate calls from the HarperValleyBank corpus. Both sides are real recorded speech, but from different recording set-ups, so the two sides can be told apart by transcription style alone. |
 | `scamai_full_1000.csv` | 1000 | 500 / 500 | Honeypot-captured calls with rich metadata (`opening_type`, `ending_type`, `asks`, `signals`, `n_turns`, `duration_s`). |
-| `everything_7013.csv` | 7013 | 2756 / 4257 | Everything pooled, multilingual and **not balanced**, with `language`, `script`, `country`, `call_type` and `scam_type` columns for slicing. Sources: KorCCViD (2,882 rows), HarperValleyBank (1,446), scamai_honeypot (1,000), NCSU_Robocall (834), International_Robocall (334), YouTube_ScamBaiting (243), BeatScams_UCI (184), CallHome_Spanish (89), CABNC_British (1). |
+| `everything_7013.csv` (not included) | 7013 | 2756 / 4257 | **Not in the repository.** 2,882 of its rows come from KorCCViD, whose licence says not to redistribute it, in original or derived form. It pooled every source, multilingual and **not balanced**, with `language`, `script`, `country`, `call_type` and `scam_type` columns for slicing. Sources: KorCCViD (2,882 rows), HarperValleyBank (1,446), scamai_honeypot (1,000), NCSU_Robocall (834), International_Robocall (334), YouTube_ScamBaiting (243), BeatScams_UCI (184), CallHome_Spanish (89), CABNC_British (1). Numbers quoted for it in this README were measured on a local copy. |
 | `personalisation_2.csv` | 2 | 1 / 1 | The same words, a different label: one call, labelled once for a person in Ireland (`nonscam`) and once for a person in New Zealand (`scam`), with `pair_id`, `country` (where the person lives) and `why` (the law that decides it). A courier asks for import tax on shoes worth 80 before delivery, which is due in Ireland and does not exist in New Zealand. Written from the two countries' customs rules. Used by the MCQ ontology page's personalisation. |
 
 Every real scam call in the YouTube-based sets (`scambait_*`) comes from the
-same 243 YouTube scam-baiting transcripts, the `YouTube_ScamBaiting` rows of
-`everything_7013.csv`.
+same 243 YouTube scam-baiting transcripts.
+
+Two datasets used during development are not redistributed here, and
+`.gitignore` keeps a local copy of either, and the per-call results of a run
+on it, out of git: `everything_7013.csv` (KorCCViD, above), and
+`call_center_transcripts.csv`, from AIxBlock's 92k real-world call-centre
+scripts (CallCenterEN), whose licence prohibits redistribution.
 
 Some transcript fields contain embedded newlines, so `wc -l` will not give you
 the row count — the launcher parses them as CSV instead.

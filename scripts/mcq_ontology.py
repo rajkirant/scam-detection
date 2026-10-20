@@ -941,7 +941,7 @@ def find_country(name):
 # them and the rules that turn the answers into a label, written like a
 # country's. Each profile is knowledge/profiles/<id>.json:
 #
-#   {"name": "Raj", "country": "New Zealand",
+#   {"name": "Alex", "country": "New Zealand",
 #    "facts": {"bank": "ANZ", "expecting_parcel": "no"}}
 #
 # A rule, in a country file or in the facts file, may hold "facts": {fact id:
@@ -1144,10 +1144,10 @@ def _key(text):
 
 
 def find_profile(name):
-    """A profile by its path, its name ("Raj") or its file name ("raj",
-    "raj.json") - the name first, so a profile renamed on the page is not
-    found by the file name it was made with. Two profiles of one name is
-    an error, not a guess."""
+    """A profile by its path, its name ("Alex") or its file name
+    ("profile_1", "profile_1.json") - the name first, so a profile renamed on
+    the page is not found by the file name it was made with. Two profiles of
+    one name is an error, not a guess."""
     name = str(name)
     shown = "knowledge/profiles/"
     if name.endswith(".json"):

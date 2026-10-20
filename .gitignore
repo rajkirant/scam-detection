@@ -57,5 +57,15 @@ Thumbs.db
 # If a dataset turns out to be redistribution-restricted, add it here and
 # note its provenance in the README instead.
 
+# redistribution-restricted: a local copy works, but never commit it, nor the
+# per-call results of a run on it, which carry its transcripts
+#   CallCenterEN (AIxBlock's 92k call-centre scripts): no redistribution
+#   KorCCViD (2,882 rows of everything_7013): not in original or derived form
+call_center_transcripts.csv
+datasets/everything_7013.csv
+results/*everything_7013*.csv
+results/*_7013.csv
+results/qwen_training_patterns_7013.json
+
 # profiles from the MCQ page are about real people: they stay on this machine
 knowledge/profiles/
