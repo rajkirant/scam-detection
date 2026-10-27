@@ -71,8 +71,8 @@ def _env(name, default):
 PER_CLIENT = _env("DEMO_PER_CLIENT", 100)          # checks per visitor ...
 WINDOW = _env("DEMO_WINDOW", 600)                  # ... per 10 minutes
 PER_HOUR = _env("DEMO_PER_HOUR", 1000)             # checks for everyone, per hour
-TESTS_PER_CLIENT = _env("DEMO_TESTS_PER_CLIENT", 10)   # test runs per visitor per window
-TEST_QUEUE = _env("DEMO_TEST_QUEUE", 5)            # test runs that may wait
+TESTS_PER_CLIENT = _env("DEMO_TESTS_PER_CLIENT", 100)   # test runs per visitor per window
+TEST_QUEUE = _env("DEMO_TEST_QUEUE", 20)            # test runs that may wait
 MAX_SAMPLE = _env("DEMO_MAX_SAMPLE", 40)           # calls in one test run
 QUEUE_WAIT = _env("DEMO_QUEUE_WAIT", 90)           # seconds a check waits for the GPU
 MAX_CHARS = _env("DEMO_MAX_CHARS", 6000)

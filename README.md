@@ -1192,8 +1192,8 @@ reader may browse (only files named there can be read).
 Limits, all set by environment variable (defaults in brackets):
 `DEMO_PER_CLIENT` checks per visitor (100) per `DEMO_WINDOW` seconds (600),
 `DEMO_PER_HOUR` checks in total (1000), `DEMO_TESTS_PER_CLIENT` test runs per
-visitor per window (10), `DEMO_MAX_SAMPLE` calls per test run (40),
-`DEMO_TEST_QUEUE` test runs waiting (5), `DEMO_MAX_CHARS` per transcript
+visitor per window (100), `DEMO_MAX_SAMPLE` calls per test run (40),
+`DEMO_TEST_QUEUE` test runs waiting (20), `DEMO_MAX_CHARS` per transcript
 (6000), and one request on the GPU at a time, with a "busy" reply after
 `DEMO_QUEUE_WAIT` seconds (90). Nothing a visitor submits is stored. Behind a
 tunnel every request comes from 127.0.0.1, so the visitor is taken from the

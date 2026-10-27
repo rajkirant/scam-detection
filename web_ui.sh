@@ -90,7 +90,13 @@ if [[ "$DETACH" -eq 1 ]]; then
   UILOG="$PROJECT_DIR/results/logs/$(basename "$SERVER" .py).log"
   # re-run this same script inside tmux, without --tmux, so the detached copy
   # starts the server exactly the way the foreground one does
-  CMD="cd $(printf %q "$PROJECT_DIR") && exec bash web_ui.sh --port $PORT --host $HOST$DEMO_FLAG"
+  # tmux starts the session with the tmux server's environment, not this
+  # shell's, so DEMO_* settings given on the command line are passed on here
+  ENVS=""
+  while IFS='=' read -r k v; do
+    ENVS+="$k=$(printf %q "$v") "
+  done < <(env | grep -E '^DEMO_[A-Z_]+=')
+  CMD="cd $(printf %q "$PROJECT_DIR") && ${ENVS}exec bash web_ui.sh --port $PORT --host $HOST$DEMO_FLAG"
   say "Starting the UI detached"
   if command -v tmux >/dev/null; then
     tmux has-session -t "$SESSION" 2>/dev/null \
