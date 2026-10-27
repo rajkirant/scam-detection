@@ -1156,6 +1156,34 @@ now and then.
 
 ---
 
+### Public demo for readers of the paper
+
+`./web_ui.sh --demo` starts a second, read-only server (`scripts/demo_ui.py`)
+with three pages: **Try it yourself** (paste a call, get the verdict and the
+reason), **Results in the paper** (the paper's tables, and per-call answers
+from any result files you list) and **Reproduce**. It cannot start runs, train,
+edit the MCQ tree or browse files, so it is safe to put behind a public link
+while the full UI stays private.
+
+```bash
+./web_ui.sh --demo            # http://127.0.0.1:8081, this machine only
+./web_ui.sh --demo --tmux     # detached, next to the full UI on 8000
+```
+
+What it shows comes from `demo/demo_config.json`: the title, the example
+calls, the tables, the reproduction steps, the code link and, under
+`percall`, the result CSVs a reader may browse (only those files can be read).
+ScamRAG is offered when its pattern store loads on this machine; otherwise the
+demo runs LLM-only alone.
+
+Limits, all set by environment variable: `DEMO_PER_CLIENT` checks per visitor
+(5) per `DEMO_WINDOW` seconds (600), `DEMO_PER_HOUR` checks in total (60),
+`DEMO_MAX_CHARS` per transcript (6000), and one check on the GPU at a time,
+with a "busy" reply after `DEMO_QUEUE_WAIT` seconds (90). Nothing a visitor
+submits is stored. Behind a tunnel every request comes from 127.0.0.1, so the
+visitor is taken from the `X-Demo-Client` header (set it in the proxy in front,
+for example a Cloudflare Worker) or from `CF-Connecting-IP`.
+
 ## B. The same thing in the terminal
 
 ```bash
