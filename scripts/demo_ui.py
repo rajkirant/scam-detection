@@ -4,36 +4,51 @@ demo_ui.py - a small, read-only demo of the detectors for readers of the paper.
 
 It is a separate server from web_ui.py, so the full UI (runs, training, the
 file browser, the MCQ editor) stays private while this one is public. It has
-three pages and nothing else:
+four pages and nothing else:
 
   Try it yourself   paste a call transcript, or pick an example, and get the
                     verdict and the reason from LLM-only (and from ScamRAG,
                     when its pattern store is available on this machine)
+  Run the tests     run the content-deletion test and the held-out test on a
+                    small random sample, with one detector, and see every
+                    call it got wrong: false alarms and missed scams
   Results           the tables of the paper, and per-call answers from the
                     result files listed in demo/demo_config.json
   Reproduce         the steps to reproduce the results, and the code link
 
 Protection for a public link:
-  - no endpoint writes anything, starts a run or reads a file that is not
-    listed in demo/demo_config.json
+  - no endpoint writes to disk, starts a benchmark run, trains a saved model
+    or reads a file that is not named in demo/demo_config.json
   - each visitor may submit DEMO_PER_CLIENT checks per DEMO_WINDOW seconds,
     and the whole demo DEMO_PER_HOUR checks per hour
-  - one check runs at a time; a check that cannot start within
+  - each visitor may start DEMO_TESTS_PER_CLIENT test runs per DEMO_WINDOW
+    seconds, of at most DEMO_MAX_SAMPLE calls; one test runs at a time and at
+    most DEMO_TEST_QUEUE wait behind it
+  - one request uses the GPU at a time; a check that cannot start within
     DEMO_QUEUE_WAIT seconds is told the demo is busy
   - transcripts longer than DEMO_MAX_CHARS characters are refused
-  - nothing a visitor submits is stored
+  - nothing a visitor submits is stored, and test results are kept in memory
+    for two hours only
 
 Run it with web_ui.sh --demo (port 8081, this machine only by default), and
-put it behind a tunnel. Standard library only, like web_ui.py; ScamRAG needs
-the venv (chromadb), and is left out with a note when it cannot be loaded.
+put it behind a tunnel. LLM-only and Length-only need only the standard
+library; BoW needs scikit-learn and ScamRAG needs chromadb (both in the venv),
+and each is left out when it cannot be loaded.
 
     ./web_ui.sh --demo
     python3 scripts/demo_ui.py --port 8081 --host 127.0.0.1
+
+DEMO_FAKE_LLM=1 replaces the LLM with a keyword rule, to try the page on a
+machine without Ollama. Never use it for the public demo.
 """
 import argparse
 import csv
 import json
+import math
 import os
+import queue
+import random
+import secrets
 import sys
 import threading
 import time
@@ -48,13 +63,24 @@ sys.path.insert(0, str(SCRIPTS))
 
 CONFIG_PATH = Path(os.environ.get("DEMO_CONFIG", ROOT / "demo" / "demo_config.json"))
 
-PER_CLIENT = int(os.environ.get("DEMO_PER_CLIENT", "5"))      # checks per visitor
-WINDOW = int(os.environ.get("DEMO_WINDOW", "600"))            # ... per 10 minutes
-PER_HOUR = int(os.environ.get("DEMO_PER_HOUR", "60"))         # checks for everyone
-QUEUE_WAIT = int(os.environ.get("DEMO_QUEUE_WAIT", "90"))     # seconds to wait for the GPU
-MAX_CHARS = int(os.environ.get("DEMO_MAX_CHARS", "6000"))
+
+def _env(name, default):
+    return int(os.environ.get(name, str(default)))
+
+
+PER_CLIENT = _env("DEMO_PER_CLIENT", 100)          # checks per visitor ...
+WINDOW = _env("DEMO_WINDOW", 600)                  # ... per 10 minutes
+PER_HOUR = _env("DEMO_PER_HOUR", 1000)             # checks for everyone, per hour
+TESTS_PER_CLIENT = _env("DEMO_TESTS_PER_CLIENT", 10)   # test runs per visitor per window
+TEST_QUEUE = _env("DEMO_TEST_QUEUE", 5)            # test runs that may wait
+MAX_SAMPLE = _env("DEMO_MAX_SAMPLE", 40)           # calls in one test run
+QUEUE_WAIT = _env("DEMO_QUEUE_WAIT", 90)           # seconds a check waits for the GPU
+MAX_CHARS = _env("DEMO_MAX_CHARS", 6000)
+FAKE_LLM = os.environ.get("DEMO_FAKE_LLM") == "1"
 MAX_BODY = MAX_CHARS * 4 + 1024
 PAGE_ROWS = 20
+JOB_TTL = 2 * 3600
+LENGTH_THRESHOLD = 45                              # the paper's length-only rule
 
 csv.field_size_limit(10 ** 9)
 
@@ -62,6 +88,23 @@ csv.field_size_limit(10 ** 9)
 # ---------------------------------------------------------------------------
 # configuration
 # ---------------------------------------------------------------------------
+DEFAULT_TESTS = {
+    "deletion": {
+        "label": "Content-deletion test",
+        "dataset": "datasets/huggingface_1600.csv",
+        "dataset_name": "Dialogue-1600",
+        "train": "rest",                 # learners train on the calls not sampled
+    },
+    "heldout": {
+        "label": "Held-out test",
+        "dataset": "datasets/scambait_huggingface_real_tech_support_only_200.csv",
+        "dataset_name": "Support-200",
+        "train": "datasets/zhi_english_tech_support_removed_682.csv",
+        "train_name": "Zhi-628",
+    },
+}
+
+
 def load_config():
     with open(CONFIG_PATH, encoding="utf-8") as f:
         cfg = json.load(f)
@@ -69,26 +112,32 @@ def load_config():
     cfg.setdefault("examples", [])
     cfg.setdefault("percall", [])
     cfg.setdefault("reproduce", [])
+    tests = {k: dict(v) for k, v in DEFAULT_TESTS.items()}
+    for k, v in (cfg.get("tests") or {}).items():
+        if k in tests and isinstance(v, dict):
+            tests[k].update(v)
+    cfg["tests"] = tests
+    cfg.setdefault("paper_values", {})
     return cfg
 
 
-def percall_file(cfg, key):
-    """The result file listed under `key` in the config, and only that: a
-    visitor cannot name a path, so nothing else on disk can be read."""
-    for entry in cfg["percall"]:
-        if entry.get("key") == key:
-            path = (ROOT / entry["file"]).resolve()
-            if ROOT not in path.parents:
-                raise ValueError("listed file is outside the project")
-            if not path.is_file():
-                raise ValueError("%s is not on this machine" % entry["file"])
-            return entry, path
-    raise ValueError("no such result file")
+def project_file(rel):
+    """A path from the config, inside the project; visitors never name one."""
+    path = (ROOT / rel).resolve()
+    if ROOT not in path.parents:
+        raise ValueError("listed file is outside the project")
+    if not path.is_file():
+        raise ValueError("%s is not on this machine" % rel)
+    return path
 
 
 def percall_page(cfg, key, offset):
-    entry, path = percall_file(cfg, key)
-    with open(path, encoding="utf-8", newline="") as f:
+    for entry in cfg["percall"]:
+        if entry.get("key") == key:
+            break
+    else:
+        raise ValueError("no such result file")
+    with open(project_file(entry["file"]), encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     offset = max(0, min(offset, max(0, len(rows) - 1)))
     page = rows[offset:offset + PAGE_ROWS]
@@ -107,31 +156,40 @@ def percall_page(cfg, key, offset):
 # rate limiting and the single GPU slot
 # ---------------------------------------------------------------------------
 _lock = threading.Lock()
-_by_client = defaultdict(deque)
-_all = deque()
+_events = {"check": defaultdict(deque), "test": defaultdict(deque)}
+_all_checks = deque()
 _gpu = threading.Semaphore(1)
 
 
-def allow(client):
+class BusyError(Exception):
+    pass
+
+
+def allow(kind, client):
     """True if this visitor, and the demo as a whole, are under their limits.
-    Counted when a check is accepted, so a refused one costs nothing."""
+    Counted when a request is accepted, so a refused one costs nothing."""
     now = time.time()
+    limit = PER_CLIENT if kind == "check" else TESTS_PER_CLIENT
+    noun = "checks" if kind == "check" else "test runs"
     with _lock:
-        mine = _by_client[client]
+        mine = _events[kind][client]
         while mine and now - mine[0] > WINDOW:
             mine.popleft()
-        while _all and now - _all[0] > 3600:
-            _all.popleft()
-        if len(mine) >= PER_CLIENT:
+        while _all_checks and now - _all_checks[0] > 3600:
+            _all_checks.popleft()
+        if len(mine) >= limit:
             wait = int(WINDOW - (now - mine[0])) + 1
-            return False, "You have used your %d checks for now. Please try again in about %d minutes." % (PER_CLIENT, max(1, wait // 60))
-        if len(_all) >= PER_HOUR:
-            return False, "The demo has reached its hourly limit. Please try again later."
+            return False, ("You have used your %d %s for now. Please try again in about %d minutes."
+                           % (limit, noun, max(1, wait // 60)))
+        if kind == "check":
+            if len(_all_checks) >= PER_HOUR:
+                return False, "The demo has reached its hourly limit. Please try again later."
+            _all_checks.append(now)
         mine.append(now)
-        _all.append(now)
-        if len(_by_client) > 10000:              # forget idle visitors
-            for k in [k for k, v in _by_client.items() if not v]:
-                del _by_client[k]
+        table = _events[kind]
+        if len(table) > 10000:                   # forget idle visitors
+            for k in [k for k, v in table.items() if not v]:
+                del table[k]
         return True, ""
 
 
@@ -144,8 +202,7 @@ _scamrag = {"loaded": False, "collection": None, "module": None, "error": ""}
 def scamrag_available():
     """Load ScamRAG once, if this machine has its pattern store. Optional:
     the demo still works with LLM-only when it is missing."""
-    if os.environ.get("DEMO_SCAMRAG", "1") == "0":
-        _scamrag["error"] = "turned off"
+    if os.environ.get("DEMO_SCAMRAG", "1") == "0" or FAKE_LLM:
         return False
     if not _scamrag["loaded"]:
         _scamrag["loaded"] = True
@@ -158,9 +215,34 @@ def scamrag_available():
     return _scamrag["module"] is not None
 
 
-def check_llm_only(text):
+def bow_available():
+    try:
+        import sklearn  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _fake_judge(text):
+    """For trying the page without Ollama only (DEMO_FAKE_LLM=1)."""
+    t = text.lower()
+    hit = [w for w in ("gift card", "anydesk", "remote", "virus", "pin", "password",
+                       "arrest", "refund", "bitcoin", "verify") if w in t]
+    return {"verdict": "Fraud" if hit else "Normal", "scam": bool(hit),
+            "reason": "(fake LLM) " + (", ".join(hit) if hit else "no keyword found"),
+            "elapsed_ms": 5}
+
+
+def llm_judge_once(text):
+    if FAKE_LLM:
+        time.sleep(0.05)
+        return _fake_judge(text)
     import llm_judge
-    r = llm_judge.judge(text)
+    return llm_judge.judge(text)
+
+
+def check_llm_only(text):
+    r = llm_judge_once(text)
     return {
         "detector": "LLM-only",
         "label": None if r["verdict"] is None else ("Scam" if r["scam"] else "Legitimate"),
@@ -174,21 +256,19 @@ def check_scamrag(text):
     t0 = time.time()
     out = W.detect(text, _scamrag["collection"], use_web=False)
     top = out.get("kb_top_type") or ""
-    patterns = [top.replace("_", " ")] if top else []
     return {
         "detector": "ScamRAG",
         "label": "Scam" if out.get("predicted") == "Fraud" else "Legitimate",
         "confidence": out.get("confidence"),
         "reason": out.get("reason", ""),
-        "patterns_used": out.get("n_kb_kept"),
-        "patterns": patterns,
+        "patterns": [top.replace("_", " ")] if top else [],
         "seconds": round(time.time() - t0, 1),
     }
 
 
 def run_check(text, detectors):
     if not _gpu.acquire(timeout=QUEUE_WAIT):
-        raise BusyError("The demo is busy with other checks. Please try again in a minute.")
+        raise BusyError("The demo is busy. Please try again in a minute.")
     try:
         results = []
         for d in detectors:
@@ -198,14 +278,252 @@ def run_check(text, detectors):
                 elif d == "scamrag" and scamrag_available():
                     results.append(check_scamrag(text))
             except Exception as e:
-                results.append({"detector": d, "error": "this detector failed: %s" % type(e).__name__})
+                results.append({"detector": d, "error": friendly_error(e)})
         return results
     finally:
         _gpu.release()
 
 
-class BusyError(Exception):
-    pass
+def friendly_error(e):
+    msg = str(e).lower()
+    if "connection" in msg or "refused" in msg or "unreachable" in msg or "ollama" in msg:
+        return "The language model is not available right now. Please try again later."
+    return "This detector failed (%s)." % type(e).__name__
+
+
+# ---------------------------------------------------------------------------
+# the two tests on a small sample
+# ---------------------------------------------------------------------------
+TEST_DETECTORS = {"length": "Length-only", "bow": "BoW", "llm_only": "LLM-only"}
+_data_cache = {}
+_bow_cache = {}
+
+
+def load_calls(rel):
+    """[(id, text, is_scam)] from a dataset named in the config."""
+    if rel not in _data_cache:
+        import dataset_io as D
+        path = project_file(rel)
+        rows = D.read_rows(path)
+        tcol, lcol, icol = D.columns(rows, str(path))
+        calls = []
+        for n, r in enumerate(rows):
+            text = (r.get(tcol) or "").strip()
+            if text:
+                cid = (r.get(icol) if icol else None) or str(n)
+                calls.append((str(cid), text, bool(D.is_scam(r[lcol]))))
+        _data_cache[rel] = calls
+    return _data_cache[rel]
+
+
+def balanced_sample(calls, size, seed):
+    rng = random.Random(seed)
+    scam = [c for c in calls if c[2]]
+    legit = [c for c in calls if not c[2]]
+    k = min(size // 2, len(scam), len(legit))
+    pick = rng.sample(scam, k) + rng.sample(legit, k)
+    rng.shuffle(pick)
+    return pick
+
+
+def train_bow(calls):
+    """TF-IDF on words and word pairs into logistic regression: the BoW
+    baseline of the paper, with min_df=2 and the same fallback."""
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import make_pipeline
+    texts = [c[1] for c in calls]
+    y = [1 if c[2] else 0 for c in calls]
+    for min_df in (2, 1):
+        try:
+            return make_pipeline(TfidfVectorizer(ngram_range=(1, 2), min_df=min_df),
+                                 LogisticRegression(max_iter=2000)).fit(texts, y)
+        except ValueError:
+            continue
+    raise ValueError("BoW could not be trained")
+
+
+class Predictor:
+    """One detector, trained if it needs training, answering one text at a time."""
+
+    def __init__(self, detector, train_calls=None, cache_key=None):
+        self.detector = detector
+        self.model = None
+        if detector == "bow":
+            if cache_key and cache_key in _bow_cache:
+                self.model = _bow_cache[cache_key]
+            else:
+                self.model = train_bow(train_calls)
+                if cache_key:
+                    _bow_cache[cache_key] = self.model
+
+    def __call__(self, text):
+        """(is_scam, reason)"""
+        if self.detector == "length":
+            n = len(text.split())
+            return n > LENGTH_THRESHOLD, "%d words (scam if more than %d)" % (n, LENGTH_THRESHOLD)
+        if self.detector == "bow":
+            p = float(self.model.predict_proba([text])[0][1])
+            return p >= 0.5, "scam probability %.2f" % p
+        if not _gpu.acquire(timeout=900):
+            raise BusyError("The GPU stayed busy for too long.")
+        try:
+            r = llm_judge_once(text)
+        finally:
+            _gpu.release()
+        if r["verdict"] is None:                 # scored Normal, as in the benchmark
+            return False, "(answer could not be read, counted as legitimate) " + (r.get("reason") or "")
+        return bool(r["scam"]), r.get("reason") or ""
+
+
+def outcome(true_scam, pred_scam):
+    if true_scam == pred_scam:
+        return "correct"
+    return "missed scam" if true_scam else "false alarm"
+
+
+def counts(rows, key):
+    c = {"tp": 0, "fp": 0, "fn": 0, "tn": 0}
+    for r in rows:
+        t, p = r["true_scam"], r[key]
+        c["tp" if t and p else "fn" if t else "fp" if p else "tn"] += 1
+    return c
+
+
+def accuracy(c):
+    n = sum(c.values())
+    return 100.0 * (c["tp"] + c["tn"]) / n if n else 0.0
+
+
+class Job:
+    def __init__(self, client, params):
+        self.id = secrets.token_urlsafe(12)
+        self.client = client
+        self.params = params
+        self.status = "queued"
+        self.done = 0
+        self.total = 0
+        self.created = time.time()
+        self.error = ""
+        self.results = []
+
+    def view(self):
+        ahead = 0
+        if self.status == "queued":
+            with _jobs_lock:
+                ahead = sum(1 for j in _jobs.values()
+                            if j.status in ("queued", "running") and j.created < self.created)
+        return {"id": self.id, "status": self.status, "done": self.done, "total": self.total,
+                "ahead": ahead, "error": self.error, "params": self.params, "results": self.results}
+
+
+_jobs = {}
+_jobs_lock = threading.Lock()
+_job_queue = queue.Queue()
+
+
+def start_job(client, form, cfg):
+    test = form.get("test")
+    detector = form.get("detector")
+    if test not in ("deletion", "heldout", "both"):
+        raise ValueError("unknown test")
+    if detector not in TEST_DETECTORS:
+        raise ValueError("unknown detector")
+    if detector == "bow" and not bow_available():
+        raise ValueError("BoW is not available on this machine")
+    size = int(form.get("size") or 20)
+    size = max(4, min(MAX_SAMPLE, size - size % 2))
+    seed = int(form.get("seed") or 1) % 1000000
+    with _jobs_lock:
+        now = time.time()
+        for k in [k for k, j in _jobs.items() if now - j.created > JOB_TTL]:
+            del _jobs[k]
+        waiting = sum(1 for j in _jobs.values() if j.status in ("queued", "running"))
+        if waiting > TEST_QUEUE:
+            raise BusyError("Several tests are already waiting. Please try again in a few minutes.")
+    ok, why = allow("test", client)
+    if not ok:
+        raise PermissionError(why)
+    job = Job(client, {"test": test, "detector": detector, "size": size, "seed": seed})
+    with _jobs_lock:
+        _jobs[job.id] = job
+    _job_queue.put(job)
+    return job
+
+
+def run_one_test(job, name, spec, predictor_for, cfg):
+    p = job.params
+    calls = load_calls(spec["dataset"])
+    sample = balanced_sample(calls, p["size"], p["seed"])
+    predict = predictor_for(name, sample)
+    strip = None
+    if name == "deletion":
+        from trusted import strip_content_words as strip
+    rows = []
+    for cid, text, true_scam in sample:
+        pred, why = predict(text)
+        job.done += 1
+        row = {"id": cid, "true_scam": true_scam, "pred": pred, "why": why,
+               "outcome": outcome(true_scam, pred), "text": text[:4000]}
+        if strip:
+            stripped = strip(text)
+            pred_s, why_s = predict(stripped)
+            job.done += 1
+            row.update({"text_stripped": stripped[:4000], "pred_stripped": pred_s,
+                        "why_stripped": why_s, "outcome_stripped": outcome(true_scam, pred_s)})
+        rows.append(row)
+    c = counts(rows, "pred")
+    summary = {"tp": c["tp"], "fp": c["fp"], "fn": c["fn"], "tn": c["tn"],
+               "accuracy": round(accuracy(c), 1)}
+    if name == "deletion":
+        cs = counts(rows, "pred_stripped")
+        a_full, a_str = accuracy(c), accuracy(cs)
+        summary.update({"accuracy_stripped": round(a_str, 1),
+                        "trusted": round(a_full - max(0.0, a_str - 50.0), 1)})
+    else:
+        recall = c["tp"] / (c["tp"] + c["fn"]) if c["tp"] + c["fn"] else 0.0
+        spec_ = c["tn"] / (c["tn"] + c["fp"]) if c["tn"] + c["fp"] else 0.0
+        summary.update({"recall": round(recall, 2), "specificity": round(spec_, 2),
+                        "nsdi": round(100 * math.sqrt(recall * spec_), 1)})
+    paper = ((cfg.get("paper_values") or {}).get(name) or {}).get(p["detector"])
+    return {"test": name, "label": spec["label"], "dataset_name": spec.get("dataset_name", ""),
+            "train_name": spec.get("train_name", ""), "summary": summary, "paper": paper,
+            "rows": rows}
+
+
+def run_job(job):
+    cfg = load_config()
+    p = job.params
+    names = ["deletion", "heldout"] if p["test"] == "both" else [p["test"]]
+    # answers to give: each call once, and once more stripped for the deletion test
+    job.total = sum(min(p["size"], len(load_calls(cfg["tests"][n]["dataset"])))
+                    * (2 if n == "deletion" else 1) for n in names)
+
+    def predictor_for(name, sample):
+        spec = cfg["tests"][name]
+        if p["detector"] != "bow":
+            return Predictor(p["detector"])
+        if spec.get("train") == "rest":          # every call of the set that was not sampled
+            ids = {c[0] for c in sample}
+            train = [c for c in load_calls(spec["dataset"]) if c[0] not in ids]
+            return Predictor("bow", train)
+        return Predictor("bow", load_calls(spec["train"]), cache_key=spec["train"])
+
+    for name in names:
+        job.results.append(run_one_test(job, name, cfg["tests"][name], predictor_for, cfg))
+
+
+def job_worker():
+    while True:
+        job = _job_queue.get()
+        job.status = "running"
+        try:
+            run_job(job)
+            job.status = "done"
+        except (Exception, SystemExit) as e:      # dataset_io exits on a bad file
+            job.status = "error"
+            job.error = (str(e) if isinstance(e, (ValueError, BusyError, SystemExit))
+                         else friendly_error(e))
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +565,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _form(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n <= 0 or n > MAX_BODY:
+            raise OverflowError
+        return json.loads(self.rfile.read(n).decode("utf-8"))
+
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
@@ -255,6 +579,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/":
                 return self._send(200, PAGE, "text/html")
             if u.path == "/api/config":
+                detectors = [{"key": k, "label": v} for k, v in TEST_DETECTORS.items()
+                             if k != "bow" or bow_available()]
                 return self._send(200, {
                     "title": cfg.get("title", "Telephone scam detection demo"),
                     "intro": cfg.get("intro", ""),
@@ -264,11 +590,23 @@ class Handler(BaseHTTPRequestHandler):
                     "reproduce": cfg["reproduce"],
                     "code_url": cfg.get("code_url", ""),
                     "scamrag": scamrag_available(),
-                    "limits": {"per_client": PER_CLIENT, "window_min": WINDOW // 60, "max_chars": MAX_CHARS},
+                    "tests": {k: {"label": v["label"], "dataset_name": v.get("dataset_name", ""),
+                                  "train_name": v.get("train_name", "")} for k, v in cfg["tests"].items()},
+                    "test_detectors": detectors,
+                    "fake_llm": FAKE_LLM,
+                    "limits": {"per_client": PER_CLIENT, "window_min": WINDOW // 60,
+                               "max_chars": MAX_CHARS, "tests_per_client": TESTS_PER_CLIENT,
+                               "max_sample": MAX_SAMPLE},
                 })
             if u.path == "/api/percall":
                 offset = int((q.get("offset") or ["0"])[0] or 0)
                 return self._send(200, percall_page(cfg, (q.get("key") or [""])[0], offset))
+            if u.path == "/api/test":
+                with _jobs_lock:
+                    job = _jobs.get((q.get("id") or [""])[0])
+                if not job:
+                    return self._send(404, {"error": "This test run has expired. Please run it again."})
+                return self._send(200, job.view())
             return self._send(404, {"error": "not found"})
         except ValueError as e:
             return self._send(400, {"error": str(e)})
@@ -277,28 +615,32 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
-        if u.path != "/api/check":
-            return self._send(404, {"error": "not found"})
         try:
-            n = int(self.headers.get("Content-Length") or 0)
-            if n <= 0 or n > MAX_BODY:
-                return self._send(413, {"error": "Please paste one call of up to %d characters." % MAX_CHARS})
-            form = json.loads(self.rfile.read(n).decode("utf-8"))
-            text = str(form.get("text") or "").strip()
-            if not text:
-                return self._send(400, {"error": "Please paste a call transcript first."})
-            if len(text) > MAX_CHARS:
-                return self._send(413, {"error": "Please paste one call of up to %d characters." % MAX_CHARS})
-            ok, why = allow(self.client())
-            if not ok:
-                return self._send(429, {"error": why})
-            detectors = [d for d in (form.get("detectors") or ["llm_only"])
-                         if d in ("llm_only", "scamrag")][:2] or ["llm_only"]
-            return self._send(200, {"results": run_check(text, detectors)})
+            if u.path == "/api/check":
+                form = self._form()
+                text = str(form.get("text") or "").strip()
+                if not text:
+                    return self._send(400, {"error": "Please paste a call transcript first."})
+                if len(text) > MAX_CHARS:
+                    raise OverflowError
+                ok, why = allow("check", self.client())
+                if not ok:
+                    return self._send(429, {"error": why})
+                detectors = [d for d in (form.get("detectors") or ["llm_only"])
+                             if d in ("llm_only", "scamrag")][:2] or ["llm_only"]
+                return self._send(200, {"results": run_check(text, detectors)})
+            if u.path == "/api/test":
+                job = start_job(self.client(), self._form(), load_config())
+                return self._send(200, job.view())
+            return self._send(404, {"error": "not found"})
+        except OverflowError:
+            return self._send(413, {"error": "Please paste one call of up to %d characters." % MAX_CHARS})
+        except PermissionError as e:
+            return self._send(429, {"error": str(e)})
         except BusyError as e:
             return self._send(503, {"error": str(e)})
-        except (ValueError, json.JSONDecodeError):
-            return self._send(400, {"error": "That request could not be read."})
+        except (ValueError, json.JSONDecodeError) as e:
+            return self._send(400, {"error": str(e) or "That request could not be read."})
         except Exception as e:
             return self._send(500, {"error": "server error: %s" % type(e).__name__})
 
@@ -316,32 +658,45 @@ PAGE = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scam detection demo</title>
 <style>
-:root{--bg:#fafafa;--card:#fff;--ink:#1d1d1f;--mute:#5f6368;--line:#e2e2e2;--acc:#1a56db;--scam:#b42318;--ok:#067647}
-@media (prefers-color-scheme:dark){:root{--bg:#141414;--card:#1e1e1e;--ink:#ececec;--mute:#a0a0a0;--line:#333;--acc:#6b9bff;--scam:#ff7b72;--ok:#56d364}}
+:root{--bg:#fafafa;--card:#fff;--ink:#1d1d1f;--mute:#5f6368;--line:#e2e2e2;--acc:#1a56db;--scam:#b42318;--ok:#067647;--warn:#b54708;--soft:#f2f4f7}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--card:#1e1e1e;--ink:#ececec;--mute:#a0a0a0;--line:#333;--acc:#6b9bff;--scam:#ff7b72;--ok:#56d364;--warn:#f0b35a;--soft:#262626}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:960px;margin:0 auto;padding:24px 16px 64px}
-h1{font-size:1.6rem;margin:0 0 4px}p.lead{color:var(--mute);margin:0 0 20px}
+main{max-width:1000px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:1.6rem;margin:0 0 4px}h3{margin:0 0 10px}p.lead{color:var(--mute);margin:0 0 20px}
 nav{display:flex;gap:8px;border-bottom:1px solid var(--line);margin-bottom:20px;flex-wrap:wrap}
 nav button{background:none;border:0;border-bottom:3px solid transparent;padding:10px 6px;font:inherit;color:var(--mute);cursor:pointer}
 nav button.on{color:var(--ink);border-color:var(--acc);font-weight:600}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
 textarea{width:100%;min-height:200px;font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
+select,input[type=number]{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--ink)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.grid label{display:flex;flex-direction:column;gap:4px;font-weight:600;font-size:.92rem}
 button.main{background:var(--acc);color:#fff;border:0;border-radius:8px;padding:10px 18px;font:inherit;font-weight:600;cursor:pointer}
 button.main:disabled{opacity:.5;cursor:wait}
 button.chip{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:6px 12px;font:inherit;font-size:.9rem;color:var(--ink);cursor:pointer}
+button.chip.on{border-color:var(--acc);color:var(--acc);font-weight:600}
 .verdict{font-size:1.3rem;font-weight:700}.scam{color:var(--scam)}.legit{color:var(--ok)}
 .mute{color:var(--mute);font-size:.9rem}.err{color:var(--scam)}
 table{border-collapse:collapse;width:100%;font-size:.92rem}th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}
 th:first-child,td:first-child{text-align:left}th{font-weight:600;border-bottom:2px solid var(--line)}
-.scroll{overflow-x:auto}td.text{text-align:left;max-width:420px;white-space:pre-wrap}
-ol li{margin-bottom:8px}code{background:var(--line);padding:1px 5px;border-radius:4px;font-size:.9em}
-[hidden]{display:none!important}
+td.l,th.l{text-align:left}.scroll{overflow-x:auto}td.text{text-align:left;max-width:420px;white-space:pre-wrap}
+.badge{display:inline-block;border-radius:999px;padding:1px 9px;font-size:.82rem;font-weight:600;white-space:nowrap}
+.b-correct{background:#e7f6ec;color:#067647}.b-false{background:#fef0c7;color:#93370d}.b-missed{background:#fee4e2;color:#b42318}
+@media (prefers-color-scheme:dark){.b-correct{background:#12391f;color:#7ee2a0}.b-false{background:#4a3410;color:#f7c873}.b-missed{background:#4c1714;color:#ff9c94}}
+.metrics{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px}
+.metric{background:var(--soft);border-radius:8px;padding:10px 14px;min-width:150px}
+.metric b{display:block;font-size:1.4rem}.metric span{color:var(--mute);font-size:.85rem}
+.bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc);width:0}
+tr.call{cursor:pointer}tr.detail td{background:var(--soft);text-align:left;white-space:pre-wrap;font-size:.88rem}
+ol li{margin-bottom:8px}[hidden]{display:none!important}
 </style></head><body><main>
 <h1 id="title">Scam detection demo</h1>
 <p class="lead" id="intro"></p>
+<p class="err" id="fake" hidden>Test mode: the language model is replaced by a keyword rule. Do not use these answers.</p>
 <nav>
  <button data-tab="try" class="on">Try it yourself</button>
+ <button data-tab="tests">Run the two tests</button>
  <button data-tab="results">Results in the paper</button>
  <button data-tab="repro">Reproduce</button>
 </nav>
@@ -361,6 +716,24 @@ ol li{margin-bottom:8px}code{background:var(--line);padding:1px 5px;border-radiu
  <p class="mute">Nothing you paste is stored. Each check runs on one desktop GPU and may take up to a minute.</p>
 </section>
 
+<section id="tests" hidden>
+ <div class="card">
+  <h3>Run the two tests on a small sample</h3>
+  <p><b>Content-deletion test.</b> Every content word (nouns, verbs, adjectives, adverbs) is deleted from each call, and the detector answers again. Accuracy that survives above chance (50%) cannot come from what the caller said, and is subtracted: <i>trusted accuracy</i> = accuracy minus (accuracy after deletion minus 50), when the latter is above 50.</p>
+  <p><b>Held-out test.</b> The detector is tested on technical-support scams, a scam type left out of everything it learned from. <i>NSDI</i> = 100 &times; &radic;(recall on the scams &times; specificity on the legitimate calls).</p>
+  <div class="grid">
+   <label>Test<select id="t_test"></select></label>
+   <label>Detector<select id="t_det"></select></label>
+   <label>Calls in the sample<select id="t_size"></select></label>
+   <label>Random seed<input type="number" id="t_seed" value="1" min="0" max="999999"></label>
+  </div>
+  <div class="row"><button class="main" id="t_go">Run test</button><span class="mute" id="t_hint"></span></div>
+  <div id="t_prog" hidden><div class="row"><span id="t_state"></span></div><div class="bar"><i id="t_bar"></i></div></div>
+  <p class="err" id="t_err"></p>
+ </div>
+ <div id="t_out"></div>
+</section>
+
 <section id="results" hidden>
  <div id="tables"></div>
  <div class="card" id="pc_card" hidden>
@@ -375,17 +748,27 @@ ol li{margin-bottom:8px}code{background:var(--line);padding:1px 5px;border-radiu
 </main>
 <script>
 const $=s=>document.querySelector(s);const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let CFG=null,pcOff=0;
+let CFG=null,pcOff=0,JOB=null,TIMER=null;
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
- for(const id of ["try","results","repro"])$("#"+id).hidden=id!==b.dataset.tab;});
+ for(const id of ["try","tests","results","repro"])$("#"+id).hidden=id!==b.dataset.tab;});
 async function init(){
  CFG=await (await fetch("/api/config")).json();
- $("#title").textContent=CFG.title;document.title=CFG.title;$("#intro").textContent=CFG.intro;
+ $("#title").textContent=CFG.title;document.title=CFG.title;$("#intro").textContent=CFG.intro;$("#fake").hidden=!CFG.fake_llm;
  $("#limits").textContent=`Up to ${CFG.limits.per_client} checks per ${CFG.limits.window_min} minutes.`;
  if(!CFG.scamrag){$("#l_rag").hidden=true;$("#d_rag").checked=false;}
  CFG.examples.forEach(e=>{const b=document.createElement("button");b.className="chip";b.textContent=e.label;
   b.onclick=()=>{$("#text").value=e.text;};$("#examples").appendChild(b);});
+ const T=CFG.tests;
+ $("#t_test").innerHTML=`<option value="both">Both tests</option>
+  <option value="deletion">${esc(T.deletion.label)} (${esc(T.deletion.dataset_name)})</option>
+  <option value="heldout">${esc(T.heldout.label)} (${esc(T.heldout.dataset_name)})</option>`;
+ $("#t_det").innerHTML=CFG.test_detectors.map(d=>`<option value="${d.key}" ${d.key==="llm_only"?"selected":""}>${esc(d.label)}</option>`).join("");
+ $("#t_size").innerHTML=[10,20,40].filter(n=>n<=CFG.limits.max_sample).map(n=>`<option ${n===20?"selected":""}>${n}</option>`).join("");
+ const hint=()=>{const n=+$("#t_size").value,t=$("#t_test").value,d=$("#t_det").value;
+  const calls=(t==="both"?3:t==="deletion"?2:1)*n;
+  $("#t_hint").textContent=d==="llm_only"?`${calls} model answers, about ${Math.max(1,Math.round(calls*3/60))} minute(s). Half the sample is scams, half legitimate.`:"Takes a few seconds. Half the sample is scams, half legitimate.";};
+ ["#t_size","#t_test","#t_det"].forEach(s=>$(s).onchange=hint);hint();
  $("#tables").innerHTML=CFG.tables.map(t=>`<div class="card"><h3>${esc(t.title)}</h3><div class="scroll"><table>
   <tr>${t.header.map(h=>`<th>${esc(h)}</th>`).join("")}</tr>
   ${t.rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>
@@ -416,11 +799,75 @@ $("#go").onclick=async()=>{
    `<div class="card"><div class="mute">${esc(x.detector)}</div>
     <div class="verdict ${x.label==="Scam"?"scam":"legit"}">${esc(x.label??"No clear answer")}${x.confidence!=null?` <span class="mute">(confidence ${esc(x.confidence)} of 100)</span>`:""}</div>
     <p>${esc(x.reason)}</p>
-    ${x.patterns&&x.patterns.length?`<p class="mute">Scam patterns used: ${x.patterns.map(esc).join("; ")}</p>`:""}
+    ${x.patterns&&x.patterns.length?`<p class="mute">Closest scam pattern: ${x.patterns.map(esc).join("; ")}</p>`:""}
     <p class="mute">${esc(x.seconds)} seconds</p></div>`).join("");
  }catch(e){$("#out").innerHTML=`<p class="err">The demo could not be reached. Please try again.</p>`;}
  finally{$("#go").disabled=false;}
 };
+
+/* ---------------- the two tests ---------------- */
+const lab=b=>b?"Scam":"Legitimate";
+const badge=o=>o==="correct"?`<span class="badge b-correct">Correct</span>`:o==="false alarm"?`<span class="badge b-false">False alarm</span>`:`<span class="badge b-missed">Missed scam</span>`;
+$("#t_go").onclick=async()=>{
+ $("#t_err").textContent="";$("#t_out").innerHTML="";
+ const body={test:$("#t_test").value,detector:$("#t_det").value,size:+$("#t_size").value,seed:+$("#t_seed").value||0};
+ $("#t_go").disabled=true;
+ try{const res=await fetch("/api/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const r=await res.json();if(r.error){$("#t_err").textContent=r.error;$("#t_go").disabled=false;return;}
+  JOB=r.id;$("#t_prog").hidden=false;poll();
+ }catch(e){$("#t_err").textContent="The demo could not be reached. Please try again.";$("#t_go").disabled=false;}
+};
+async function poll(){
+ clearTimeout(TIMER);
+ let r;try{r=await (await fetch("/api/test?id="+encodeURIComponent(JOB))).json();}catch(e){TIMER=setTimeout(poll,3000);return;}
+ if(r.error&&!r.status){$("#t_err").textContent=r.error;$("#t_go").disabled=false;$("#t_prog").hidden=true;return;}
+ const pct=r.total?Math.round(100*r.done/r.total):0;$("#t_bar").style.width=pct+"%";
+ $("#t_state").textContent=r.status==="queued"?`Waiting for the GPU: ${r.ahead} test run(s) ahead.`:
+  r.status==="running"?`Running: ${r.done} of ${r.total} answers.`:r.status==="done"?"Finished.":"Stopped.";
+ if(r.status==="queued"||r.status==="running"){TIMER=setTimeout(poll,1500);return;}
+ $("#t_go").disabled=false;
+ if(r.status==="error"){$("#t_err").textContent=r.error;return;}
+ $("#t_out").innerHTML=r.results.map((t,i)=>testCard(t,r.params,i)).join("");
+ r.results.forEach((t,i)=>wire(t,i));
+}
+function metric(v,label){return `<div class="metric"><b>${esc(v)}</b><span>${esc(label)}</span></div>`;}
+function testCard(t,p,i){
+ const s=t.summary,det=CFG.test_detectors.find(d=>d.key===p.detector)?.label||p.detector,del=t.test==="deletion";
+ const errs=t.rows.filter(x=>x.outcome!=="correct").length;
+ let m=del?metric(s.accuracy+"%","accuracy on the calls as given")+metric(s.accuracy_stripped+"%","accuracy after content deletion")+metric(s.trusted,"trusted accuracy")
+          :metric(s.recall.toFixed(2),"recall on the held-out scams")+metric(s.specificity.toFixed(2),"specificity on legitimate calls")+metric(s.nsdi,"NSDI");
+ m+=metric(s.fp,"false alarms")+metric(s.fn,"missed scams");
+ const paper=t.paper?`<p class="mute">In the paper, on all calls: ${esc(Object.entries(t.paper).map(([k,v])=>`${k} ${v}`).join(", "))}.</p>`:"";
+ const read=del?(s.accuracy_stripped>55?`After deletion, ${det} still labels ${s.accuracy_stripped}% of the calls correctly, so part of its accuracy does not come from what is said in the calls.`
+                 :`After deletion, ${det} falls to about chance, so this test finds no shortcut in this sample.`)
+              :`${det} catches ${s.tp} of ${s.tp+s.fn} technical-support scams and leaves ${s.tn} of ${s.tn+s.fp} legitimate calls alone.`;
+ return `<div class="card"><h3>${esc(t.label)}: ${esc(det)} on ${p.size} calls of ${esc(t.dataset_name)}</h3>
+  ${t.train_name&&p.detector==="bow"?`<p class="mute">BoW was trained on ${esc(t.train_name)}, which has no technical-support calls.</p>`:""}
+  ${del&&p.detector==="bow"?`<p class="mute">BoW was trained on the other ${esc(t.dataset_name)} calls, as given (never on deleted text).</p>`:""}
+  <div class="metrics">${m}</div><p>${esc(read)}</p>${paper}
+  <p class="mute">A sample of ${p.size} calls varies a lot from one seed to another; the paper uses every call.</p>
+  <div class="row" id="f${i}"><b>Show</b>
+   <button class="chip on" data-f="all">All calls (${t.rows.length})</button>
+   <button class="chip" data-f="errors">Wrong answers (${errs})</button>
+   <button class="chip" data-f="false alarm">False alarms (${s.fp})</button>
+   <button class="chip" data-f="missed scam">Missed scams (${s.fn})</button></div>
+  <div class="scroll"><table id="tt${i}"></table></div><p class="mute">Click a call to see its text${del?" and its stripped text":""}.</p></div>`;
+}
+function wire(t,i){
+ const del=t.test==="deletion";
+ const draw=f=>{
+  const rows=t.rows.filter(x=>f==="all"||(f==="errors"?x.outcome!=="correct":x.outcome===f));
+  const head=`<tr><th class="l">Call</th><th class="l">True label</th><th class="l">Answer</th><th class="l">Result</th>${del?`<th class="l">After deletion</th>`:""}<th class="l">Reason</th></tr>`;
+  $("#tt"+i).innerHTML=head+(rows.length?rows.map((x,k)=>`<tr class="call" data-k="${k}"><td>${esc(x.id)}</td><td class="l">${lab(x.true_scam)}</td>
+   <td class="l ${x.pred?"scam":"legit"}">${lab(x.pred)}</td><td class="l">${badge(x.outcome)}</td>
+   ${del?`<td class="l"><span class="${x.pred_stripped?"scam":"legit"}">${lab(x.pred_stripped)}</span> ${x.outcome_stripped==="correct"?"(right)":"(wrong)"}</td>`:""}
+   <td class="text">${esc(x.why)}</td></tr><tr class="detail" hidden><td colspan="${del?6:5}"><b>Call as given</b>\n${esc(x.text)}${del?`\n\n<b>After content deletion</b>\n${esc(x.text_stripped)}\n\n<b>Reason after deletion</b>\n${esc(x.why_stripped)}`:""}</td></tr>`).join("")
+   :`<tr><td colspan="6" class="mute">No calls of this kind in the sample.</td></tr>`);
+  $("#tt"+i).querySelectorAll("tr.call").forEach(tr=>tr.onclick=()=>{tr.nextElementSibling.hidden=!tr.nextElementSibling.hidden;});
+ };
+ $("#f"+i).querySelectorAll("button").forEach(b=>b.onclick=()=>{$("#f"+i).querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));draw(b.dataset.f);});
+ draw("all");
+}
 init();
 </script></body></html>"""
 
@@ -431,10 +878,13 @@ def main():
     ap.add_argument("--host", default="127.0.0.1")
     args = ap.parse_args()
     load_config()                                  # fail now, not on the first visit
+    threading.Thread(target=job_worker, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print("demo on http://%s:%d  (config %s)" % (args.host, args.port, CONFIG_PATH), flush=True)
-    print("limits: %d checks per visitor per %d min, %d per hour in total"
-          % (PER_CLIENT, WINDOW // 60, PER_HOUR), flush=True)
+    print("limits: %d checks per visitor per %d min, %d per hour in total; %d test runs per visitor per %d min, up to %d calls each"
+          % (PER_CLIENT, WINDOW // 60, PER_HOUR, TESTS_PER_CLIENT, WINDOW // 60, MAX_SAMPLE), flush=True)
+    if FAKE_LLM:
+        print("DEMO_FAKE_LLM=1: the LLM is a keyword rule. Do not use this for the public demo.", flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

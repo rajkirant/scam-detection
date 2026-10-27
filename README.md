@@ -1159,30 +1159,46 @@ now and then.
 ### Public demo for readers of the paper
 
 `./web_ui.sh --demo` starts a second, read-only server (`scripts/demo_ui.py`)
-with three pages: **Try it yourself** (paste a call, get the verdict and the
-reason), **Results in the paper** (the paper's tables, and per-call answers
-from any result files you list) and **Reproduce**. It cannot start runs, train,
-edit the MCQ tree or browse files, so it is safe to put behind a public link
-while the full UI stays private.
+with four pages:
+
+- **Try it yourself** - paste a call, or pick an example, and get the verdict
+  and the reason from LLM-only (and ScamRAG, when its pattern store loads).
+- **Run the two tests** - the content-deletion test (on Dialogue-1600) and the
+  held-out test (on Support-200, with BoW trained on Zhi-628) on a small,
+  balanced random sample of 10, 20 or 40 calls, with Length-only, BoW or
+  LLM-only. It shows the measures next to the paper's values, and every call
+  with its answer, its answer after deletion and its reason, filtered to the
+  false alarms or the missed scams. Runs are queued, one at a time, and kept
+  in memory for two hours.
+- **Results in the paper** - the paper's tables, and per-call answers from
+  any result files you list.
+- **Reproduce** - the steps and the code link.
+
+It cannot start benchmark runs, save models, edit the MCQ tree or browse
+files, so it is safe to put behind a public link while the full UI stays
+private.
 
 ```bash
 ./web_ui.sh --demo            # http://127.0.0.1:8081, this machine only
 ./web_ui.sh --demo --tmux     # detached, next to the full UI on 8000
+DEMO_FAKE_LLM=1 ./web_ui.sh --demo   # try the page without Ollama (never public)
 ```
 
 What it shows comes from `demo/demo_config.json`: the title, the example
-calls, the tables, the reproduction steps, the code link and, under
-`percall`, the result CSVs a reader may browse (only those files can be read).
-ScamRAG is offered when its pattern store loads on this machine; otherwise the
-demo runs LLM-only alone.
+calls, the datasets of the two tests, the paper's values, the tables, the
+reproduction steps, the code link and, under `percall`, the result CSVs a
+reader may browse (only files named there can be read).
 
-Limits, all set by environment variable: `DEMO_PER_CLIENT` checks per visitor
-(5) per `DEMO_WINDOW` seconds (600), `DEMO_PER_HOUR` checks in total (60),
-`DEMO_MAX_CHARS` per transcript (6000), and one check on the GPU at a time,
-with a "busy" reply after `DEMO_QUEUE_WAIT` seconds (90). Nothing a visitor
-submits is stored. Behind a tunnel every request comes from 127.0.0.1, so the
-visitor is taken from the `X-Demo-Client` header (set it in the proxy in front,
-for example a Cloudflare Worker) or from `CF-Connecting-IP`.
+Limits, all set by environment variable (defaults in brackets):
+`DEMO_PER_CLIENT` checks per visitor (100) per `DEMO_WINDOW` seconds (600),
+`DEMO_PER_HOUR` checks in total (1000), `DEMO_TESTS_PER_CLIENT` test runs per
+visitor per window (10), `DEMO_MAX_SAMPLE` calls per test run (40),
+`DEMO_TEST_QUEUE` test runs waiting (5), `DEMO_MAX_CHARS` per transcript
+(6000), and one request on the GPU at a time, with a "busy" reply after
+`DEMO_QUEUE_WAIT` seconds (90). Nothing a visitor submits is stored. Behind a
+tunnel every request comes from 127.0.0.1, so the visitor is taken from the
+`X-Demo-Client` header (set it in the proxy in front, for example a Cloudflare
+Worker) or from `CF-Connecting-IP`.
 
 ## B. The same thing in the terminal
 

@@ -1,6 +1,6 @@
 {
   "title": "Telephone scam detection demo",
-  "intro": "Try the detectors from the paper on a call of your own, and look at the results reported in the paper.",
+  "intro": "Try the detectors from the paper on a call of your own, run the paper's two tests on a small sample, and look at the results reported in the paper.",
   "code_url": "https://anonymous.4open.science/r/scam-detection",
   "examples": [
     {
@@ -8,72 +8,301 @@
       "text": "Caller: Hello, this is the Windows technical department. We have detected a virus on your computer that is sending your bank details to hackers.\nCustomer: Oh no, what should I do?\nCaller: Please do not turn the computer off. Go to your browser and download AnyDesk so I can remove the virus for you.\nCustomer: Okay, it is downloading.\nCaller: Good. The repair costs 299 dollars. You can pay with Google Play gift cards from any shop. Please stay on the line and do not tell anyone at the bank, they may be involved."
     },
     {
-      "label": "Example: legitimate bank fraud check",
-      "text": "Caller: Good afternoon, this is the fraud team at your bank. We noticed a card payment of 640 dollars at an electronics store this morning and want to check that it was you.\nCustomer: No, that was not me.\nCaller: Thank you. I have blocked the card, and a new one will arrive by post in five working days. I will not ask for your PIN or any passwords. If you would like to check this call, hang up and ring the number on the back of your card.\nCustomer: Okay, thank you."
+      "label": "Example: legitimate appointment call",
+      "text": "Caller: Hi, this is Sarah from Riverside Dental. I am calling to remind you about your check-up with Dr Patel tomorrow at 10:30.\nCustomer: Oh, thanks for calling. Could we move it to later in the week? Something has come up at work.\nCaller: Of course. We have Thursday at 2 pm or Friday at 9 am.\nCustomer: Thursday at 2 works for me.\nCaller: Great, I have moved you to Thursday at 2 pm. See you then.\nCustomer: Thank you, bye."
     },
     {
       "label": "Example: delivery call",
       "text": "Caller: Hi, this is the courier. I have a parcel for you, but nobody answered the door.\nCustomer: Sorry, I am at work. Can you leave it with the neighbour at number 12?\nCaller: Sure, I will leave it with them and put a card in your letterbox.\nCustomer: Great, thanks.\nCaller: No problem, have a good day."
     }
   ],
+  "tests": {
+    "_comment": "Datasets used by the Run the two tests page. Paths are relative to the project folder.",
+    "deletion": {
+      "dataset": "datasets/huggingface_1600.csv",
+      "dataset_name": "Dialogue-1600"
+    },
+    "heldout": {
+      "dataset": "datasets/scambait_huggingface_real_tech_support_only_200.csv",
+      "dataset_name": "Support-200",
+      "train": "datasets/zhi_english_tech_support_removed_682.csv",
+      "train_name": "Zhi-628"
+    }
+  },
+  "paper_values": {
+    "deletion": {
+      "length": {
+        "accuracy": "50.0%",
+        "after deletion": "56.8%",
+        "trusted accuracy": "43.2"
+      },
+      "bow": {
+        "accuracy": "100.0%",
+        "after deletion": "98.9%",
+        "trusted accuracy": "51.1"
+      },
+      "llm_only": {
+        "accuracy": "92.5%",
+        "after deletion": "50.0%",
+        "trusted accuracy": "92.5"
+      }
+    },
+    "heldout": {
+      "length": {
+        "recall": "1.00",
+        "specificity": "0.00",
+        "NSDI": "0.0"
+      },
+      "bow": {
+        "recall": "0.17",
+        "specificity": "1.00",
+        "NSDI": "41.2"
+      },
+      "llm_only": {
+        "recall": "0.97",
+        "specificity": "0.81",
+        "NSDI": "88.6"
+      }
+    }
+  },
   "tables": [
     {
       "title": "Accuracy on known scam types (Dialogue-1600, five-fold cross-validation)",
-      "header": ["Detector", "Accuracy (%)", "Precision", "Recall", "F1", "False alarms", "Missed scams"],
+      "header": [
+        "Detector",
+        "Accuracy (%)",
+        "Precision",
+        "Recall",
+        "F1",
+        "False alarms",
+        "Missed scams"
+      ],
       "rows": [
-        ["Length-only", "50.0", "0.500", "1.000", "0.667", "800", "0"],
-        ["BoW", "100.0", "1.000", "1.000", "1.000", "0", "0"],
-        ["BERT (fine-tuned)", "100.0", "1.000", "1.000", "1.000", "0", "0"],
-        ["LLM-only", "92.5", "0.870", "1.000", "0.930", "120", "0"],
-        ["ScamRAG", "99.5", "0.991", "0.999", "0.995", "7", "1"]
+        [
+          "Length-only",
+          "50.0",
+          "0.500",
+          "1.000",
+          "0.667",
+          "800",
+          "0"
+        ],
+        [
+          "BoW",
+          "100.0",
+          "1.000",
+          "1.000",
+          "1.000",
+          "0",
+          "0"
+        ],
+        [
+          "BERT (fine-tuned)",
+          "100.0",
+          "1.000",
+          "1.000",
+          "1.000",
+          "0",
+          "0"
+        ],
+        [
+          "LLM-only",
+          "92.5",
+          "0.870",
+          "1.000",
+          "0.930",
+          "120",
+          "0"
+        ],
+        [
+          "ScamRAG",
+          "99.5",
+          "0.991",
+          "0.999",
+          "0.995",
+          "7",
+          "1"
+        ]
       ]
     },
     {
       "title": "Content-deletion test (Dialogue-1600)",
-      "header": ["Detector", "Accuracy (%)", "After deletion (%)", "Trusted accuracy"],
+      "header": [
+        "Detector",
+        "Accuracy (%)",
+        "After deletion (%)",
+        "Trusted accuracy"
+      ],
       "rows": [
-        ["Length-only", "50.0", "56.8", "43.2"],
-        ["BoW", "100.0", "98.9", "51.1"],
-        ["BERT (fine-tuned)", "100.0", "49.9", "100.0"],
-        ["LLM-only", "92.5", "50.0", "92.5"],
-        ["LLM, fitted prompt", "96.8", "50.0", "96.8"],
-        ["ScamRAG", "99.5", "50.0", "99.5"]
+        [
+          "Length-only",
+          "50.0",
+          "56.8",
+          "43.2"
+        ],
+        [
+          "BoW",
+          "100.0",
+          "98.9",
+          "51.1"
+        ],
+        [
+          "BERT (fine-tuned)",
+          "100.0",
+          "49.9",
+          "100.0"
+        ],
+        [
+          "LLM-only",
+          "92.5",
+          "50.0",
+          "92.5"
+        ],
+        [
+          "LLM, fitted prompt",
+          "96.8",
+          "50.0",
+          "96.8"
+        ],
+        [
+          "ScamRAG",
+          "99.5",
+          "50.0",
+          "99.5"
+        ]
       ],
       "note": "Every content word is deleted from each test call. Accuracy above chance (50%) that remains after deletion is subtracted."
     },
     {
       "title": "Held-out test (learn from Zhi-628, test on Support-200)",
-      "header": ["Detector", "Recall on held-out type", "Specificity", "NSDI", "95% interval"],
+      "header": [
+        "Detector",
+        "Recall on held-out type",
+        "Specificity",
+        "NSDI",
+        "95% interval"
+      ],
       "rows": [
-        ["Length-only", "1.00", "0.00", "0.0", ""],
-        ["BoW", "0.17", "1.00", "41.2", ""],
-        ["BERT (fine-tuned)", "1.00", "0.00", "0.0", ""],
-        ["LLM-only", "0.97", "0.81", "88.6", "83.4 to 92.4"],
-        ["LLM, fitted prompt", "0.82", "1.00", "90.6", "85.5 to 93.9"],
-        ["ScamRAG", "0.76", "0.93", "84.1", "78.2 to 88.5"]
+        [
+          "Length-only",
+          "1.00",
+          "0.00",
+          "0.0",
+          ""
+        ],
+        [
+          "BoW",
+          "0.17",
+          "1.00",
+          "41.2",
+          ""
+        ],
+        [
+          "BERT (fine-tuned)",
+          "1.00",
+          "0.00",
+          "0.0",
+          ""
+        ],
+        [
+          "LLM-only",
+          "0.97",
+          "0.81",
+          "88.6",
+          "83.4 to 92.4"
+        ],
+        [
+          "LLM, fitted prompt",
+          "0.82",
+          "1.00",
+          "90.6",
+          "85.5 to 93.9"
+        ],
+        [
+          "ScamRAG",
+          "0.76",
+          "0.93",
+          "84.1",
+          "78.2 to 88.5"
+        ]
       ],
       "note": "Technical-support scams are removed from everything the detectors learn from, and used only for testing."
     },
     {
       "title": "Both tests together",
-      "header": ["Detector", "Trusted accuracy", "NSDI", "Lower of the two"],
+      "header": [
+        "Detector",
+        "Trusted accuracy",
+        "NSDI",
+        "Lower of the two"
+      ],
       "rows": [
-        ["Length-only", "43.2", "0.0", "0.0"],
-        ["BoW", "51.1", "41.2", "41.2"],
-        ["BERT (fine-tuned)", "100.0", "0.0", "0.0"],
-        ["LLM-only", "92.5", "88.6", "88.6"],
-        ["LLM, fitted prompt", "96.8", "90.6", "90.6"],
-        ["ScamRAG", "99.5", "84.1", "84.1"]
+        [
+          "Length-only",
+          "43.2",
+          "0.0",
+          "0.0"
+        ],
+        [
+          "BoW",
+          "51.1",
+          "41.2",
+          "41.2"
+        ],
+        [
+          "BERT (fine-tuned)",
+          "100.0",
+          "0.0",
+          "0.0"
+        ],
+        [
+          "LLM-only",
+          "92.5",
+          "88.6",
+          "88.6"
+        ],
+        [
+          "LLM, fitted prompt",
+          "96.8",
+          "90.6",
+          "90.6"
+        ],
+        [
+          "ScamRAG",
+          "99.5",
+          "84.1",
+          "84.1"
+        ]
       ],
       "note": "On both measures, 50 is the most that guessing can reach."
     },
     {
       "title": "Expected precision (%) at realistic scam rates (held-out test)",
-      "header": ["Detector", "1 scam in 1,000 calls", "1 in 100", "1 in 10"],
+      "header": [
+        "Detector",
+        "1 scam in 1,000 calls",
+        "1 in 100",
+        "1 in 10"
+      ],
       "rows": [
-        ["LLM-only", "0.5", "4.9", "36.2"],
-        ["LLM, fitted prompt", "2.2 to 100", "18.3 to 100", "71.1 to 100"],
-        ["ScamRAG", "1.1", "9.9", "54.7"]
+        [
+          "LLM-only",
+          "0.5",
+          "4.9",
+          "36.2"
+        ],
+        [
+          "LLM, fitted prompt",
+          "2.2 to 100",
+          "18.3 to 100",
+          "71.1 to 100"
+        ],
+        [
+          "ScamRAG",
+          "1.1",
+          "9.9",
+          "54.7"
+        ]
       ]
     }
   ],
@@ -82,7 +311,13 @@
     "key": "support200_scamrag",
     "label": "Held-out test: ScamRAG on Support-200",
     "file": "results/<per-call csv of that run>.csv",
-    "columns": ["idx", "true", "qwen_kb", "qwen_kb_why", "text"],
+    "columns": [
+      "idx",
+      "true",
+      "qwen_kb",
+      "qwen_kb_why",
+      "text"
+    ],
     "note": "true: 1 = scam, 0 = legitimate."
   },
   "reproduce": [
