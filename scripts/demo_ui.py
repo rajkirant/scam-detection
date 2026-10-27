@@ -879,19 +879,20 @@ function testCard(t,p,i){
    <button class="chip" data-f="errors">Wrong answers (${errs})</button>
    <button class="chip" data-f="false alarm">False alarms (${s.fp})</button>
    <button class="chip" data-f="missed scam">Missed scams (${s.fn})</button></div>
-  <div class="scroll"><table id="tt${i}"></table></div><p class="mute">Click a call to see its text${del?" and its stripped text":""}.</p></div>`;
+  <div class="scroll"><table id="tt${i}"></table></div><p class="mute">Click "Show call" (or anywhere on a row) to see the call${del?" and its text after content deletion":""}.</p></div>`;
 }
 function wire(t,i){
  const del=t.test==="deletion";
  const draw=f=>{
   const rows=t.rows.filter(x=>f==="all"||(f==="errors"?x.outcome!=="correct":x.outcome===f));
-  const head=`<tr><th class="l">Call</th><th class="l">True label</th><th class="l">Answer</th><th class="l">Result</th>${del?`<th class="l">After deletion</th>`:""}<th class="l">Reason</th></tr>`;
+  const head=`<tr><th class="l">Call</th><th class="l">True label</th><th class="l">Answer</th><th class="l">Result</th>${del?`<th class="l">After deletion</th>`:""}<th class="l">Reason</th><th class="l"></th></tr>`;
   $("#tt"+i).innerHTML=head+(rows.length?rows.map((x,k)=>`<tr class="call" data-k="${k}"><td>${esc(x.id)}</td><td class="l">${lab(x.true_scam)}</td>
    <td class="l ${x.pred?"scam":"legit"}">${lab(x.pred)}</td><td class="l">${badge(x.outcome)}</td>
    ${del?`<td class="l"><span class="${x.pred_stripped?"scam":"legit"}">${lab(x.pred_stripped)}</span> ${x.outcome_stripped==="correct"?"(right)":"(wrong)"}</td>`:""}
-   <td class="text">${esc(x.why)}</td></tr><tr class="detail" hidden><td colspan="${del?6:5}"><b>Call as given</b>\n${esc(x.text)}${del?`\n\n<b>After content deletion</b>\n${esc(x.text_stripped)}\n\n<b>Reason after deletion</b>\n${esc(x.why_stripped)}`:""}</td></tr>`).join("")
-   :`<tr><td colspan="6" class="mute">No calls of this kind in the sample.</td></tr>`);
-  $("#tt"+i).querySelectorAll("tr.call").forEach(tr=>tr.onclick=()=>{tr.nextElementSibling.hidden=!tr.nextElementSibling.hidden;});
+   <td class="text">${esc(x.why)}</td><td class="l"><button class="chip show">Show call</button></td></tr><tr class="detail" hidden><td colspan="${del?7:6}"><b>Call as given</b>\n${esc(x.text)}${del?`\n\n<b>After content deletion</b>\n${esc(x.text_stripped)}\n\n<b>Reason after deletion</b>\n${esc(x.why_stripped)}`:""}</td></tr>`).join("")
+   :`<tr><td colspan="7" class="mute">No calls of this kind in the sample.</td></tr>`);
+  $("#tt"+i).querySelectorAll("tr.call").forEach(tr=>tr.onclick=()=>{const d=tr.nextElementSibling;d.hidden=!d.hidden;
+   tr.querySelector("button.show").textContent=d.hidden?"Show call":"Hide call";});
  };
  $("#f"+i).querySelectorAll("button").forEach(b=>b.onclick=()=>{$("#f"+i).querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));draw(b.dataset.f);});
  draw("all");
