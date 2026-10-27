@@ -196,31 +196,51 @@ def allow(kind, client):
 # ---------------------------------------------------------------------------
 # detectors
 # ---------------------------------------------------------------------------
-_scamrag = {"loaded": False, "collection": None, "module": None, "error": ""}
+# Loading ScamRAG (chromadb and the embedding model) and scikit-learn takes
+# several seconds, so both are loaded once in the background when the server
+# starts. The page never waits for them: it is told what is ready so far.
+_scamrag = {"done": threading.Event(), "collection": None, "module": None, "error": ""}
+_bow = {"done": threading.Event(), "ok": False}
 
 
-def scamrag_available():
-    """Load ScamRAG once, if this machine has its pattern store. Optional:
-    the demo still works with LLM-only when it is missing."""
+def preload():
+    try:
+        import sklearn  # noqa: F401
+        _bow["ok"] = True
+    except ImportError:
+        pass
+    _bow["done"].set()
     if os.environ.get("DEMO_SCAMRAG", "1") == "0" or FAKE_LLM:
-        return False
-    if not _scamrag["loaded"]:
-        _scamrag["loaded"] = True
+        _scamrag["error"] = "turned off"
+    else:
         try:
             import webrag_system as W
             _scamrag["collection"] = W.get_kb_collection()
             _scamrag["module"] = W
         except Exception as e:                   # no venv, no store, no GPU
             _scamrag["error"] = "%s: %s" % (type(e).__name__, e)
+    _scamrag["done"].set()
+
+
+def scamrag_state():
+    """"loading", "ready" or "off", without waiting."""
+    if not _scamrag["done"].is_set():
+        return "loading"
+    return "ready" if _scamrag["module"] is not None else "off"
+
+
+def scamrag_available():
+    """For a check: waits for the background load if it is still going."""
+    _scamrag["done"].wait(120)
     return _scamrag["module"] is not None
 
 
-def bow_available():
-    try:
-        import sklearn  # noqa: F401
-        return True
-    except ImportError:
-        return False
+def bow_available(wait=True):
+    if wait:
+        _bow["done"].wait(60)
+    elif not _bow["done"].is_set():
+        return True                              # offer it while sklearn loads
+    return _bow["ok"]
 
 
 def _fake_judge(text):
@@ -580,7 +600,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, PAGE, "text/html")
             if u.path == "/api/config":
                 detectors = [{"key": k, "label": v} for k, v in TEST_DETECTORS.items()
-                             if k != "bow" or bow_available()]
+                             if k != "bow" or bow_available(wait=False)]
                 return self._send(200, {
                     "title": cfg.get("title", "Telephone scam detection demo"),
                     "intro": cfg.get("intro", ""),
@@ -589,7 +609,7 @@ class Handler(BaseHTTPRequestHandler):
                     "percall": [{"key": e["key"], "label": e.get("label", e["key"])} for e in cfg["percall"]],
                     "reproduce": cfg["reproduce"],
                     "code_url": cfg.get("code_url", ""),
-                    "scamrag": scamrag_available(),
+                    "scamrag": scamrag_state(),
                     "tests": {k: {"label": v["label"], "dataset_name": v.get("dataset_name", ""),
                                   "train_name": v.get("train_name", "")} for k, v in cfg["tests"].items()},
                     "test_detectors": detectors,
@@ -708,7 +728,8 @@ ol li{margin-bottom:8px}[hidden]{display:none!important}
   <textarea id="text" placeholder="Caller: Hello, this is ... &#10;Customer: ..."></textarea>
   <div class="row"><b>2. Choose detectors</b>
    <label><input type="checkbox" id="d_llm" checked> LLM-only</label>
-   <label id="l_rag"><input type="checkbox" id="d_rag" checked> ScamRAG</label></div>
+   <label id="l_rag" hidden><input type="checkbox" id="d_rag" checked> ScamRAG
+    <span class="mute" id="rag_note"></span></label></div>
   <div class="row"><button class="main" id="go">3. Check call</button>
    <span class="mute" id="limits"></span></div>
  </div>
@@ -722,9 +743,13 @@ ol li{margin-bottom:8px}[hidden]{display:none!important}
   <p><b>Content-deletion test.</b> Every content word (nouns, verbs, adjectives, adverbs) is deleted from each call, and the detector answers again. Accuracy that survives above chance (50%) cannot come from what the caller said, and is subtracted: <i>trusted accuracy</i> = accuracy minus (accuracy after deletion minus 50), when the latter is above 50.</p>
   <p><b>Held-out test.</b> The detector is tested on technical-support scams, a scam type left out of everything it learned from. <i>NSDI</i> = 100 &times; &radic;(recall on the scams &times; specificity on the legitimate calls).</p>
   <div class="grid">
-   <label>Test<select id="t_test"></select></label>
-   <label>Detector<select id="t_det"></select></label>
-   <label>Calls in the sample<select id="t_size"></select></label>
+   <label>Test<select id="t_test"><option value="both">Both tests</option>
+    <option value="deletion">Content-deletion test (Dialogue-1600)</option>
+    <option value="heldout">Held-out test (Support-200)</option></select></label>
+   <label>Detector<select id="t_det"><option value="length">Length-only</option>
+    <option value="bow">BoW</option><option value="llm_only" selected>LLM-only</option></select></label>
+   <label>Calls in the sample<select id="t_size"><option>10</option><option selected>20</option>
+    <option>40</option></select></label>
    <label>Random seed<input type="number" id="t_seed" value="1" min="0" max="999999"></label>
   </div>
   <div class="row"><button class="main" id="t_go">Run test</button><span class="mute" id="t_hint"></span></div>
@@ -752,23 +777,26 @@ let CFG=null,pcOff=0,JOB=null,TIMER=null;
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
  for(const id of ["try","tests","results","repro"])$("#"+id).hidden=id!==b.dataset.tab;});
+function hint(){const n=+$("#t_size").value,t=$("#t_test").value,d=$("#t_det").value;
+ const calls=(t==="both"?3:t==="deletion"?2:1)*n;
+ $("#t_hint").textContent=d==="llm_only"?`${calls} model answers, about ${Math.max(1,Math.round(calls*3/60))} minute(s). Half the sample is scams, half legitimate.`:"Takes a few seconds. Half the sample is scams, half legitimate.";}
+["#t_size","#t_test","#t_det"].forEach(s=>$(s).onchange=hint);
+function ragState(st){
+ $("#l_rag").hidden=st==="off";$("#d_rag").disabled=st!=="ready";
+ $("#rag_note").textContent=st==="loading"?"(loading...)":"";
+ if(st==="loading")setTimeout(async()=>{try{const c=await (await fetch("/api/config")).json();ragState(c.scamrag);}catch(e){}},3000);
+}
 async function init(){
+ hint();
  CFG=await (await fetch("/api/config")).json();
  $("#title").textContent=CFG.title;document.title=CFG.title;$("#intro").textContent=CFG.intro;$("#fake").hidden=!CFG.fake_llm;
  $("#limits").textContent=`Up to ${CFG.limits.per_client} checks per ${CFG.limits.window_min} minutes.`;
- if(!CFG.scamrag){$("#l_rag").hidden=true;$("#d_rag").checked=false;}
+ ragState(CFG.scamrag);
  CFG.examples.forEach(e=>{const b=document.createElement("button");b.className="chip";b.textContent=e.label;
   b.onclick=()=>{$("#text").value=e.text;};$("#examples").appendChild(b);});
- const T=CFG.tests;
- $("#t_test").innerHTML=`<option value="both">Both tests</option>
-  <option value="deletion">${esc(T.deletion.label)} (${esc(T.deletion.dataset_name)})</option>
-  <option value="heldout">${esc(T.heldout.label)} (${esc(T.heldout.dataset_name)})</option>`;
- $("#t_det").innerHTML=CFG.test_detectors.map(d=>`<option value="${d.key}" ${d.key==="llm_only"?"selected":""}>${esc(d.label)}</option>`).join("");
- $("#t_size").innerHTML=[10,20,40].filter(n=>n<=CFG.limits.max_sample).map(n=>`<option ${n===20?"selected":""}>${n}</option>`).join("");
- const hint=()=>{const n=+$("#t_size").value,t=$("#t_test").value,d=$("#t_det").value;
-  const calls=(t==="both"?3:t==="deletion"?2:1)*n;
-  $("#t_hint").textContent=d==="llm_only"?`${calls} model answers, about ${Math.max(1,Math.round(calls*3/60))} minute(s). Half the sample is scams, half legitimate.`:"Takes a few seconds. Half the sample is scams, half legitimate.";};
- ["#t_size","#t_test","#t_det"].forEach(s=>$(s).onchange=hint);hint();
+ const keep=$("#t_det").value;   /* drop BoW if this machine cannot run it, keep the choice */
+ $("#t_det").innerHTML=CFG.test_detectors.map(d=>`<option value="${d.key}">${esc(d.label)}</option>`).join("");
+ $("#t_det").value=CFG.test_detectors.some(d=>d.key===keep)?keep:"llm_only";hint();
  $("#tables").innerHTML=CFG.tables.map(t=>`<div class="card"><h3>${esc(t.title)}</h3><div class="scroll"><table>
   <tr>${t.header.map(h=>`<th>${esc(h)}</th>`).join("")}</tr>
   ${t.rows.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>
@@ -790,7 +818,7 @@ async function loadPc(){
 }
 $("#go").onclick=async()=>{
  const text=$("#text").value.trim();if(!text){$("#out").innerHTML=`<p class="err">Please paste a call first.</p>`;return;}
- const detectors=[];if($("#d_llm").checked)detectors.push("llm_only");if($("#d_rag").checked&&!$("#l_rag").hidden)detectors.push("scamrag");
+ const detectors=[];if($("#d_llm").checked)detectors.push("llm_only");if($("#d_rag").checked&&!$("#l_rag").hidden&&!$("#d_rag").disabled)detectors.push("scamrag");
  $("#go").disabled=true;$("#out").innerHTML=`<p class="mute">Checking the call...</p>`;
  try{const res=await fetch("/api/check",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,detectors})});
   const r=await res.json();
@@ -879,6 +907,7 @@ def main():
     args = ap.parse_args()
     load_config()                                  # fail now, not on the first visit
     threading.Thread(target=job_worker, daemon=True).start()
+    threading.Thread(target=preload, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     print("demo on http://%s:%d  (config %s)" % (args.host, args.port, CONFIG_PATH), flush=True)
     print("limits: %d checks per visitor per %d min, %d per hour in total; %d test runs per visitor per %d min, up to %d calls each"
