@@ -6,6 +6,14 @@
 #   ./web_ui.sh --port 8080
 #   ./web_ui.sh --tmux          # detached, survives an SSH disconnect
 #   ./web_ui.sh --local         # this machine only
+#   ./web_ui.sh --demo          # the public, read-only demo (scripts/demo_ui.py)
+#                               # on port 8081, this machine only
+#   ./web_ui.sh --demo --tmux   # the demo, detached
+#
+# --demo starts a separate, read-only server for readers of the paper: try a
+# call, see the paper's tables, reproduce. It cannot start runs, train, edit or
+# browse files, and it limits how often each visitor can check a call. Run it
+# next to the full UI, and point a tunnel at port 8081 for the public link.
 #
 # It binds every interface, so another machine on the same network can open
 # it directly - the startup banner prints the address to use. Anyone who can
@@ -35,21 +43,33 @@ die()  { echo -e "${RED}  fail${NC} $*"; exit 1; }
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_DIR" || die "cannot cd to $PROJECT_DIR"
 
-PORT=8000
-HOST=0.0.0.0        # every interface: other machines can reach it
+PORT=""
+HOST=""
 DETACH=0
-SESSION="scam_ui"
+DEMO=0
+SESSION=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -p|--port)    PORT="${2:-}";    shift 2 ;;
     --host)       HOST="${2:-}";    shift 2 ;;
     --local)      HOST=127.0.0.1;   shift   ;;
     -t|--tmux)    DETACH=1;         shift   ;;
+    --demo)       DEMO=1;           shift   ;;
     -s|--session) SESSION="${2:-}"; DETACH=1; shift 2 ;;
     -h|--help)    awk 'NR>1 && !/^#/{exit} NR>1{sub(/^# ?/, ""); print}' "$0"; exit 0 ;;
     *)            die "unknown argument: $1  (try --help)" ;;
   esac
 done
+
+# defaults: the full UI on 8000 on every interface; the demo on 8081 on this
+# machine only, since it is meant to be reached through a tunnel
+if [[ "$DEMO" -eq 1 ]]; then
+  PORT="${PORT:-8081}"; HOST="${HOST:-127.0.0.1}"; SESSION="${SESSION:-scam_demo}"
+  SERVER=scripts/demo_ui.py; DEMO_FLAG=" --demo"
+else
+  PORT="${PORT:-8000}"; HOST="${HOST:-0.0.0.0}"; SESSION="${SESSION:-scam_ui}"
+  SERVER=scripts/web_ui.py; DEMO_FLAG=""
+fi
 
 if [[ -f venv/bin/activate ]]; then
   # shellcheck disable=SC1091
@@ -67,10 +87,10 @@ command -v python3 >/dev/null || die "python3 not found"
 
 if [[ "$DETACH" -eq 1 ]]; then
   mkdir -p results/logs
-  UILOG="$PROJECT_DIR/results/logs/web_ui.log"
+  UILOG="$PROJECT_DIR/results/logs/$(basename "$SERVER" .py).log"
   # re-run this same script inside tmux, without --tmux, so the detached copy
   # starts the server exactly the way the foreground one does
-  CMD="cd $(printf %q "$PROJECT_DIR") && exec bash web_ui.sh --port $PORT --host $HOST"
+  CMD="cd $(printf %q "$PROJECT_DIR") && exec bash web_ui.sh --port $PORT --host $HOST$DEMO_FLAG"
   say "Starting the UI detached"
   if command -v tmux >/dev/null; then
     tmux has-session -t "$SESSION" 2>/dev/null \
@@ -140,4 +160,4 @@ fi
 # exec, so the server is this process: ctrl-c and tmux kill-session reach it
 # directly, and once it is running bash is no longer reading this file - the
 # Update button can git pull a new copy of it at any time.
-exec python3 -u scripts/web_ui.py --port "$PORT" --host "$HOST"
+exec python3 -u "$SERVER" --port "$PORT" --host "$HOST"
