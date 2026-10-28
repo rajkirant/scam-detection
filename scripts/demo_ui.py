@@ -707,6 +707,7 @@ td.l,th.l{text-align:left}.scroll{overflow-x:auto}td.text{text-align:left;max-wi
 .metrics{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px}
 .metric{background:var(--soft);border-radius:8px;padding:10px 14px;min-width:150px}
 .metric b{display:block;font-size:1.4rem}.metric span{color:var(--mute);font-size:.85rem}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}@keyframes sp{to{transform:rotate(360deg)}}
 .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--acc);width:0}
 tr.call{cursor:pointer}tr.detail td{background:var(--soft);text-align:left;white-space:pre-wrap;font-size:.88rem}
 ol li{margin-bottom:8px}[hidden]{display:none!important}
@@ -753,7 +754,7 @@ ol li{margin-bottom:8px}[hidden]{display:none!important}
    <label>Random seed<input type="number" id="t_seed" value="1" min="0" max="999999"></label>
   </div>
   <div class="row"><button class="main" id="t_go">Run test</button><span class="mute" id="t_hint"></span></div>
-  <div id="t_prog" hidden><div class="row"><span id="t_state"></span></div><div class="bar"><i id="t_bar"></i></div></div>
+  <div id="t_prog" hidden><div class="row"><span id="t_spin" class="spin" hidden></span><span id="t_state"></span></div><div class="bar"><i id="t_bar"></i></div></div>
   <p class="err" id="t_err"></p>
  </div>
  <div id="t_out"></div>
@@ -773,7 +774,8 @@ ol li{margin-bottom:8px}[hidden]{display:none!important}
 </main>
 <script>
 const $=s=>document.querySelector(s);const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-let CFG=null,pcOff=0,JOB=null,TIMER=null;
+let CFG=null,pcOff=0,JOB=null,TIMER=null,T0=0,TICK=null;
+const dur=s=>{s=Math.round(s);return s<60?`${s} s`:`${Math.floor(s/60)} min ${s%60} s`;};
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("on",x===b));
  for(const id of ["try","tests","results","repro"])$("#"+id).hidden=id!==b.dataset.tab;});
@@ -819,18 +821,21 @@ async function loadPc(){
 $("#go").onclick=async()=>{
  const text=$("#text").value.trim();if(!text){$("#out").innerHTML=`<p class="err">Please paste a call first.</p>`;return;}
  const detectors=[];if($("#d_llm").checked)detectors.push("llm_only");if($("#d_rag").checked&&!$("#l_rag").hidden&&!$("#d_rag").disabled)detectors.push("scamrag");
- $("#go").disabled=true;$("#out").innerHTML=`<p class="mute">Checking the call...</p>`;
+ $("#go").disabled=true;const t0=Date.now(),both=detectors.length>1;
+ const show=()=>{$("#out").innerHTML=`<div class="card"><span class="spin"></span><b>Checking the call... ${dur((Date.now()-t0)/1000)}</b>
+  <p class="mute">A check usually takes 5 to 30 seconds${both?", and up to a minute with both detectors":""}. It runs on one desktop GPU, so it can take longer when other people are using the demo. Please keep this page open.</p></div>`;};
+ show();const tick=setInterval(show,1000);
  try{const res=await fetch("/api/check",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text,detectors})});
-  const r=await res.json();
+  const r=await res.json();clearInterval(tick);
   if(r.error){$("#out").innerHTML=`<p class="err">${esc(r.error)}</p>`;return;}
   $("#out").innerHTML=r.results.map(x=>x.error?`<div class="card"><b>${esc(x.detector)}</b><p class="err">${esc(x.error)}</p></div>`:
    `<div class="card"><div class="mute">${esc(x.detector)}</div>
     <div class="verdict ${x.label==="Scam"?"scam":"legit"}">${esc(x.label??"No clear answer")}${x.confidence!=null?` <span class="mute">(confidence ${esc(x.confidence)} of 100)</span>`:""}</div>
-    <p>${esc(x.reason)}</p>
+    <p><b>Explanation:</b> ${esc(x.reason)}</p>
     ${x.patterns&&x.patterns.length?`<p class="mute">Closest scam pattern: ${x.patterns.map(esc).join("; ")}</p>`:""}
-    <p class="mute">${esc(x.seconds)} seconds</p></div>`).join("");
+    <p class="mute">Answered in ${esc(x.seconds)} seconds.</p></div>`).join("");
  }catch(e){$("#out").innerHTML=`<p class="err">The demo could not be reached. Please try again.</p>`;}
- finally{$("#go").disabled=false;}
+ finally{clearInterval(tick);$("#go").disabled=false;}
 };
 
 /* ---------------- the two tests ---------------- */
@@ -842,18 +847,27 @@ $("#t_go").onclick=async()=>{
  $("#t_go").disabled=true;
  try{const res=await fetch("/api/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
   const r=await res.json();if(r.error){$("#t_err").textContent=r.error;$("#t_go").disabled=false;return;}
-  JOB=r.id;$("#t_prog").hidden=false;poll();
+  JOB=r.id;T0=Date.now();$("#t_prog").hidden=false;$("#t_spin").hidden=false;
+  clearInterval(TICK);TICK=setInterval(()=>{if(LAST)stateText(LAST);},1000);poll();
  }catch(e){$("#t_err").textContent="The demo could not be reached. Please try again.";$("#t_go").disabled=false;}
 };
+let LAST=null;
+function stateText(r){
+ const el=(Date.now()-T0)/1000;let t;
+ if(r.status==="queued")t=`Waiting for the GPU: ${r.ahead} test run(s) ahead. ${dur(el)} so far.`;
+ else if(r.status==="running"){t=`Running: ${r.done} of ${r.total} answers. ${dur(el)} so far`;
+  t+=r.done>2&&r.done<r.total?`, about ${dur(el/r.done*(r.total-r.done))} to go.`:".";}
+ else t=r.status==="done"?`Finished in ${dur(el)}.`:"Stopped.";
+ $("#t_state").textContent=t;
+}
 async function poll(){
  clearTimeout(TIMER);
  let r;try{r=await (await fetch("/api/test?id="+encodeURIComponent(JOB))).json();}catch(e){TIMER=setTimeout(poll,3000);return;}
- if(r.error&&!r.status){$("#t_err").textContent=r.error;$("#t_go").disabled=false;$("#t_prog").hidden=true;return;}
+ if(r.error&&!r.status){clearInterval(TICK);LAST=null;$("#t_err").textContent=r.error;$("#t_go").disabled=false;$("#t_prog").hidden=true;return;}
  const pct=r.total?Math.round(100*r.done/r.total):0;$("#t_bar").style.width=pct+"%";
- $("#t_state").textContent=r.status==="queued"?`Waiting for the GPU: ${r.ahead} test run(s) ahead.`:
-  r.status==="running"?`Running: ${r.done} of ${r.total} answers.`:r.status==="done"?"Finished.":"Stopped.";
+ LAST=r;stateText(r);
  if(r.status==="queued"||r.status==="running"){TIMER=setTimeout(poll,1500);return;}
- $("#t_go").disabled=false;
+ clearInterval(TICK);LAST=null;$("#t_spin").hidden=true;$("#t_go").disabled=false;
  if(r.status==="error"){$("#t_err").textContent=r.error;return;}
  $("#t_out").innerHTML=r.results.map((t,i)=>testCard(t,r.params,i)).join("");
  r.results.forEach((t,i)=>wire(t,i));
@@ -885,11 +899,11 @@ function wire(t,i){
  const del=t.test==="deletion";
  const draw=f=>{
   const rows=t.rows.filter(x=>f==="all"||(f==="errors"?x.outcome!=="correct":x.outcome===f));
-  const head=`<tr><th class="l">Call</th><th class="l">True label</th><th class="l">Answer</th><th class="l">Result</th>${del?`<th class="l">After deletion</th>`:""}<th class="l">Reason</th><th class="l"></th></tr>`;
+  const head=`<tr><th class="l">Call</th><th class="l">True label</th><th class="l">Answer</th><th class="l">Result</th>${del?`<th class="l">After deletion</th>`:""}<th class="l">Explanation</th><th class="l"></th></tr>`;
   $("#tt"+i).innerHTML=head+(rows.length?rows.map((x,k)=>`<tr class="call" data-k="${k}"><td>${esc(x.id)}</td><td class="l">${lab(x.true_scam)}</td>
    <td class="l ${x.pred?"scam":"legit"}">${lab(x.pred)}</td><td class="l">${badge(x.outcome)}</td>
    ${del?`<td class="l"><span class="${x.pred_stripped?"scam":"legit"}">${lab(x.pred_stripped)}</span> ${x.outcome_stripped==="correct"?"(right)":"(wrong)"}</td>`:""}
-   <td class="text">${esc(x.why)}</td><td class="l"><button class="chip show">Show call</button></td></tr><tr class="detail" hidden><td colspan="${del?7:6}"><b>Call as given</b>\n${esc(x.text)}${del?`\n\n<b>After content deletion</b>\n${esc(x.text_stripped)}\n\n<b>Reason after deletion</b>\n${esc(x.why_stripped)}`:""}</td></tr>`).join("")
+   <td class="text">${esc(x.why)}</td><td class="l"><button class="chip show">Show call</button></td></tr><tr class="detail" hidden><td colspan="${del?7:6}"><b>Call as given</b>\n${esc(x.text)}${del?`\n\n<b>After content deletion</b>\n${esc(x.text_stripped)}\n\n<b>Explanation after deletion</b>\n${esc(x.why_stripped)}`:""}</td></tr>`).join("")
    :`<tr><td colspan="7" class="mute">No calls of this kind in the sample.</td></tr>`);
   $("#tt"+i).querySelectorAll("tr.call").forEach(tr=>tr.onclick=()=>{const d=tr.nextElementSibling;d.hidden=!d.hidden;
    tr.querySelector("button.show").textContent=d.hidden?"Show call":"Hide call";});
