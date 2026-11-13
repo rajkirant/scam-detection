@@ -5339,12 +5339,15 @@ per held-out call, so it takes minutes, not seconds.</pre>
         <div id="mcqaexpl" style="margin-top:10px"></div>
       </div>
       <div class="card" id="mcqacallscard" hidden>
-        <div class="tq-q">Calls</div>
+        <div class="tq-q">Calls and their transcripts</div>
+        <div class="hint">Every call the attacker wrote, in order. Round 0 is
+          the first call of a variant; rounds 1 and up are its rewrites. Press
+          Show transcript to read a call.</div>
         <div class="askrow" style="margin:8px 0">
           <select id="mcqafilter">
+            <option value="all">all calls</option>
             <option value="evaded">evaded only</option>
             <option value="neutral">evaded or neutral</option>
-            <option value="all">all calls</option>
           </select>
         </div>
         <div id="mcqacalls"></div>
@@ -9611,6 +9614,7 @@ async function mcqBuildPoll() {
 // run writes results/attack/<run id>/; the tab reads its table and its calls
 // through /api/mcq/attack?id=, while it runs and after.
 let mcqAttackRun = null, mcqAttackTimer = null, mcqAttackData = null;
+const mcqAttackOpen = new Set();
 
 async function mcqAttackBoot() {
   const cfg = await api('/api/mcq/attack');
@@ -9628,7 +9632,7 @@ async function mcqAttackBoot() {
   cost();
   $('mcqago').onclick = mcqAttackStart;
   $('mcqastop').onclick = () => mcqAttackRun && api('/api/stop', {id: mcqAttackRun});
-  $('mcqafilter').onchange = mcqAttackCalls;
+  $('mcqafilter').onchange = () => { mcqAttackOpen.clear(); mcqAttackCalls(); };
   if (cfg.last) { mcqAttackRun = cfg.last; mcqAttackPoll(); }
 }
 
@@ -9642,6 +9646,7 @@ async function mcqAttackStart() {
   if (res.error) { $('mcqaerr').textContent = res.error; return; }
   mcqAttackRun = res.id;
   mcqAttackData = null;
+  mcqAttackOpen.clear();
   $('mcqahead').textContent = 'starting…';
   mcqTab('attack');
   mcqAttackPoll();
@@ -9714,16 +9719,36 @@ function mcqAttackCalls() {
   const keep = c => f === 'all' || (c.goal_kept && (c.verdict === 'legit'
     || (f === 'neutral' && c.verdict === 'neutral')));
   const calls = r.calls.filter(keep);
-  $('mcqacalls').innerHTML = calls.length ? calls.map(c => {
-    const what = c.malformed ? 'not a transcript: ' + c.malformed
-      : !c.goal_kept ? `goal dropped (score ${c.score})`
+  $('mcqacalls').innerHTML = calls.length ? calls.map((c, i) => {
+    const what = c.malformed ? 'not scored - ' + c.malformed
+      : !c.goal_kept ? `goal check failed (tree: ${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score})`
       : `${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score}`;
-    return `<details style="margin:6px 0"><summary><b>${esc(c.scenario)}</b> `
-      + `v${c.variant} round ${c.round} &middot; ${esc(what)}</summary>`
+    const colour = c.malformed || !c.goal_kept ? 'var(--muted, #888)'
+      : c.verdict === 'scam' ? 'inherit' : 'var(--bad)';
+    return `<div style="padding:8px 0; border-bottom:1px solid var(--line)">`
+      + `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">`
+      + `<button data-call="${i}" style="width:auto">Show transcript</button>`
+      + `<span><b>${esc(c.scenario)}</b> &middot; variant ${c.variant} &middot; `
+      + `${c.round ? 'rewrite ' + c.round : 'first call'}</span>`
+      + `<span style="color:${colour}">${esc(what)}</span></div>`
+      + `<div id="mcqacall${i}" hidden>`
       + (c.goal_quote ? `<div class="hint">goal check quoted: "${esc(c.goal_quote)}"</div>` : '')
       + (c.moved.length ? `<div class="hint">answers that moved the score: ${esc(c.moved.join(', '))}</div>` : '')
-      + `<pre class="log" style="white-space:pre-wrap; margin-top:6px">${esc(c.call)}</pre></details>`;
+      + `<pre class="log" style="white-space:pre-wrap; margin-top:6px">${esc(c.call)}</pre></div></div>`;
   }).join('') : '<div class="hint">no such call yet</div>';
+  for (const b of $('mcqacalls').querySelectorAll('button[data-call]'))
+    b.onclick = () => {
+      const box = $('mcqacall' + b.dataset.call);
+      box.hidden = !box.hidden;
+      b.textContent = box.hidden ? 'Show transcript' : 'Hide transcript';
+      if (box.hidden) mcqAttackOpen.delete(b.dataset.call);
+      else mcqAttackOpen.add(b.dataset.call);
+    };
+  // a poll redraws the list: keep open what was open
+  for (const i of mcqAttackOpen) {
+    const b = $('mcqacalls').querySelector(`button[data-call="${i}"]`);
+    if (b) b.onclick();
+  }
 }
 
 boot();
