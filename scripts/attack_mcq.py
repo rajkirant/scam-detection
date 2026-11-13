@@ -19,9 +19,9 @@ to a device, a card number ...). For each scenario and each variant:
 
 A rewrite only counts if the call is still that scam. A scammer who gives up
 the goal has not evaded anything, so every call is put to a GOAL CHECK: a
-separate request asks whether the caller asks for the goal, and the quote it
-gives must be in the call. The check uses the same LLM as the detector, so
-every call is saved for a person to read (attempts.jsonl).
+separate request asks whether the caller still asks for the goal, YES or NO.
+The check uses the same LLM as the detector, so every call is saved with the
+check's reply for a person to read (attempts.jsonl).
 
 Outcome of a variant, best first:
   evaded    a call that keeps the goal and scores below 0 (labelled legit)
@@ -63,7 +63,7 @@ import llm_judge                                               # noqa: E402
 import mcq_ontology as MCQ                                     # noqa: E402
 import ollama_ctx                                              # noqa: E402
 
-MIN_WORDS, MAX_WORDS = 80, 350
+MIN_WORDS, MAX_WORDS = 80, 450
 CALL_TOKENS = 700
 ORDER = {"evaded": 0, "neutral": 1, "caught": 2, "no_valid_call": 3}
 
@@ -109,7 +109,7 @@ SCENARIOS = [
 
 FORMAT = ("Write the call as a transcript of %d to %d words. Start every turn "
           "with \"caller:\" or \"receiver:\" and write only the transcript, "
-          "with no title, notes or explanation." % (MIN_WORDS + 40, MAX_WORDS - 50))
+          "with no title, notes or explanation." % (MIN_WORDS + 40, 300))
 
 NAIVE = """You are helping to test a telephone scam detector by writing test calls.
 
@@ -132,14 +132,11 @@ Do not turn it into an honest call, and do not drop the request.
 
 {format}"""
 
-GOAL_CHECK = """Read this phone call transcript.
-
-Transcript:
-{call}
-
-Question: In this call, does the caller ask the person to {goal}?
-Answer YES or NO. Then, on the next line, write "Quote:" and the caller's words, copied exactly from the transcript, that make the request ("Quote: none" if NO).
-Answer:"""
+GOAL_CHECK = ("In this call, does the caller ask the person to {goal}?\n"
+              "Answer YES or NO. Then, on the next line, write \"Quote:\" and "
+              "the caller's words, copied exactly from the transcript, that "
+              "make the request (\"Quote: none\" if NO).")
+_YES_NO = re.compile(r"\b(YES|NO)\b", re.I)
 
 
 # ------------------------------------------------------------------ the LLM
@@ -236,25 +233,31 @@ def well_formed(call):
     return ""
 
 
-def goal_kept(call, goal, model=None):
-    """(kept, quote). Kept only on YES with a quote that is in the call."""
-    reply = llm(GOAL_CHECK.format(call=call, goal=goal), 80, model=model)
-    yes = reply.strip().upper().startswith("YES")
-    quote = MCQ.find_quote(reply)
-    return bool(yes and quote and MCQ.quote_found(quote, call)), quote
+def goal_kept(call, goal):
+    """(kept, quote, reply). The call keeps its goal when the answer is YES.
+
+    Asked the way the MCQ page asks a typed question about a call, so the
+    request is one the detector's model is known to answer. The first YES or
+    NO in the reply decides. The quote is kept for the reader, and so is the
+    whole reply; a YES whose quote is not in the call still counts, because
+    the model often tidies the words it copies."""
+    reply = MCQ.ask_question(call, GOAL_CHECK.format(goal=goal)).get("answer") or ""
+    m = _YES_NO.search(reply)
+    return bool(m and m.group(1).upper() == "YES"), MCQ.find_quote(reply), reply
 
 
-def attempt(call, goal, onto, quotes, judge_model):
+def attempt(call, goal, onto, quotes):
     """Score one call: its form, the goal check, then the tree."""
     bad = well_formed(call)
     rec = {"call": call, "words": len(call.split()), "malformed": bad}
     if bad:
-        rec.update(goal_kept=False, goal_quote=None, score=None,
+        rec.update(goal_kept=False, goal_quote=None, goal_reply=None, score=None,
                    verdict=None, subject=None, answers=[])
         return rec, None
-    kept, quote = goal_kept(call, goal, judge_model)
+    kept, quote, reply = goal_kept(call, goal)
     res = MCQ.classify(call, onto, quotes)
-    rec.update(goal_kept=kept, goal_quote=quote, score=res["score"],
+    rec.update(goal_kept=kept, goal_quote=quote, goal_reply=reply,
+               score=res["score"],
                verdict=res["verdict"], subject=res["subject"],
                answers=[{"path": a["path"], "option": a["option"],
                          "value": a["value"], "quote": a["quote"],
@@ -287,7 +290,7 @@ def run_variant(sc, variant, onto, args):
                           args.attacker_model))
     seen_subjects = [subject_id]
     for rnd in range(args.rounds + 1):
-        rec, res = attempt(call, goal, onto, quotes, args.judge_model)
+        rec, res = attempt(call, goal, onto, quotes)
         rec.update(scenario=sid, subject_target=subject_id, kind=kind,
                    goal=goal, variant=variant, round=rnd,
                    knowledge=args.knowledge)
@@ -478,9 +481,6 @@ def main(argv=None):
     ap.add_argument("--attacker-model", default=None,
                     help="Ollama model that writes the calls (default: the "
                          "detector's own)")
-    ap.add_argument("--judge-model", default=None,
-                    help="Ollama model for the goal check (default: the "
-                         "detector's own)")
     ap.add_argument("--no-quotes", action="store_true")
     ap.add_argument("--list", action="store_true", help="list the scenarios")
     ap.add_argument("--replay", default=None,
@@ -539,9 +539,8 @@ def main(argv=None):
     print("  ontology : %s" % args.ontology)
     print("  knowledge: %s   rounds: %d   variants: %d   temperature: %s"
           % (args.knowledge, args.rounds, args.variants, args.temperature))
-    print("  attacker : %s   goal check: %s   detector: %s"
-          % (args.attacker_model or ollama_ctx.MODEL,
-             args.judge_model or ollama_ctx.MODEL, ollama_ctx.MODEL))
+    print("  attacker : %s   goal check and detector: %s"
+          % (args.attacker_model or ollama_ctx.MODEL, ollama_ctx.MODEL))
     print("  scenarios: %d (%d variants already done)"
           % (len(todo), len(finished)))
     if skipped:
@@ -565,7 +564,8 @@ def main(argv=None):
                         f.write(json.dumps(r) + "\n")
                 done += recs
                 scores = ["%+.1f" % r["score"] if r["goal_kept"]
-                          else "x" for r in recs]
+                          else "long" if r["malformed"]
+                          else "(%+.1f)" % r["score"] for r in recs]
                 print("  %-20s v%d  %-8s  scores by round: %s   (%.0fs)"
                       % (sc[0], v, outcome(recs), " ".join(scores),
                          time.time() - t0), flush=True)
@@ -577,8 +577,8 @@ def main(argv=None):
     print_summary(rows, done)
     write_summary(rows, out_dir)
     print("  every call: %s\n  summary   : %s" % (log, out_dir / "summary.csv"))
-    print("  x = a call that dropped its goal or was not a transcript; it "
-          "does not count.")
+    print("  (score) = a call that no longer asks for the goal; long = not a "
+          "transcript of the right length. Neither counts.")
     return 0
 
 

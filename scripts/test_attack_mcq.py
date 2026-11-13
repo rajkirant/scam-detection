@@ -43,11 +43,6 @@ plan = {}
 def fake_llm(prompt, max_tokens, temperature=0.0, seed=None, model=None,
              timeout=600):
     prompts.append(prompt)
-    if prompt.startswith("Read this phone call"):          # the goal check
-        call = prompt.split("Transcript:\n")[1].split("\n\nQuestion")[0]
-        if "pay the bill now" in call:
-            return "YES\nQuote: please pay the bill now into this account"
-        return "NO\nQuote: none"
     if "Your last call" not in prompt:
         return LOUD
     return plan["rewrite"]
@@ -67,7 +62,14 @@ def fake_classify(call, onto, quotes=True, timeout=300):
                  "quoted": True}]}
 
 
+def fake_question(call, question, options=None, timeout=300):
+    if "pay the bill now" in call:                         # the goal check
+        return {"answer": "Yes.\nQuote: \"Please pay the bill now\""}
+    return {"answer": "NO\nQuote: none"}
+
+
 A.llm = fake_llm
+A.MCQ.ask_question = fake_question
 A.MCQ.classify = fake_classify
 tmp = tempfile.mkdtemp()
 
@@ -110,6 +112,8 @@ check("an honest rewrite scores below 0 but is not an evasion",
       (0, 2, 6, 8))
 check("the attacker is told why", any("no longer clearly asks" in p
                                       for p in prompts))
+check("the goal check's whole reply is kept", att[1]["goal_reply"],
+      "NO\nQuote: none")
 
 print("\nneutral, black box, malformed")
 shutil.rmtree(tmp); os.mkdir(tmp)

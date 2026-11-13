@@ -3413,6 +3413,7 @@ def mcq_attack_result(run_id):
                    "round": a["round"], "score": a["score"],
                    "verdict": a["verdict"], "goal_kept": a["goal_kept"],
                    "goal_quote": a.get("goal_quote"),
+                   "goal_reply": a.get("goal_reply"),
                    "malformed": a["malformed"], "subject": a.get("subject"),
                    "call": a["call"][:4000],
                    "moved": ["%s %+.1f" % (x["option"], x["value"])
@@ -9721,7 +9722,7 @@ function mcqAttackCalls() {
   const calls = r.calls.filter(keep);
   $('mcqacalls').innerHTML = calls.length ? calls.map((c, i) => {
     const what = c.malformed ? 'not scored - ' + c.malformed
-      : !c.goal_kept ? `goal check failed (tree: ${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score})`
+      : !c.goal_kept ? `does not count: the goal check says the request is gone (tree: ${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score})`
       : `${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score}`;
     const colour = c.malformed || !c.goal_kept ? 'var(--muted, #888)'
       : c.verdict === 'scam' ? 'inherit' : 'var(--bad)';
@@ -9732,7 +9733,8 @@ function mcqAttackCalls() {
       + `${c.round ? 'rewrite ' + c.round : 'first call'}</span>`
       + `<span style="color:${colour}">${esc(what)}</span></div>`
       + `<div id="mcqacall${i}" hidden>`
-      + (c.goal_quote ? `<div class="hint">goal check quoted: "${esc(c.goal_quote)}"</div>` : '')
+      + (c.goal_reply ? `<div class="hint">goal check answered: ${esc(c.goal_reply)}</div>`
+         : c.goal_quote ? `<div class="hint">goal check quoted: "${esc(c.goal_quote)}"</div>` : '')
       + (c.moved.length ? `<div class="hint">answers that moved the score: ${esc(c.moved.join(', '))}</div>` : '')
       + `<pre class="log" style="white-space:pre-wrap; margin-top:6px">${esc(c.call)}</pre></div></div>`;
   }).join('') : '<div class="hint">no such call yet</div>';
