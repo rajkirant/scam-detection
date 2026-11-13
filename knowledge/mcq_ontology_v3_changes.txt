@@ -1,0 +1,14 @@
+gate  government/claim -> letter_followup: -0.3 to 0, decided by letter_confirmed
+gate  insurance_health/claim -> existing_policy: -0.3 to 0, decided by policy_confirmed
+gate  utility/claim -> overdue_with_notices: -0.3 to 0, decided by bill_confirmed
+gate  common/payment_asked/yes/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  government/requested_action/pay_or_move/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  delivery/requested_action/pay_or_move/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  insurance_health/requested_action/pay_or_move/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  common/payment_asked/yes/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  government/requested_action/pay_or_move/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  delivery/requested_action/pay_or_move/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  insurance_health/requested_action/pay_or_move/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  common/verification/yes/verification_how -> encouraged: -1.0 to 0, decided by check_source
+value common/sensitive_details -> security_codes: +1.0 to 0, counted by common/code_asked
+new   common/code_asked (+1.0 when a code is asked), asked after common/sensitive_details in 14 subjects
