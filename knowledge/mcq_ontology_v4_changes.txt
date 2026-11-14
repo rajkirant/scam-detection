@@ -1,0 +1,2 @@
+follow-up common/contact_origin/caller_rang/caller_reason -> caller_raised_problem (+0.8): person_knew, -0.8 when the person already knew
+follow-up government/claim -> money_owed (+0.3): person_knew, -0.8 when the person already knew

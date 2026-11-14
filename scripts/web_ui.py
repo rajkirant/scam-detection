@@ -3359,6 +3359,11 @@ def start_mcq_attack_run(form):
     flags = ["--ontology", "knowledge/" + src.name, "--knowledge", knowledge,
              "--rounds", str(rounds), "--variants", str(variants),
              "--out", out_dir, "--detector", detector, "--mode", mode]
+    try:
+        seed = int(form.get("seed") or 42)
+    except (TypeError, ValueError):
+        raise ValueError("seed must be a number")
+    flags += ["--seed", str(seed)]
     if only:
         flags += ["--only", ",".join(only)]
     if form.get("quotes") is False:
@@ -5105,6 +5110,9 @@ per held-out call, so it takes minutes, not seconds.</pre>
         <option value="none">nothing (control)</option>
       </select>
       <div class="askrow" style="margin-top:8px">
+        <label for="mcqaseed" style="margin:0">Seed</label>
+        <input type="text" id="mcqaseed" class="num" value="42" spellcheck="false"
+               title="another seed writes other calls: use one to test a repair on calls it was not made from">
         <label for="mcqarounds" style="margin:0">Rewrites</label>
         <input type="text" id="mcqarounds" class="num" value="5" spellcheck="false">
         <label for="mcqavariants" style="margin:0">variants</label>
@@ -9668,7 +9676,7 @@ async function mcqAttackStart() {
   $('mcqaerr').textContent = '';
   const res = await api('/api/mcq/attack', {
     ontology: mcqFile, knowledge: $('mcqaknow').value, detector: $('mcqadet').value,
-    mode: $('mcqamode').value,
+    mode: $('mcqamode').value, seed: $('mcqaseed').value,
     rounds: $('mcqarounds').value, variants: $('mcqavariants').value,
     only: [...$('mcqaonly').selectedOptions].map(o => o.value),
     quotes: $('mcqquotes').checked});

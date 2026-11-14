@@ -1,0 +1,2802 @@
+{
+  "prompt": "What is this call mainly about?",
+  "options": [
+    {
+      "id": "bank_account",
+      "text": "Bank account, card, or a payment on it",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "money_movement",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "bank_fraud_team",
+              "text": "A bank's fraud or security team",
+              "value": 0.0
+            },
+            {
+              "id": "bank_general",
+              "text": "A bank, generally",
+              "value": 0.0
+            },
+            {
+              "id": "card_or_payment_company",
+              "text": "A card company or a payment service",
+              "value": 0.0
+            },
+            {
+              "id": "vague_department",
+              "text": "A vague department, such as a 'network' or 'security' department, with no clear organisation",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "money_movement",
+          "prompt": "What does the caller want done with the person's money?",
+          "options": [
+            {
+              "id": "move_to_safe_account",
+              "text": "Move it to a new, 'safe', or different account",
+              "value": 1.0
+            },
+            {
+              "id": "withdraw_or_convert",
+              "text": "Take it out as cash, or turn it into gold, crypto, or gift cards, to keep it safe",
+              "value": 1.0
+            },
+            {
+              "id": "approve_transfer",
+              "text": "Approve a transfer that the caller is setting up",
+              "value": 0.8
+            },
+            {
+              "id": "move_between_own",
+              "text": "Move money only between the person's own accounts",
+              "value": -0.8
+            },
+            {
+              "id": "nothing_moves",
+              "text": "Nothing moves: the person only confirms or reviews a payment",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ],
+          "hint": "Choose \"Nothing moves\" only when the person is asked for nothing but to say whether a payment is theirs. If the caller asks for a card number, the code on a card, a password, or a one-time code, choose Not stated."
+        }
+      ]
+    },
+    {
+      "id": "tech_support",
+      "text": "Computer, phone, internet, email, or online account problem",
+      "ask": [
+        "claimed_identity",
+        "problem",
+        "common/pressure",
+        "fix_cost",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "big_tech",
+              "text": "Microsoft, Apple, Google, or a similar company",
+              "value": 0.0
+            },
+            {
+              "id": "isp_or_phone",
+              "text": "The internet or phone provider",
+              "value": 0.0
+            },
+            {
+              "id": "security_company",
+              "text": "An antivirus or security company",
+              "value": 0.0
+            },
+            {
+              "id": "own_it_dept",
+              "text": "The person's own workplace IT department",
+              "value": 0.0
+            },
+            {
+              "id": "other_named_company",
+              "text": "Another named company or its support team, such as a streaming, app, or device company",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "problem",
+          "role": "recorded",
+          "prompt": "What problem is the call about?",
+          "options": [
+            {
+              "id": "warning_screen",
+              "text": "A pop-up, a locked screen, or a warning message",
+              "value": 0.0
+            },
+            {
+              "id": "remote_detection",
+              "text": "Something the caller says they detected remotely, such as a virus, hacking, or errors",
+              "value": 0.0
+            },
+            {
+              "id": "service_fault_noticed_by_caller",
+              "text": "A fault with a device, an app, or a service, such as playback, streaming, or the connection, that the caller says they noticed",
+              "value": 0.0
+            },
+            {
+              "id": "renewal_or_licence",
+              "text": "A renewal, a licence, or a support plan for software",
+              "value": 0.0
+            },
+            {
+              "id": "fault_noticed",
+              "text": "A fault the person noticed themselves, such as a slow computer or a failed login",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "fix_cost",
+          "prompt": "What does the caller want to be paid for?",
+          "options": [
+            {
+              "id": "pay_to_remove_threat",
+              "text": "Removing a threat the caller found, or a plan sold on the spot to protect the device",
+              "value": 0.8
+            },
+            {
+              "id": "covered_or_invoiced",
+              "text": "Work the person asked for, covered by an existing plan or warranty, or billed by an ordinary invoice",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "government",
+      "text": "Government, tax, Social Security, benefits, immigration, police, or a court",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "claim",
+        "requested_action",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "skip": [
+        "common/payment_asked"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "tax_agency",
+              "text": "A tax authority",
+              "value": 0.0
+            },
+            {
+              "id": "social_security",
+              "text": "The Social Security office",
+              "value": 0.0
+            },
+            {
+              "id": "police_or_court",
+              "text": "The police, a court, a sheriff, or a lawyer",
+              "value": 0.0
+            },
+            {
+              "id": "immigration",
+              "text": "An immigration authority",
+              "value": 0.0
+            },
+            {
+              "id": "benefits_office",
+              "text": "A benefits, grants, or health programme office",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "claim",
+          "prompt": "What does the caller say the call is about?",
+          "hint": "The legal case option fits only when the caller says the person is accused, sued, wanted, or under investigation. A case the person asked a lawyer about, a report the person made, or being a witness is not that. The follow-up option fits only when the call names a letter, a form, or an application the person sent or received. A request for documents for an investigation is not a follow-up. The follow-up option also needs the person to say they have the letter, or that they sent the form or the application. The caller saying that a letter or a notice was sent, or that an application was received, is not enough: choose by what the caller asks for.",
+          "options": [
+            {
+              "id": "id_misused",
+              "text": "The person's Social Security or ID number is suspended, misused, or linked to a crime",
+              "value": 1.0
+            },
+            {
+              "id": "warrant_or_case",
+              "text": "A warrant, a lawsuit, or a legal case against the person",
+              "value": 1.0
+            },
+            {
+              "id": "grant_or_benefit",
+              "text": "A grant, a benefit, or a refund the person qualifies for",
+              "value": 0.5
+            },
+            {
+              "id": "money_owed",
+              "text": "Unpaid tax, a fine, or a fee",
+              "value": 0.3,
+              "follow_up": [
+                {
+                  "id": "person_knew",
+                  "prompt": "Does the person show, in their own words, that they already knew about this before the call?",
+                  "hint": "Knowing means the person says they received the bill, the notice, or the letter, that they called about it first, or that they were already dealing with it. The person only saying \"okay\" or \"I see\" to the caller is not knowing.",
+                  "options": [
+                    {
+                      "id": "knew",
+                      "value": -0.8,
+                      "text": "Yes: they say they received it, called about it, or were already dealing with it"
+                    },
+                    {
+                      "id": "did_not_know",
+                      "value": 0.0,
+                      "text": "No: it is news to them, or they only agree with the caller"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "letter_followup",
+              "text": "A follow-up to a letter, a form, or an application the person can check",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "letter_confirmed",
+                  "prompt": "Does the person confirm the letter, the form, or the application, or does only the caller say so?",
+                  "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                  "options": [
+                    {
+                      "id": "person_confirms",
+                      "value": -0.8,
+                      "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                    },
+                    {
+                      "id": "caller_only",
+                      "value": 0.0,
+                      "text": "Only the caller says so"
+                    },
+                    {
+                      "id": "person_denies",
+                      "value": 0.5,
+                      "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "requested_action",
+          "prompt": "What does the caller ask the person to do?",
+          "hint": "If the caller asks for money in any way, choose the pay or move money option, even when they also ask for something else.",
+          "options": [
+            {
+              "id": "pay_or_move",
+              "text": "Pay money, or move or transfer it, such as to settle a fine or into a 'secure' account",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "payment_channel",
+                  "prompt": "How would the money be paid or moved?",
+                  "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is. The organisation's own website, app, or office means one the person already uses or can find themselves. A website, a link, a portal, or a payment page named by a caller who rang the person is not that: choose by how the money is paid there, or Not stated.",
+                  "options": [
+                    {
+                      "id": "gift_cards",
+                      "text": "Gift cards, prepaid cards, or vouchers",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "crypto_or_gold",
+                      "text": "Cryptocurrency, a crypto ATM, or gold",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "cash_courier",
+                      "text": "Cash handed to a courier, or sent by post",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "bank_transfer",
+                      "text": "A bank transfer",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "account_type",
+                          "prompt": "What kind of account would the money go into?",
+                          "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                          "options": [
+                            {
+                              "id": "caller_account",
+                              "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                              "value": 1.0
+                            },
+                            {
+                              "id": "own_accounts",
+                              "text": "Only between the person's own existing accounts",
+                              "value": -0.8
+                            },
+                            {
+                              "id": "official_account",
+                              "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app",
+                              "value": -1.0
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "text": "Not stated",
+                              "value": 0.0
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "card_by_phone",
+                      "text": "Card details read out during the call",
+                      "value": 0.0
+                    },
+                    {
+                      "id": "existing_method",
+                      "text": "A card or account already on file, or an ordinary invoice to pay later",
+                      "value": -0.8
+                    },
+                    {
+                      "id": "official_channel",
+                      "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "channel_source",
+                          "prompt": "Who named the website, the app, the office, or the payment method?",
+                          "options": [
+                            {
+                              "id": "person_already_has",
+                              "value": -1.0,
+                              "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                            },
+                            {
+                              "id": "caller_named",
+                              "value": 0.0,
+                              "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ]
+                },
+                {
+                  "id": "payment_purpose",
+                  "prompt": "What does the caller say the money is for?",
+                  "options": [
+                    {
+                      "id": "refundable_deposit",
+                      "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "avoid_trouble",
+                      "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "keep_safe",
+                      "text": "To keep the money safe from fraud, hackers, or a criminal investigation",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "release_fee",
+                      "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released",
+                      "value": 0.8
+                    },
+                    {
+                      "id": "keep_cover",
+                      "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call",
+                      "value": 0.5
+                    },
+                    {
+                      "id": "caller_service",
+                      "text": "A product, repair, or service the caller is offering on this call",
+                      "value": 0.3
+                    },
+                    {
+                      "id": "agreed_purchase",
+                      "text": "Something the person ordered or signed up for, or a bill they already owe",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "purchase_confirmed",
+                          "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                          "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                          "options": [
+                            {
+                              "id": "person_confirms",
+                              "value": -0.5,
+                              "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                            },
+                            {
+                              "id": "caller_only",
+                              "value": 0.0,
+                              "text": "Only the caller says so"
+                            },
+                            {
+                              "id": "person_denies",
+                              "value": 0.5,
+                              "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ],
+                  "hint": "The ordered-or-owed option needs the person to say they ordered it or know the bill. A bill or a debt that only the caller says is unpaid is not that: if it must be paid on this call to keep a service on, choose the keep-a-service option."
+                }
+              ]
+            },
+            {
+              "id": "no_action",
+              "text": "Nothing: the call only gives information",
+              "value": -0.3
+            },
+            {
+              "id": "official_route",
+              "text": "Use their online account, post a form, or reply to the letter",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "delivery",
+      "text": "Parcel, courier, or delivery, including a customs charge on a parcel",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "requested_action",
+        "parcel_expected",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "skip": [
+        "common/payment_asked"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "courier",
+              "text": "A courier or delivery company",
+              "value": 0.0
+            },
+            {
+              "id": "retailer",
+              "text": "The shop the order came from",
+              "value": 0.0
+            },
+            {
+              "id": "customs",
+              "text": "A customs or border agency",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "requested_action",
+          "prompt": "What does the caller ask the person to do?",
+          "hint": "If the caller asks for money in any way, choose the pay or move money option, even when they also ask for something else.",
+          "options": [
+            {
+              "id": "pay_or_move",
+              "text": "Pay money, or move or transfer it, such as a customs, redelivery, or handling fee",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "payment_channel",
+                  "prompt": "How would the money be paid or moved?",
+                  "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is. The organisation's own website, app, or office means one the person already uses or can find themselves. A website, a link, a portal, or a payment page named by a caller who rang the person is not that: choose by how the money is paid there, or Not stated.",
+                  "options": [
+                    {
+                      "id": "gift_cards",
+                      "text": "Gift cards, prepaid cards, or vouchers",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "crypto_or_gold",
+                      "text": "Cryptocurrency, a crypto ATM, or gold",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "cash_courier",
+                      "text": "Cash handed to a courier, or sent by post",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "bank_transfer",
+                      "text": "A bank transfer",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "account_type",
+                          "prompt": "What kind of account would the money go into?",
+                          "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                          "options": [
+                            {
+                              "id": "caller_account",
+                              "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                              "value": 1.0
+                            },
+                            {
+                              "id": "own_accounts",
+                              "text": "Only between the person's own existing accounts",
+                              "value": -0.8
+                            },
+                            {
+                              "id": "official_account",
+                              "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app",
+                              "value": -1.0
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "text": "Not stated",
+                              "value": 0.0
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "card_by_phone",
+                      "text": "Card details read out during the call",
+                      "value": 0.0
+                    },
+                    {
+                      "id": "existing_method",
+                      "text": "A card or account already on file, or an ordinary invoice to pay later",
+                      "value": -0.8
+                    },
+                    {
+                      "id": "official_channel",
+                      "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "channel_source",
+                          "prompt": "Who named the website, the app, the office, or the payment method?",
+                          "options": [
+                            {
+                              "id": "person_already_has",
+                              "value": -1.0,
+                              "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                            },
+                            {
+                              "id": "caller_named",
+                              "value": 0.0,
+                              "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ]
+                },
+                {
+                  "id": "payment_purpose",
+                  "prompt": "What does the caller say the money is for?",
+                  "options": [
+                    {
+                      "id": "refundable_deposit",
+                      "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "avoid_trouble",
+                      "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "keep_safe",
+                      "text": "To keep the money safe from fraud, hackers, or a criminal investigation",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "release_fee",
+                      "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released",
+                      "value": 0.8
+                    },
+                    {
+                      "id": "keep_cover",
+                      "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call",
+                      "value": 0.5
+                    },
+                    {
+                      "id": "caller_service",
+                      "text": "A product, repair, or service the caller is offering on this call",
+                      "value": 0.3
+                    },
+                    {
+                      "id": "agreed_purchase",
+                      "text": "Something the person ordered or signed up for, or a bill they already owe",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "purchase_confirmed",
+                          "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                          "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                          "options": [
+                            {
+                              "id": "person_confirms",
+                              "value": -0.5,
+                              "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                            },
+                            {
+                              "id": "caller_only",
+                              "value": 0.0,
+                              "text": "Only the caller says so"
+                            },
+                            {
+                              "id": "person_denies",
+                              "value": 0.5,
+                              "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ],
+                  "hint": "The ordered-or-owed option needs the person to say they ordered it or know the bill. A bill or a debt that only the caller says is unpaid is not that: if it must be paid on this call to keep a service on, choose the keep-a-service option."
+                }
+              ]
+            },
+            {
+              "id": "no_action",
+              "text": "Nothing: the call only gives information",
+              "value": -0.3
+            },
+            {
+              "id": "confirm_address",
+              "text": "Confirm an address the person gave earlier",
+              "value": -0.5
+            },
+            {
+              "id": "confirm_slot",
+              "text": "Confirm or change a delivery time",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "parcel_expected",
+          "prompt": "Is the person expecting this parcel?",
+          "options": [
+            {
+              "id": "unexpected",
+              "text": "No: the person did not order it, or the parcel is not identified",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "after_unexpected",
+                  "prompt": "What does the caller want for this parcel?",
+                  "hint": "Confirming an address the person gave earlier, or reading out an order number to check, is not asking for something. Choose the mistake option when the caller says it may be their error, the wrong person, or the wrong address, and drops it.",
+                  "options": [
+                    {
+                      "id": "still_wants",
+                      "text": "Something before it is released or delivered: a fee, card or bank details, personal details, or a key press",
+                      "value": 0.8
+                    },
+                    {
+                      "id": "mistake_accepted",
+                      "text": "Nothing: the caller accepts it may be a mistake, the wrong person, or the wrong address",
+                      "value": -0.8
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "expected",
+              "text": "Yes: it matches something the person ordered",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "order_refund",
+      "text": "An order, a purchase, or a refund",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "claim",
+        "resolution",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "retailer_orders",
+              "text": "A shop's order or customer service team",
+              "value": 0.0
+            },
+            {
+              "id": "marketplace",
+              "text": "A large online marketplace",
+              "value": 0.0
+            },
+            {
+              "id": "card_fraud_team",
+              "text": "A card company's fraud team, about a purchase",
+              "value": 0.0
+            },
+            {
+              "id": "refund_department",
+              "text": "A 'refund' or 'cancellation' department",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "claim",
+          "prompt": "What does the caller say about the order or the money?",
+          "options": [
+            {
+              "id": "overpaid_refund",
+              "text": "Too much was refunded by mistake, and the person must send the difference back",
+              "value": 1.0
+            },
+            {
+              "id": "unrecognised_order",
+              "text": "An expensive order or charge the person did not make",
+              "value": 0.5
+            },
+            {
+              "id": "refund_owed",
+              "text": "The person is owed a refund",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "refund_route",
+                  "prompt": "How will the refund be paid?",
+                  "options": [
+                    {
+                      "id": "needs_details_or_access",
+                      "text": "Only after the person gives card or bank details, or lets the caller connect to the computer",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "automatic",
+                      "text": "Automatically, back to the original payment method",
+                      "value": -1.0
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "order_update",
+              "text": "News about an order the person placed, such as a delay or a delivery date",
+              "value": -0.8
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "resolution",
+          "prompt": "How is the order or charge to be sorted out?",
+          "options": [
+            {
+              "id": "through_caller",
+              "text": "Only through the caller: by giving details, pressing a key, or letting them connect to the computer",
+              "value": 0.8
+            },
+            {
+              "id": "nothing_needed",
+              "text": "Nothing needs doing",
+              "value": -0.3
+            },
+            {
+              "id": "through_own_account",
+              "text": "By the person in their own account or app, or just by saying whether they placed the order",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ],
+          "hint": "Sending money back to the caller is sorting it out through the caller, whatever way of paying is named."
+        }
+      ]
+    },
+    {
+      "id": "billing_subscription",
+      "text": "A bill, an invoice, a subscription, a renewal, or a service plan",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "claim",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "retailer_billing",
+              "text": "A shop's billing or accounts team",
+              "value": 0.0
+            },
+            {
+              "id": "subscription_provider",
+              "text": "A software, security, or streaming subscription",
+              "value": 0.0
+            },
+            {
+              "id": "service_provider",
+              "text": "A broadband, phone, or energy provider",
+              "value": 0.0
+            },
+            {
+              "id": "supplier",
+              "text": "A supplier the person's business deals with",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "claim",
+          "prompt": "What does the caller say about the bill?",
+          "hint": "Choose the option about a charge the person does not recognise only when the call says they do not recognise it. A question the person raised about their own bill is about a bill they know.",
+          "options": [
+            {
+              "id": "changed_bank_details",
+              "text": "A supplier's bank details have changed, so payments should go to a new account",
+              "value": 1.0
+            },
+            {
+              "id": "unknown_renewal",
+              "text": "A renewal or a charge for something the person does not recognise",
+              "value": 0.3,
+              "follow_up": [
+                {
+                  "id": "cancel_route",
+                  "prompt": "How can the person cancel it or get the money back?",
+                  "options": [
+                    {
+                      "id": "via_caller_only",
+                      "text": "Only through the caller: remote access, card or bank details, or a number the caller gives",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "via_own_account",
+                      "text": "In the person's own account, or the caller cancels it with no details or access needed",
+                      "value": -1.0
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "service_ending",
+              "text": "A service is ending or about to expire",
+              "value": 0.0
+            },
+            {
+              "id": "known_bill_query",
+              "text": "A question about a bill or a plan the person knows they have",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "utility",
+      "text": "Electricity, gas, or water supply",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "claim",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "power_company",
+              "text": "An electricity company",
+              "value": 0.0
+            },
+            {
+              "id": "gas_or_water",
+              "text": "A gas or water company",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "claim",
+          "prompt": "What does the caller say the call is about?",
+          "options": [
+            {
+              "id": "cut_off_today",
+              "text": "Supply will be cut off within hours unless the person pays now",
+              "value": 1.0
+            },
+            {
+              "id": "rebate_or_refund",
+              "text": "A rebate, a refund, or a discount on the bill",
+              "value": 0.3
+            },
+            {
+              "id": "meter_or_visit",
+              "text": "A meter reading, maintenance work, or an appointment",
+              "value": -0.5
+            },
+            {
+              "id": "overdue_with_notices",
+              "text": "An overdue bill, after written notices, with the normal ways to pay",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "bill_confirmed",
+                  "prompt": "Does the person confirm the bill and the notices, or does only the caller say so?",
+                  "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                  "options": [
+                    {
+                      "id": "person_confirms",
+                      "value": -0.8,
+                      "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                    },
+                    {
+                      "id": "caller_only",
+                      "value": 0.0,
+                      "text": "Only the caller says so"
+                    },
+                    {
+                      "id": "person_denies",
+                      "value": 0.5,
+                      "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ],
+          "hint": "The overdue bill option needs the normal ways to pay: the person's online account, the details printed on the bill, or the company's office. A caller who reads out a bank account for the payment, or wants it paid on this call, is not offering the normal ways to pay: choose Not stated unless another option fits."
+        }
+      ]
+    },
+    {
+      "id": "prize_reward",
+      "text": "A prize, a lottery, a gift, a reward, or a free offer",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "entered",
+        "prize_cost",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "lottery_or_sweepstakes",
+              "text": "A lottery or a sweepstakes",
+              "value": 0.0
+            },
+            {
+              "id": "retailer_or_brand",
+              "text": "A shop, a brand, or the person's phone company",
+              "value": 0.0
+            },
+            {
+              "id": "survey_company",
+              "text": "A survey or research company",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "entered",
+          "prompt": "Did the person enter a draw or a contest?",
+          "options": [
+            {
+              "id": "never_entered",
+              "text": "No: the person never entered anything",
+              "value": 0.8
+            },
+            {
+              "id": "entered_known",
+              "text": "Yes: a draw or a survey the person knows they entered",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "prize_cost",
+          "prompt": "What must the person do to receive the prize?",
+          "hint": "If the person must give an ID number, card or bank details, or a password to get the prize, choose that option, even when the caller says the prize is free.",
+          "options": [
+            {
+              "id": "pay_first",
+              "text": "Pay a fee, a tax, or a shipping charge first",
+              "value": 1.0
+            },
+            {
+              "id": "buy_or_subscribe",
+              "text": "Buy something, or sign up to a paid service",
+              "value": 0.5
+            },
+            {
+              "id": "give_details",
+              "text": "Give an ID number, card or bank details, or a password",
+              "value": 0.5
+            },
+            {
+              "id": "nothing_to_pay",
+              "text": "Nothing: the prize is sent or collected free, and nothing more than a name or an address is asked for",
+              "value": -0.8
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "insurance_health",
+      "text": "Insurance, Medicare or health cover, or a warranty",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "claim",
+        "requested_action",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "skip": [
+        "common/payment_asked"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "own_insurer",
+              "text": "The person's own insurer or agent",
+              "value": 0.0
+            },
+            {
+              "id": "health_programme",
+              "text": "Medicare or a government health programme",
+              "value": 0.0
+            },
+            {
+              "id": "warranty_company",
+              "text": "A vehicle or home warranty company",
+              "value": 0.0
+            },
+            {
+              "id": "broker",
+              "text": "An insurance broker or a comparison service",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "claim",
+          "prompt": "What is the call about?",
+          "hint": "The free item option fits only when the caller wants personal details in return for it. A new add-on, programme, or discount offered to a customer is a quote or an offer. The existing policy option needs the person to say they have this policy, or to have raised the claim or the change themselves. A caller who only says the call is about the person's cover, an update, or a renewal has not shown that.",
+          "options": [
+            {
+              "id": "cover_expiring",
+              "text": "The person's cover or warranty is about to run out and must be renewed now",
+              "value": 0.3
+            },
+            {
+              "id": "free_item_or_card",
+              "text": "A free item, a new card, or a benefit, in return for details",
+              "value": 0.3
+            },
+            {
+              "id": "quote_or_offer",
+              "text": "A quote, a cheaper policy, or a discount",
+              "value": -0.3
+            },
+            {
+              "id": "existing_policy",
+              "text": "A claim, a change, or a renewal on the person's existing policy",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "policy_confirmed",
+                  "prompt": "Does the person confirm the policy, the claim, or the change, or does only the caller say so?",
+                  "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                  "options": [
+                    {
+                      "id": "person_confirms",
+                      "value": -0.8,
+                      "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                    },
+                    {
+                      "id": "caller_only",
+                      "value": 0.0,
+                      "text": "Only the caller says so"
+                    },
+                    {
+                      "id": "person_denies",
+                      "value": 0.5,
+                      "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "requested_action",
+          "prompt": "What does the caller ask the person to do?",
+          "hint": "If the caller asks for money in any way, choose the pay or move money option, even when they also ask for something else.",
+          "options": [
+            {
+              "id": "pay_or_move",
+              "text": "Pay money, or move or transfer it, such as a premium to keep the cover",
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "payment_channel",
+                  "prompt": "How would the money be paid or moved?",
+                  "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is. The organisation's own website, app, or office means one the person already uses or can find themselves. A website, a link, a portal, or a payment page named by a caller who rang the person is not that: choose by how the money is paid there, or Not stated.",
+                  "options": [
+                    {
+                      "id": "gift_cards",
+                      "text": "Gift cards, prepaid cards, or vouchers",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "crypto_or_gold",
+                      "text": "Cryptocurrency, a crypto ATM, or gold",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "cash_courier",
+                      "text": "Cash handed to a courier, or sent by post",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "bank_transfer",
+                      "text": "A bank transfer",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "account_type",
+                          "prompt": "What kind of account would the money go into?",
+                          "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                          "options": [
+                            {
+                              "id": "caller_account",
+                              "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                              "value": 1.0
+                            },
+                            {
+                              "id": "own_accounts",
+                              "text": "Only between the person's own existing accounts",
+                              "value": -0.8
+                            },
+                            {
+                              "id": "official_account",
+                              "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app",
+                              "value": -1.0
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "text": "Not stated",
+                              "value": 0.0
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "card_by_phone",
+                      "text": "Card details read out during the call",
+                      "value": 0.0
+                    },
+                    {
+                      "id": "existing_method",
+                      "text": "A card or account already on file, or an ordinary invoice to pay later",
+                      "value": -0.8
+                    },
+                    {
+                      "id": "official_channel",
+                      "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "channel_source",
+                          "prompt": "Who named the website, the app, the office, or the payment method?",
+                          "options": [
+                            {
+                              "id": "person_already_has",
+                              "value": -1.0,
+                              "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                            },
+                            {
+                              "id": "caller_named",
+                              "value": 0.0,
+                              "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ]
+                },
+                {
+                  "id": "payment_purpose",
+                  "prompt": "What does the caller say the money is for?",
+                  "options": [
+                    {
+                      "id": "refundable_deposit",
+                      "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "avoid_trouble",
+                      "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "keep_safe",
+                      "text": "To keep the money safe from fraud, hackers, or a criminal investigation",
+                      "value": 1.0
+                    },
+                    {
+                      "id": "release_fee",
+                      "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released",
+                      "value": 0.8
+                    },
+                    {
+                      "id": "keep_cover",
+                      "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call",
+                      "value": 0.5
+                    },
+                    {
+                      "id": "caller_service",
+                      "text": "A product, repair, or service the caller is offering on this call",
+                      "value": 0.3
+                    },
+                    {
+                      "id": "agreed_purchase",
+                      "text": "Something the person ordered or signed up for, or a bill they already owe",
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "purchase_confirmed",
+                          "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                          "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                          "options": [
+                            {
+                              "id": "person_confirms",
+                              "value": -0.5,
+                              "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                            },
+                            {
+                              "id": "caller_only",
+                              "value": 0.0,
+                              "text": "Only the caller says so"
+                            },
+                            {
+                              "id": "person_denies",
+                              "value": 0.5,
+                              "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "text": "Not stated",
+                      "value": 0.0
+                    }
+                  ],
+                  "hint": "The ordered-or-owed option needs the person to say they ordered it or know the bill. A bill or a debt that only the caller says is unpaid is not that: if it must be paid on this call to keep a service on, choose the keep-a-service option."
+                }
+              ]
+            },
+            {
+              "id": "give_cover_details",
+              "text": "Give details of their current insurance or health cover",
+              "value": 0.0
+            },
+            {
+              "id": "no_action",
+              "text": "Nothing: the call only gives information",
+              "value": -0.3
+            },
+            {
+              "id": "quote_or_agent",
+              "text": "Receive a written quote, or book a time with an agent",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "sales_offer",
+      "text": "Selling a product or a service, or asking for a donation",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "payment_terms",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification",
+        "product"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "named_company",
+              "text": "A company that gives its name",
+              "value": 0.0
+            },
+            {
+              "id": "unnamed_company",
+              "text": "A caller who does not say which company they are from",
+              "value": 0.0
+            },
+            {
+              "id": "charity_or_campaign",
+              "text": "A charity or a political campaign",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "product",
+          "role": "recorded",
+          "prompt": "What is being offered?",
+          "options": [
+            {
+              "id": "home_services",
+              "text": "Home security, solar panels, or home improvements",
+              "value": 0.0
+            },
+            {
+              "id": "business_listing",
+              "text": "A business listing, a website, or advertising",
+              "value": 0.0
+            },
+            {
+              "id": "travel",
+              "text": "Holidays, travel, or a timeshare",
+              "value": 0.0
+            },
+            {
+              "id": "medicines",
+              "text": "Medicines or health products",
+              "value": 0.0
+            },
+            {
+              "id": "donation",
+              "text": "A donation",
+              "value": 0.0
+            },
+            {
+              "id": "other_product",
+              "text": "Another product or service",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "payment_terms",
+          "prompt": "When would the person pay?",
+          "options": [
+            {
+              "id": "pay_upfront_now",
+              "text": "In full, now, before receiving anything or seeing any terms in writing",
+              "value": 0.5
+            },
+            {
+              "id": "no_payment_yet",
+              "text": "No payment is discussed yet",
+              "value": -0.3
+            },
+            {
+              "id": "after_agreement",
+              "text": "Only after a written quote, a contract, or a visit",
+              "value": -0.8
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "loan_debt",
+      "text": "A loan, credit, debt relief, or a student loan",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "promise",
+        "upfront_payment",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "lender",
+              "text": "A bank or a lender",
+              "value": 0.0
+            },
+            {
+              "id": "debt_relief_company",
+              "text": "A debt relief company",
+              "value": 0.0
+            },
+            {
+              "id": "loan_programme",
+              "text": "A government or student loan programme",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "promise",
+          "prompt": "What does the caller promise?",
+          "hint": "Ordinary terms fits only when the call says approval depends on an application or a credit check. Low rates, flexible repayment, or fast approval in a sales pitch is not ordinary terms. If nothing else fits, choose Not stated.",
+          "options": [
+            {
+              "id": "debt_cancelled",
+              "text": "Debts or student loans cancelled or cut sharply",
+              "value": 0.8
+            },
+            {
+              "id": "guaranteed_approval",
+              "text": "Approval guaranteed, whatever the person's credit history",
+              "value": 0.8
+            },
+            {
+              "id": "normal_terms",
+              "text": "Ordinary terms that depend on an application and a credit check",
+              "value": -0.8
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "upfront_payment",
+          "prompt": "Must the person pay anything before getting the loan or the relief?",
+          "options": [
+            {
+              "id": "fee_first",
+              "text": "Yes: a fee, insurance, or a first payment before any money or relief",
+              "value": 1.0
+            },
+            {
+              "id": "repay_to_caller",
+              "text": "Yes: repay an existing loan into an account the caller gives",
+              "value": 1.0
+            },
+            {
+              "id": "no_fee",
+              "text": "No: nothing is paid before the loan or the relief",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "investment",
+      "text": "An investment, trading, or a cryptocurrency opportunity",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "returns",
+        "where_invested",
+        "withdrawal",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "adviser_or_broker",
+              "text": "An adviser, a broker, or a trader",
+              "value": 0.0
+            },
+            {
+              "id": "platform",
+              "text": "A trading platform or a crypto exchange",
+              "value": 0.0
+            },
+            {
+              "id": "acquaintance",
+              "text": "Someone the person met online or by chance",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "returns",
+          "prompt": "What returns are promised?",
+          "hint": "Choose an option only when the call talks about returns. A review of the person's portfolio, a consultation, or a question about their account says nothing about returns.",
+          "options": [
+            {
+              "id": "guaranteed_high",
+              "text": "High or guaranteed returns with little or no risk",
+              "value": 1.0
+            },
+            {
+              "id": "risks_explained",
+              "text": "Returns that are not guaranteed, with the risks explained",
+              "value": -0.8
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "where_invested",
+          "prompt": "Where would the money go?",
+          "options": [
+            {
+              "id": "caller_platform",
+              "text": "A website, an app, or a wallet the caller provides",
+              "value": 1.0
+            },
+            {
+              "id": "own_licensed_account",
+              "text": "An account in the person's own name with a licensed, well-known provider",
+              "value": -0.8
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "withdrawal",
+          "prompt": "Can the person take their money out?",
+          "hint": "Choose an option only when the call talks about taking money out.",
+          "options": [
+            {
+              "id": "fee_to_withdraw",
+              "text": "Only after paying a fee, a tax, or more money",
+              "value": 1.0
+            },
+            {
+              "id": "free_withdrawal",
+              "text": "Yes, at any time, without extra payments",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "family_personal",
+      "text": "A family member, a friend, or a romantic contact",
+      "ask": [
+        "claimed_identity",
+        "common/pressure",
+        "story",
+        "identity_check",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "family_member",
+              "text": "A family member, such as a grandchild",
+              "value": 0.0
+            },
+            {
+              "id": "partner_or_friend",
+              "text": "A partner, a friend, or someone met online",
+              "value": 0.0
+            },
+            {
+              "id": "third_party",
+              "text": "A lawyer, a police officer, or a hospital calling about a relative",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "story",
+          "prompt": "What does the caller say has happened?",
+          "options": [
+            {
+              "id": "emergency_money",
+              "text": "An accident, an arrest, bail, a hospital stay, a fee, or other trouble, for the caller or for someone else, that needs money now",
+              "value": 0.8
+            },
+            {
+              "id": "travel_money",
+              "text": "They need money to travel, to visit, or to clear customs",
+              "value": 0.8
+            },
+            {
+              "id": "ordinary_talk",
+              "text": "An ordinary personal conversation, such as a catch-up, news, plans, an invitation, or an offer of support, with no request for money",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "identity_check",
+          "prompt": "Is it clear who is calling?",
+          "options": [
+            {
+              "id": "unclear_identity",
+              "text": "The caller avoids giving their name, or explains why their voice sounds different",
+              "value": 0.8
+            },
+            {
+              "id": "never_met",
+              "text": "The person has never met the caller in person",
+              "value": 0.5
+            },
+            {
+              "id": "known_voice",
+              "text": "The person clearly recognises the caller",
+              "value": -0.3
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ],
+          "hint": "The person greeting the caller by the name the caller has just given is not recognising them. Choose the recognises option only when the call shows something that only the two of them would know."
+        }
+      ]
+    },
+    {
+      "id": "wrong_number",
+      "text": "A wrong number, or a caller looking for someone else",
+      "ask": [
+        "common/pressure",
+        "after_mistake",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "after_mistake",
+          "prompt": "What happens once it is clear the number is wrong?",
+          "options": [
+            {
+              "id": "turns_to_offer",
+              "text": "The caller turns to an offer or an investment, or asks for details",
+              "value": 0.8
+            },
+            {
+              "id": "keeps_chatting",
+              "text": "The caller keeps chatting, makes friends, or asks to stay in touch",
+              "value": 0.5
+            },
+            {
+              "id": "call_ends",
+              "text": "The call ends politely, or the caller asks for the right number",
+              "value": -1.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "other",
+      "text": "Something else, or not clear from the call",
+      "ask": [
+        "common/pressure"
+      ],
+      "questions": []
+    }
+  ],
+  "common_questions": [
+    {
+      "id": "caller_format",
+      "prompt": "Is the call with a live person, or a recorded message?",
+      "hint": "Choose a recorded message only when the transcript shows one, such as an automated voice or \"press 1\". A caller who sounds scripted or formal is still a live person.",
+      "options": [
+        {
+          "id": "live_person",
+          "text": "A live person throughout",
+          "value": 0.0
+        },
+        {
+          "id": "recording",
+          "text": "A recorded or automated message, such as a robot voice or \"press 1\"",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "recording_asks",
+              "prompt": "What does the recorded message ask the person to do?",
+              "options": [
+                {
+                  "id": "recording_press_key",
+                  "text": "A recorded message that asks the person to press a key, or to call a number, to speak to someone",
+                  "value": 0.3
+                },
+                {
+                  "id": "recording_info_only",
+                  "text": "A recorded message that only gives information, such as a reminder or a delivery time",
+                  "value": -0.3
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "id": "contact_origin",
+      "role": "recorded",
+      "prompt": "Who rang whom?",
+      "hint": "Only who dialled this call, not why. \"Thank you for calling\", or the person saying why they rang, means the person rang. The caller saying why they are calling, such as \"I am calling about\" or \"I am calling from\", means the caller rang, and so does a recorded message. When the call does not show who dialled but the caller is the one who brings up what it is about, the caller rang. A greeting, a name, or \"how are you\" alone does not say who rang: Not stated.",
+      "options": [
+        {
+          "id": "caller_rang",
+          "text": "The caller rang the person",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "caller_reason",
+              "prompt": "Why does the caller say they are calling?",
+              "hint": "Choose a reason only when the caller gives one. A greeting, a name, or \"how are you\" is not a reason, and a call that stops there is Not stated. Judge by the reason the caller gives at the start: a call that starts as a delivery, order, or appointment confirmation is a routine notice, even if a mix-up comes up later. The something-is-wrong option fits only a virus or a hack, suspicious or unauthorised activity, a debt or a fine, a legal case or an investigation, or a suspended or blocked account. A review, an update, a reminder, a pending software update, a change to settings, a balance, an invitation, or news about something the person already has is not a problem. An offer the person did not ask for is the offer option, or the won-or-selected option when they are told they were picked or pre-approved. If the caller says the person called, wrote, reported, or asked first, such as \"you contacted us\", \"your report\", \"your service request\", or \"your inquiry\", choose that option, even when the call is about a problem. Someone the person knows passing on news or an opportunity is a personal matter. The follow-up option needs the person, not only the caller, to say they did or arranged it.",
+              "options": [
+                {
+                  "id": "caller_noticed_problem",
+                  "text": "To fix a problem the caller says the person is having with a device, an account, or a service, such as playback, internet, or a slow computer, though the person did not ask for help",
+                  "value": 0.8
+                },
+                {
+                  "id": "caller_raised_problem",
+                  "text": "To say something is wrong that the person did not know about, such as a virus, a charge, a debt, a legal case, or a suspended account",
+                  "value": 0.8,
+                  "follow_up": [
+                    {
+                      "id": "person_knew",
+                      "prompt": "Does the person show, in their own words, that they already knew about this before the call?",
+                      "hint": "Knowing means the person says they received the bill, the notice, or the letter, that they called about it first, or that they were already dealing with it. The person only saying \"okay\" or \"I see\" to the caller is not knowing.",
+                      "options": [
+                        {
+                          "id": "knew",
+                          "value": -0.8,
+                          "text": "Yes: they say they received it, called about it, or were already dealing with it"
+                        },
+                        {
+                          "id": "did_not_know",
+                          "value": 0.0,
+                          "text": "No: it is news to them, or they only agree with the caller"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "unexpected_windfall",
+                  "text": "To say the person has won, been selected, or is owed money, or to offer paid work or a paid task, for something the person did not enter or apply for",
+                  "value": 0.5
+                },
+                {
+                  "id": "person_contacted_first",
+                  "text": "To answer a call, a message, or a request the caller says the person made first",
+                  "value": 0.0
+                },
+                {
+                  "id": "caller_offer",
+                  "text": "To offer a product, a service, or a deal the person had not asked about",
+                  "value": 0.0
+                },
+                {
+                  "id": "personal_contact",
+                  "text": "Personal matters or plans, from someone the person knows, such as an invitation, a catch-up, or support",
+                  "value": 0.0
+                },
+                {
+                  "id": "routine_notice",
+                  "text": "A routine notice from an organisation the person already uses, such as a renewal, a payment due, a delivery or order confirmation, a delivery slot, or an appointment reminder",
+                  "value": -0.3
+                },
+                {
+                  "id": "known_earlier_contact",
+                  "text": "To follow up something the person confirms they did or arranged themselves, such as an order, a form, an appointment, or a complaint",
+                  "value": -0.5
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "person_rang",
+          "text": "The person rang the caller, or the organisation the caller works for",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "number_source",
+              "prompt": "Where did the person get the number they rang?",
+              "hint": "Choose an option only when the call says where the number came from. \"Thank you for calling\" alone does not say: Not stated.",
+              "options": [
+                {
+                  "id": "number_from_alert",
+                  "text": "A pop-up, a locked or warning screen, or an unexpected email, invoice, or text",
+                  "value": 1.0
+                },
+                {
+                  "id": "number_from_search",
+                  "text": "A web search or an online ad, not the organisation's own website, card, bill, or letter",
+                  "value": 0.5
+                },
+                {
+                  "id": "returning_missed_call",
+                  "text": "A missed call or a voicemail, with no letter or reference to check it against",
+                  "value": 0.3
+                },
+                {
+                  "id": "official_number",
+                  "text": "The organisation's own website, app, card, bill, or letter",
+                  "value": -1.0
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "id": "sensitive_details",
+      "prompt": "Which personal or security details does the caller ask the person to give?",
+      "hint": "This is about details the caller asks the person to give, not details the caller states. A short or cut-off call is Not stated. The last digits of a card or a bank account are not a reference number. An order, booking, tracking, or policy number, or a customer number from a bill, is. When the caller asks for more than one kind of detail, choose the first option in the list that fits. A one-time or verification code sent to a phone or an email is the first option; the three digits on the back of a card belong with the card number.",
+      "options": [
+        {
+          "id": "security_codes",
+          "text": "A password, a PIN, or a one-time code sent to the person's phone or email",
+          "value": 0.0
+        },
+        {
+          "id": "full_id_number",
+          "text": "A full Social Security, Medicare, tax, passport, or other ID number",
+          "value": 0.5,
+          "follow_up": [
+            {
+              "id": "id_purpose",
+              "prompt": "What does the caller say the ID number is for?",
+              "options": [
+                {
+                  "id": "id_suspended_or_misused",
+                  "text": "To check or restore a number the caller says is suspended, blocked, or used in a crime",
+                  "value": 1.0
+                },
+                {
+                  "id": "to_check_or_update_records",
+                  "value": 1.0,
+                  "text": "To check who the person is, or to check, confirm, or update records, cover, or benefits, in a call the person did not ask for"
+                },
+                {
+                  "id": "new_card_or_benefit",
+                  "text": "To send a new card, a benefit, or a free item",
+                  "value": 0.3
+                },
+                {
+                  "id": "application_by_person",
+                  "text": "For an application or a service the person started themselves",
+                  "value": -0.5
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ],
+              "hint": "The person's-own-application option needs the person to say they applied or started it. A caller saying that an application or a request was received is not that."
+            }
+          ]
+        },
+        {
+          "id": "full_card_or_bank",
+          "text": "A full card number, the security code on the back of a card, or full bank account details",
+          "value": 0.3,
+          "follow_up": [
+            {
+              "id": "card_purpose",
+              "prompt": "What does the caller say the card or bank details are for?",
+              "options": [
+                {
+                  "id": "to_receive_money",
+                  "text": "To send the person a refund, a prize, a grant, or a loan",
+                  "value": 1.0
+                },
+                {
+                  "id": "to_fix_or_unblock",
+                  "text": "To pay a fee or a fine, to fix, unblock, or protect an account, or to cancel or stop a charge or a subscription",
+                  "value": 0.8
+                },
+                {
+                  "id": "to_verify_identity",
+                  "text": "To check the person's identity",
+                  "value": 1.0
+                },
+                {
+                  "id": "to_buy_chosen",
+                  "text": "To pay for something the person has chosen to buy",
+                  "value": -0.5
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "basic_identity",
+          "text": "Only a name, a date of birth, or an address",
+          "value": 0.0
+        },
+        {
+          "id": "last_digits",
+          "text": "Only the last few digits of a card or bank account number",
+          "value": 0.0
+        },
+        {
+          "id": "none_asked",
+          "text": "The call is shown to its end, and no personal or security details are asked for",
+          "value": -0.3,
+          "absence": true
+        },
+        {
+          "id": "reference_only",
+          "text": "Only a reference number the person can check, such as an order, booking, tracking, policy, or prescription number, or a customer number from a bill or a letter",
+          "value": -0.8
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "id": "code_asked",
+      "prompt": "Does the caller ask the person to say, read out, or type in a password, a PIN, or a one-time code?",
+      "hint": "A one-time code is a code sent to the person's phone or email during or just before the call. The three digits on the back of a card are not that, and neither is an order or reference number.",
+      "options": [
+        {
+          "id": "code_requested",
+          "value": 1.0,
+          "text": "Yes: a password, a PIN, or a one-time or verification code"
+        },
+        {
+          "id": "no_code",
+          "value": 0.0,
+          "text": "No code, password, or PIN is asked for"
+        },
+        {
+          "id": "not_mentioned",
+          "value": 0.0,
+          "text": "Not stated"
+        }
+      ]
+    },
+    {
+      "id": "payment_asked",
+      "prompt": "Is the person asked to pay or move money?",
+      "hint": "Choose \"No payment\" only when the call goes on long enough that a payment would have come up, such as a call that ends with the matter settled; a short or cut-off call is Not stated. An offer of free help is not a payment. Sending money back, such as returning a refund paid in error, counts as Yes, and so does a fee to enrol or to start a service.",
+      "options": [
+        {
+          "id": "yes",
+          "text": "Yes: to pay, transfer, or move money",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "payment_channel",
+              "prompt": "How would the money be paid or moved?",
+              "hint": "Choose by how the money leaves the person. Any bank transfer is the bank transfer option, whoever the account belongs to; the next question asks what kind of account it is. The organisation's own website, app, or office means one the person already uses or can find themselves. A website, a link, a portal, or a payment page named by a caller who rang the person is not that: choose by how the money is paid there, or Not stated.",
+              "options": [
+                {
+                  "id": "gift_cards",
+                  "text": "Gift cards, prepaid cards, or vouchers",
+                  "value": 1.0
+                },
+                {
+                  "id": "crypto_or_gold",
+                  "text": "Cryptocurrency, a crypto ATM, or gold",
+                  "value": 1.0
+                },
+                {
+                  "id": "cash_courier",
+                  "text": "Cash handed to a courier, or sent by post",
+                  "value": 1.0
+                },
+                {
+                  "id": "bank_transfer",
+                  "text": "A bank transfer",
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "account_type",
+                      "prompt": "What kind of account would the money go into?",
+                      "hint": "An account the caller reads out, texts, or sends during the call counts as the caller's account, whatever they call it: 'safe', 'secure', 'holding', 'government', or a new account in the person's name. The organisation's own account means one printed on a bill or a letter, or shown in its website or app.",
+                      "options": [
+                        {
+                          "id": "caller_account",
+                          "text": "An account the caller gives during the call, such as a 'safe', 'secure', holding, or government account, or a new account opened in the person's name",
+                          "value": 1.0
+                        },
+                        {
+                          "id": "own_accounts",
+                          "text": "Only between the person's own existing accounts",
+                          "value": -0.8
+                        },
+                        {
+                          "id": "official_account",
+                          "text": "The organisation's own account, as printed on a bill or a letter, or shown in its website or app",
+                          "value": -1.0
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "text": "Not stated",
+                          "value": 0.0
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "card_by_phone",
+                  "text": "Card details read out during the call",
+                  "value": 0.0
+                },
+                {
+                  "id": "existing_method",
+                  "text": "A card or account already on file, or an ordinary invoice to pay later",
+                  "value": -0.8
+                },
+                {
+                  "id": "official_channel",
+                  "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "channel_source",
+                      "prompt": "Who named the website, the app, the office, or the payment method?",
+                      "options": [
+                        {
+                          "id": "person_already_has",
+                          "value": -1.0,
+                          "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                        },
+                        {
+                          "id": "caller_named",
+                          "value": 0.0,
+                          "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            },
+            {
+              "id": "payment_purpose",
+              "prompt": "What does the caller say the money is for?",
+              "options": [
+                {
+                  "id": "refundable_deposit",
+                  "text": "A deposit, bond, or guarantee the caller says will be given back, such as a security deposit for an investigation",
+                  "value": 1.0
+                },
+                {
+                  "id": "avoid_trouble",
+                  "text": "A fine, a debt, or a fee to stop an arrest, a lawsuit, a warrant, or a frozen account",
+                  "value": 1.0
+                },
+                {
+                  "id": "keep_safe",
+                  "text": "To keep the money safe from fraud, hackers, or a criminal investigation",
+                  "value": 1.0
+                },
+                {
+                  "id": "release_fee",
+                  "text": "A fee, tax, or charge before a prize, refund, loan, parcel, or investment is released",
+                  "value": 0.8
+                },
+                {
+                  "id": "keep_cover",
+                  "text": "To keep a cover, a plan, or a service from lapsing, paid now on this call",
+                  "value": 0.5
+                },
+                {
+                  "id": "caller_service",
+                  "text": "A product, repair, or service the caller is offering on this call",
+                  "value": 0.3
+                },
+                {
+                  "id": "agreed_purchase",
+                  "text": "Something the person ordered or signed up for, or a bill they already owe",
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "purchase_confirmed",
+                      "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                      "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                      "options": [
+                        {
+                          "id": "person_confirms",
+                          "value": -0.5,
+                          "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                        },
+                        {
+                          "id": "caller_only",
+                          "value": 0.0,
+                          "text": "Only the caller says so"
+                        },
+                        {
+                          "id": "person_denies",
+                          "value": 0.5,
+                          "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ],
+              "hint": "The ordered-or-owed option needs the person to say they ordered it or know the bill. A bill or a debt that only the caller says is unpaid is not that: if it must be paid on this call to keep a service on, choose the keep-a-service option."
+            }
+          ]
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        },
+        {
+          "id": "no_payment",
+          "text": "The call is shown to its end, and no payment or money movement is asked for",
+          "value": -0.3,
+          "absence": true
+        }
+      ]
+    },
+    {
+      "id": "remote_access",
+      "prompt": "Does the caller ask the person to install software, or to let them see or control the device?",
+      "hint": "The first option is the trick of showing ordinary system screens or command output as 'proof' of a problem. Helping someone restart, reset, or change a setting is not that trick. Software that the caller asks the person to install so that the caller can connect, assist remotely, or run a scan is the remote-control option, whatever it is called.",
+      "options": [
+        {
+          "id": "guided_check_for_proof",
+          "text": "The person is told to open a system screen or type a command, such as the event viewer or a command prompt, so the caller can point at it as 'proof' of a problem",
+          "value": 1.0
+        },
+        {
+          "id": "remote_control",
+          "text": "Install or open remote-control software, such as AnyDesk or TeamViewer, or any program, update, patch, or 'session' that lets the caller connect to, see, or control the device",
+          "value": 0.5,
+          "follow_up": [
+            {
+              "id": "remote_purpose",
+              "prompt": "What does the caller say the remote access is for?",
+              "options": [
+                {
+                  "id": "show_problem",
+                  "text": "To show, check, or fix an infection, a hack, unusual activity, or an error the caller says they found",
+                  "value": 1.0
+                },
+                {
+                  "id": "refund_or_payment",
+                  "text": "To process a refund or a payment, or to fix a payment mistake",
+                  "value": 1.0
+                },
+                {
+                  "id": "online_banking",
+                  "text": "So the person logs in to online banking or a payment site while the caller is connected",
+                  "value": 1.0
+                },
+                {
+                  "id": "person_reported_issue",
+                  "text": "To fix a problem the person reported themselves, to a support service they contacted",
+                  "value": -1.0
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "offer_restart_reset",
+          "text": "The caller only offers to talk the person through restarting or resetting a device or an app, with no software or access asked for",
+          "value": 0.0
+        },
+        {
+          "id": "no_device_request",
+          "text": "No software, screen, or device request",
+          "value": 0.0
+        },
+        {
+          "id": "guided_self_fix",
+          "text": "The person changes a setting they can see and control, with no access given to the caller",
+          "value": -0.5
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "id": "verification",
+      "prompt": "Does the call say anything about how the person could check that the caller is genuine?",
+      "hint": "A caller saying their own name, company, or department is not a way to check them. Choose Yes only when the call talks about checking, proving, or not checking who the caller is.",
+      "options": [
+        {
+          "id": "yes",
+          "text": "Yes: the caller says how to check, tells the person not to check, or tries to prove who they are",
+          "value": 0.0,
+          "follow_up": [
+            {
+              "id": "verification_how",
+              "prompt": "How can the person check that the caller is genuine?",
+              "hint": "Quoting details means details about the person, such as their address or an account number. The caller's own name, company, or department is not proof. A phone number, a website, an email address, or a link that the caller reads out or names is the caller's own contact, even when they call it official: choose the caller's-contacts option. The invited-to-check option fits only when the person is told to use a number or an account they already have, such as the number on their card or their bill.",
+              "options": [
+                {
+                  "id": "discouraged",
+                  "text": "The person is told not to hang up, not to call the organisation themselves, or not to trust their bank or anyone else",
+                  "value": 1.0
+                },
+                {
+                  "id": "caller_contacts_only",
+                  "text": "Only a phone number, link, website, or app given by the caller is offered for checking",
+                  "value": 0.8
+                },
+                {
+                  "id": "caller_quotes_details",
+                  "text": "The caller tries to prove who they are by quoting the person's own details, such as an address or an account number, or a badge or case number",
+                  "value": 0.3
+                },
+                {
+                  "id": "encouraged",
+                  "text": "The person is invited to hang up and call a published number, check their own account, or wait for a letter",
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "check_source",
+                      "prompt": "What would the person use to check the caller?",
+                      "options": [
+                        {
+                          "id": "own_source",
+                          "value": -1.0,
+                          "text": "A number, an account, or a letter the person already has, such as the number on their card or their bill, or their own online account"
+                        },
+                        {
+                          "id": "caller_source",
+                          "value": 0.0,
+                          "text": "A phone number, a website, an email address, or a link that the caller gives or names in this call"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "id": "not_mentioned",
+                  "text": "Not stated",
+                  "value": 0.0
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "no",
+          "text": "No: the caller only gives a name or a company, and checking is never discussed",
+          "value": 0.0,
+          "absence": true
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        }
+      ]
+    },
+    {
+      "id": "pressure",
+      "prompt": "How are time and secrecy handled?",
+      "options": [
+        {
+          "id": "threat_now",
+          "text": "A threat of harm if the person does not act now: arrest, legal action, a frozen account, a service cut off, lost data, or a lost parcel",
+          "value": 1.0
+        },
+        {
+          "id": "secrecy",
+          "text": "The caller asks the person to hide the call from family, bank staff, or anyone else",
+          "value": 1.0
+        },
+        {
+          "id": "stay_on_line",
+          "text": "The person is told to stay on the line, or keep the computer on, while they act",
+          "value": 0.8
+        },
+        {
+          "id": "offer_deadline",
+          "text": "A deadline on an offer or a discount, with no threat",
+          "value": 0.0
+        },
+        {
+          "id": "no_urgency",
+          "text": "No time pressure: the person can decide later or hang up",
+          "value": -0.5,
+          "absence": true
+        },
+        {
+          "id": "not_mentioned",
+          "text": "Not stated",
+          "value": 0.0
+        }
+      ]
+    }
+  ],
+  "version_note": "Repair 3 of knowledge/mcq_ontology.json, from the honest-call test of 14 Nov 2026: built from mcq_ontology_v3.json by scripts/repair_mcq_v4.py."
+}
