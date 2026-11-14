@@ -3335,6 +3335,9 @@ def start_mcq_attack_run(form):
         raise ValueError("rounds must be between 1 and 10")
     if not 1 <= variants <= 20:
         raise ValueError("variants must be between 1 and 20")
+    detector = form.get("detector") or "mcq"
+    if detector not in ("mcq", "llm_only"):
+        raise ValueError("detector must be mcq or llm_only")
     known = {s[0] for s in attack_mcq.SCENARIOS}
     only = [x for x in (form.get("only") or []) if x]
     if any(x not in known for x in only):
@@ -3346,11 +3349,12 @@ def start_mcq_attack_run(form):
                          % running[0]["id"])
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    run_id = time.strftime("%Y%m%d_%H%M%S") + "_mcqattack_" + knowledge
+    run_id = (time.strftime("%Y%m%d_%H%M%S") + "_mcqattack_"
+              + ("" if detector == "mcq" else detector + "_") + knowledge)
     out_dir = "results/attack/" + run_id
     flags = ["--ontology", "knowledge/" + src.name, "--knowledge", knowledge,
              "--rounds", str(rounds), "--variants", str(variants),
-             "--out", out_dir]
+             "--out", out_dir, "--detector", detector]
     if only:
         flags += ["--only", ",".join(only)]
     if form.get("quotes") is False:
@@ -3380,12 +3384,14 @@ def start_mcq_attack_run(form):
     LIVE[run_id] = proc
     n = len(only) or len(attack_mcq.SCENARIOS)
     meta = {"id": run_id, "pid": proc.pid, "kind": "mcq_attack",
-            "label": "attack · %s · %s" % (src.name, knowledge),
+            "label": "attack · %s · %s" % (
+                src.name if detector == "mcq" else "LLM-only", knowledge),
             "dataset": "%d scenarios x %d variants" % (n, variants),
             "baseline": "mcq_attack:" + knowledge, "limit": str(rounds),
             "model": llm_judge.DEFAULT_MODEL, "started": time.time(),
             "ontology": "knowledge/" + src.name, "attack_dir": out_dir,
-            "knowledge": knowledge, "rounds": rounds, "variants": variants}
+            "knowledge": knowledge, "rounds": rounds, "variants": variants,
+            "detector": detector}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -3414,6 +3420,7 @@ def mcq_attack_result(run_id):
                    "verdict": a["verdict"], "goal_kept": a["goal_kept"],
                    "goal_quote": a.get("goal_quote"),
                    "goal_reply": a.get("goal_reply"),
+                   "reason": a.get("reason"),
                    "malformed": a["malformed"], "subject": a.get("subject"),
                    "call": a["call"][:4000],
                    "moved": ["%s %+.1f" % (x["option"], x["value"])
@@ -5074,9 +5081,14 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <select id="mcqaonly" multiple size="6" style="width:100%"
               title="none selected = all scenarios; Ctrl or Cmd click for several"></select>
       <div class="hint">none selected = all</div>
+      <label for="mcqadet">Detector attacked</label>
+      <select id="mcqadet" style="width:100%">
+        <option value="mcq">the ontology picked above</option>
+        <option value="llm_only">LLM-only (one prompt, Fraud or Normal)</option>
+      </select>
       <label for="mcqaknow">The attacker knows</label>
       <select id="mcqaknow" style="width:100%">
-        <option value="full">the tree and its answers (white box)</option>
+        <option value="full">how it works and its answers (white box)</option>
         <option value="score">only the score of each try (black box)</option>
         <option value="none">nothing (control)</option>
       </select>
@@ -9640,7 +9652,7 @@ async function mcqAttackBoot() {
 async function mcqAttackStart() {
   $('mcqaerr').textContent = '';
   const res = await api('/api/mcq/attack', {
-    ontology: mcqFile, knowledge: $('mcqaknow').value,
+    ontology: mcqFile, knowledge: $('mcqaknow').value, detector: $('mcqadet').value,
     rounds: $('mcqarounds').value, variants: $('mcqavariants').value,
     only: [...$('mcqaonly').selectedOptions].map(o => o.value),
     quotes: $('mcqquotes').checked});
@@ -9736,6 +9748,7 @@ function mcqAttackCalls() {
       + (c.goal_reply ? `<div class="hint">goal check answered: ${esc(c.goal_reply)}</div>`
          : c.goal_quote ? `<div class="hint">goal check quoted: "${esc(c.goal_quote)}"</div>` : '')
       + (c.moved.length ? `<div class="hint">answers that moved the score: ${esc(c.moved.join(', '))}</div>` : '')
+      + (c.reason ? `<div class="hint">detector's reason: ${esc(c.reason)}</div>` : '')
       + `<pre class="log" style="white-space:pre-wrap; margin-top:6px">${esc(c.call)}</pre></div></div>`;
   }).join('') : '<div class="hint">no such call yet</div>';
   for (const b of $('mcqacalls').querySelectorAll('button[data-call]'))

@@ -155,6 +155,21 @@ check("replay: the two evasions are caught by the repaired tree",
 check("every scenario names a subject of the released tree",
       {s[1] for s in A.SCENARIOS} <= {o["id"] for o in M.load_ontology()["options"]})
 
+print("\nthe llm_only detector")
+shutil.rmtree(tmp); os.mkdir(tmp)
+plan.update(rewrite=QUIET)
+A.llm_judge.judge = lambda call, **k: (
+    {"verdict": "Fraud", "reason": "it says urgent"} if "urgent" in call
+    else {"verdict": "Normal", "reason": "a routine call"})
+del prompts[:]
+out, att = run("--detector", "llm_only")
+check("round 0 Fraud is caught, the rewrite Normal evades",
+      [(a["round"], a["verdict"], a["score"], a["detector"]) for a in att[:2]],
+      [(0, "scam", 1.0, "llm_only"), (1, "legit", -1.0, "llm_only")])
+check("white box: the attacker sees the prompt and the reason, not the tree",
+      any("You are a scam detection analyst" in p and "it says urgent" in p
+          and "answers Normal" in p and "Pressure?" not in p for p in prompts))
+
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n" + ("all good - the attack loop, its counting and its files"
               if not fails else "%d FAILED" % fails))
