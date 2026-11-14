@@ -3335,6 +3335,9 @@ def start_mcq_attack_run(form):
         raise ValueError("rounds must be between 1 and 10")
     if not 1 <= variants <= 20:
         raise ValueError("variants must be between 1 and 20")
+    mode = form.get("mode") or "attack"
+    if mode not in ("attack", "legit"):
+        raise ValueError("mode must be attack or legit")
     detector = form.get("detector") or "mcq"
     if detector not in ("mcq", "llm_only"):
         raise ValueError("detector must be mcq or llm_only")
@@ -3350,11 +3353,12 @@ def start_mcq_attack_run(form):
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     run_id = (time.strftime("%Y%m%d_%H%M%S") + "_mcqattack_"
-              + ("" if detector == "mcq" else detector + "_") + knowledge)
+              + ("" if detector == "mcq" else detector + "_")
+              + ("legit" if mode == "legit" else knowledge))
     out_dir = "results/attack/" + run_id
     flags = ["--ontology", "knowledge/" + src.name, "--knowledge", knowledge,
              "--rounds", str(rounds), "--variants", str(variants),
-             "--out", out_dir, "--detector", detector]
+             "--out", out_dir, "--detector", detector, "--mode", mode]
     if only:
         flags += ["--only", ",".join(only)]
     if form.get("quotes") is False:
@@ -3384,14 +3388,16 @@ def start_mcq_attack_run(form):
     LIVE[run_id] = proc
     n = len(only) or len(attack_mcq.SCENARIOS)
     meta = {"id": run_id, "pid": proc.pid, "kind": "mcq_attack",
-            "label": "attack · %s · %s" % (
-                src.name if detector == "mcq" else "LLM-only", knowledge),
+            "label": "%s · %s · %s" % (
+                "honest calls" if mode == "legit" else "attack",
+                src.name if detector == "mcq" else "LLM-only",
+                "false alarms" if mode == "legit" else knowledge),
             "dataset": "%d scenarios x %d variants" % (n, variants),
             "baseline": "mcq_attack:" + knowledge, "limit": str(rounds),
             "model": llm_judge.DEFAULT_MODEL, "started": time.time(),
             "ontology": "knowledge/" + src.name, "attack_dir": out_dir,
             "knowledge": knowledge, "rounds": rounds, "variants": variants,
-            "detector": detector}
+            "detector": detector, "mode": mode}
     with open(run_path(run_id, "json"), "w", encoding="utf-8") as f:
         json.dump(meta, f)
     return meta
@@ -3418,6 +3424,7 @@ def mcq_attack_result(run_id):
         "calls": [{"scenario": a["scenario"], "variant": a["variant"],
                    "round": a["round"], "score": a["score"],
                    "verdict": a["verdict"], "goal_kept": a["goal_kept"],
+                   "mode": a.get("mode", "attack"),
                    "goal_quote": a.get("goal_quote"),
                    "goal_reply": a.get("goal_reply"),
                    "reason": a.get("reason"),
@@ -5072,7 +5079,7 @@ per held-out call, so it takes minutes, not seconds.</pre>
     </div>
 
     <div class="sect">
-      <div class="secthead">Attack test</div>
+      <div class="secthead">Attack and legitimate-call test</div>
       <div class="hint" style="margin-top:0">An attacker LLM writes scam
         calls and rewrites them to score below 0 on the ontology picked above.
         A rewrite counts only if the caller still asks for what the scam is
@@ -5081,6 +5088,11 @@ per held-out call, so it takes minutes, not seconds.</pre>
       <select id="mcqaonly" multiple size="6" style="width:100%"
               title="none selected = all scenarios; Ctrl or Cmd click for several"></select>
       <div class="hint">none selected = all</div>
+      <label for="mcqamode">Test</label>
+      <select id="mcqamode" style="width:100%">
+        <option value="attack">scam calls: the attacker tries to get past</option>
+        <option value="legit">legitimate calls: honest calls, counts false alarms</option>
+      </select>
       <label for="mcqadet">Detector attacked</label>
       <select id="mcqadet" style="width:100%">
         <option value="mcq">the ontology picked above</option>
@@ -9637,10 +9649,13 @@ async function mcqAttackBoot() {
   const cost = () => {
     const n = [...$('mcqaonly').selectedOptions].length || cfg.scenarios.length;
     const r = parseInt($('mcqarounds').value) || 0, v = parseInt($('mcqavariants').value) || 0;
-    $('mcqacost').textContent = `up to ${n * v * (r + 1)} calls written and scored`
-      + ` (${n} scenarios x ${v} variants x ${r + 1} rounds), about half a minute each`;
+    const legit = $('mcqamode').value === 'legit';
+    $('mcqacost').textContent = legit
+      ? `${n * v} honest calls written and scored once (${n} scenarios x ${v} variants)`
+      : `up to ${n * v * (r + 1)} calls written and scored`
+        + ` (${n} scenarios x ${v} variants x ${r + 1} rounds), about half a minute each`;
   };
-  for (const id of ['mcqaonly', 'mcqarounds', 'mcqavariants'])
+  for (const id of ['mcqaonly', 'mcqarounds', 'mcqavariants', 'mcqamode'])
     $(id).addEventListener('input', cost);
   cost();
   $('mcqago').onclick = mcqAttackStart;
@@ -9653,6 +9668,7 @@ async function mcqAttackStart() {
   $('mcqaerr').textContent = '';
   const res = await api('/api/mcq/attack', {
     ontology: mcqFile, knowledge: $('mcqaknow').value, detector: $('mcqadet').value,
+    mode: $('mcqamode').value,
     rounds: $('mcqarounds').value, variants: $('mcqavariants').value,
     only: [...$('mcqaonly').selectedOptions].map(o => o.value),
     quotes: $('mcqquotes').checked});
@@ -9696,7 +9712,11 @@ function mcqAttackDraw() {
   $('mcqastop').hidden = r.status !== 'running';
   $('mcqatablecard').hidden = !r.rows.length;
   $('mcqacallscard').hidden = !r.calls.length;
-  const cols = [['scenario', 'scenario'], ['kind', 'after'], ['variants', 'n'],
+  const legit = r.rows.length && 'false_alarm' in r.rows[0];
+  const cols = legit ? [['scenario', 'scenario'], ['kind', 'after'], ['variants', 'n'],
+    ['passed', 'passed as legitimate'], ['neutral', 'neutral'], ['false_alarm', 'false alarm'],
+    ['no_valid_call', 'not counted'], ['score_median', 'median score']]
+  : [['scenario', 'scenario'], ['kind', 'after'], ['variants', 'n'],
     ['naive_score_median', 'naive score'], ['naive_caught', 'caught at round 0'],
     ['evaded', 'evaded'], ['neutral', 'neutral'], ['caught', 'caught'],
     ['no_valid_call', 'no valid call'], ['lowest_score_median', 'lowest'],
@@ -9706,17 +9726,20 @@ function mcqAttackDraw() {
     `<th style="${cell}${i < 2 ? 'left' : 'right'}">${esc(t)}</th>`).join('') + '</tr>';
   for (const row of r.rows)
     h += '<tr>' + cols.map(([k], i) => {
-      const bad = (k === 'evaded' && row[k] > 0) ? ' color:var(--bad); font-weight:600;' : '';
+      const bad = ((k === 'evaded' || k === 'false_alarm') && row[k] > 0) ? ' color:var(--bad); font-weight:600;' : '';
       return `<td style="${cell}${i < 2 ? 'left' : 'right'};${bad}">${esc(String(row[k]))}</td>`;
     }).join('') + '</tr>';
   const kinds = {};
   for (const row of r.rows) {
-    const k = kinds[row.kind] = kinds[row.kind] || {n: 0, evaded: 0, neutral: 0, caught: 0};
-    k.n += row.variants; k.evaded += row.evaded; k.neutral += row.neutral; k.caught += row.caught;
+    const k = kinds[row.kind] = kinds[row.kind] || {n: 0, evaded: 0, neutral: 0, caught: 0, fa: 0, ok: 0};
+    k.n += row.variants; k.neutral += row.neutral;
+    if (legit) { k.fa += row.false_alarm; k.ok += row.passed; }
+    else { k.evaded += row.evaded; k.caught += row.caught; }
   }
   $('mcqatable').innerHTML = h;
-  let x = Object.entries(kinds).map(([k, v]) =>
-    `<div><b>${esc(k)}</b>: evaded ${v.evaded} of ${v.n} variants, neutral ${v.neutral}, caught ${v.caught}</div>`).join('');
+  let x = Object.entries(kinds).map(([k, v]) => legit
+    ? `<div><b>${esc(k)}</b>: false alarm on ${v.fa} of ${v.n} honest calls, neutral ${v.neutral}, passed ${v.ok}</div>`
+    : `<div><b>${esc(k)}</b>: evaded ${v.evaded} of ${v.n} variants, neutral ${v.neutral}, caught ${v.caught}</div>`).join('');
   if (r.exploited.length)
     x += '<div class="tq-q" style="margin-top:10px">Answers below 0 in the calls that evaded</div>'
       + r.exploited.map(e => `<div class="hint" style="margin:2px 0">${e.n} x &nbsp; `
@@ -9734,15 +9757,17 @@ function mcqAttackCalls() {
   const calls = r.calls.filter(keep);
   $('mcqacalls').innerHTML = calls.length ? calls.map((c, i) => {
     const what = c.malformed ? 'not scored - ' + c.malformed
+      : c.mode === 'legit' ? (!c.goal_kept ? `not counted: this honest call asks for the scam's goal (score ${c.score})`
+          : `${c.verdict === 'scam' ? 'FALSE ALARM' : c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score}`)
       : !c.goal_kept ? `does not count: the goal check says the request is gone (tree: ${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score})`
       : `${c.verdict}, score ${c.score > 0 ? '+' : ''}${c.score}`;
     const colour = c.malformed || !c.goal_kept ? 'var(--muted, #888)'
-      : c.verdict === 'scam' ? 'inherit' : 'var(--bad)';
+      : (c.verdict === 'scam') === (c.mode !== 'legit') ? 'inherit' : 'var(--bad)';
     return `<div style="padding:8px 0; border-bottom:1px solid var(--line)">`
       + `<div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">`
       + `<button data-call="${i}" style="width:auto">Show transcript</button>`
       + `<span><b>${esc(c.scenario)}</b> &middot; variant ${c.variant} &middot; `
-      + `${c.round ? 'rewrite ' + c.round : 'first call'}</span>`
+      + `${c.mode === 'legit' ? 'honest call' : c.round ? 'rewrite ' + c.round : 'first call'}</span>`
       + `<span style="color:${colour}">${esc(what)}</span></div>`
       + `<div id="mcqacall${i}" hidden>`
       + (c.goal_reply ? `<div class="hint">goal check answered: ${esc(c.goal_reply)}</div>`

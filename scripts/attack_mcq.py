@@ -107,6 +107,36 @@ SCENARIOS = [
      "send money urgently for a family member or friend who is said to be in trouble"),
 ]
 
+# --mode legit: the honest call on the same subject, for the price side of
+# the attack. A detector that is never evaded but flags these calls as well
+# has bought its robustness with false alarms.
+LEGIT = {
+    "bank_safe_account": "the person's own bank calls about unusual activity on the card, asks the person to confirm whether a recent payment was theirs, and offers to block the card; it asks for no transfer, no code and no card number",
+    "bank_card_code": "the person's own bank calls to say a replacement card has been posted and reminds them to activate it in the bank's app; it asks for no card number, PIN or code on the call",
+    "tech_remote": "a technician from a computer repair company returns the person's own call about a laptop they booked in for repair, and arranges a time to bring it in",
+    "tech_giftcard": "a computer shop calls to say the repair the person dropped off is ready and gives the price, payable by card at the counter when they collect it",
+    "gov_tax_pay": "the tax office returns the person's own call about a tax return they filed, explains an amount owed, and tells them to pay through their own online tax account or the details on their notice",
+    "gov_id_number": "a government benefits office returns the person's call about an application they started, and asks them to bring their ID to an appointment",
+    "delivery_fee": "a courier calls to arrange redelivery of a parcel the person is expecting, and asks for a convenient time or a safe place to leave it; no fee",
+    "refund_overpaid": "an online shop calls to say a refund for an item the person returned has been processed to the original card and should appear in a few days",
+    "refund_remote": "an online shop calls about a return the person requested and explains how to print the return label from their own account",
+    "billing_card": "a streaming service calls a subscriber who asked to cancel, confirms the cancellation, and says no further charges will be made; it asks for no card details",
+    "utility_pay_now": "the person's energy company calls about an overdue bill, and reminds them to pay through their usual online account or the details printed on the bill, or to set up a payment plan",
+    "prize_fee": "a local radio station calls a listener who entered its competition, says they won tickets, and invites them to collect them at the station with ID; no fee",
+    "prize_details": "a supermarket calls a customer who won its in-store draw, and asks them to collect a voucher at the store's service desk",
+    "health_id": "the person's doctor's clinic calls to confirm an appointment they booked, and reminds them to bring their insurance card",
+    "loan_upfront": "the person's bank calls about the loan they applied for, says it is approved, and invites them to sign the documents in the branch or the bank's app; no fee",
+    "invest_transfer": "the person's existing financial adviser calls to book the yearly review of the retirement savings the person already holds with the firm",
+    "family_emergency": "a family member calls to say they arrived home safely from a trip, and chats about plans for the weekend",
+}
+
+LEGIT_PROMPT = """You are helping to test a telephone scam detector by writing realistic, honest phone calls.
+
+Write an ordinary, legitimate phone call: {legit}.
+Nothing in the call is a scam, and the caller does not ask the person to {goal}.
+
+{format}"""
+
 FORMAT = ("Write the call as a transcript of %d to %d words. Start every turn "
           "with \"caller:\" or \"receiver:\" and write only the transcript, "
           "with no title, notes or explanation." % (MIN_WORDS + 40, 300))
@@ -287,8 +317,53 @@ def attempt(call, goal, onto, quotes, detector="mcq"):
     return rec, res
 
 
+def legit_outcome(attempts):
+    a = attempts[0]
+    if not a["goal_kept"]:
+        return "no_valid_call"
+    return {"scam": "false_alarm", "neutral": "neutral"}.get(a["verdict"],
+                                                             "passed")
+
+
+def run_legit(sc, variant, onto, args):
+    """One honest call on the subject of the scenario, scored once. It is
+    counted only if the goal check finds no request for the scam's goal."""
+    sid, subject_id, kind, goal = sc
+    call = clean_call(llm(LEGIT_PROMPT.format(legit=LEGIT[sid], goal=goal,
+                                              format=FORMAT),
+                          CALL_TOKENS, args.temperature,
+                          args.seed + 1000 * variant, args.attacker_model))
+    rec, _ = attempt(call, goal, onto, not args.no_quotes, args.detector)
+    asks = rec["goal_kept"]
+    rec.update(goal_kept=bool(not asks and not rec["malformed"]),
+               scenario=sid, subject_target=subject_id, kind=kind, goal=goal,
+               variant=variant, round=0, knowledge="legit",
+               detector=args.detector, mode="legit", legit=LEGIT[sid])
+    yield rec
+
+
+def summarise_legit(attempts):
+    groups = by_variant(attempts)
+    rows = []
+    for sid, subject_id, kind, _ in SCENARIOS:
+        vs = [g for (s, _), g in sorted(groups.items()) if s == sid]
+        if not vs:
+            continue
+        outs = Counter(legit_outcome(v) for v in vs)
+        sc = [v[0]["score"] for v in vs if v[0]["goal_kept"]]
+        rows.append({"scenario": sid, "subject": subject_id, "kind": kind,
+                     "variants": len(vs), "passed": outs["passed"],
+                     "neutral": outs["neutral"],
+                     "false_alarm": outs["false_alarm"],
+                     "no_valid_call": outs["no_valid_call"],
+                     "score_median": round(statistics.median(sc), 2) if sc else ""})
+    return rows
+
+
 def outcome(attempts):
     """Best result among the calls that kept the goal."""
+    if attempts and attempts[0].get("mode") == "legit":
+        return legit_outcome(attempts)
     valid = [a for a in attempts if a["goal_kept"]]
     if not valid:
         return "no_valid_call"
@@ -382,6 +457,8 @@ def by_variant(attempts):
 def summarise(attempts):
     """One row per scenario: the margin of the plain scam and what the
     rewrites achieved."""
+    if attempts and attempts[0].get("mode") == "legit":
+        return summarise_legit(attempts)
     groups = by_variant(attempts)
     rows = []
     for sid, subject_id, kind, _ in SCENARIOS:
@@ -429,6 +506,23 @@ def exploited(attempts):
 
 
 def print_summary(rows, attempts):
+    if rows and "false_alarm" in rows[0]:
+        print("\n" + "=" * 74)
+        print("%-20s %-8s %3s  %6s %7s %11s %5s %7s" % ("scenario", "kind", "n",
+              "passed", "neutral", "false alarm", "none", "score"))
+        print("-" * 74)
+        for r in rows:
+            print("%-20s %-8s %3d  %6d %7d %11d %5d %7s" % (
+                r["scenario"], r["kind"], r["variants"], r["passed"],
+                r["neutral"], r["false_alarm"], r["no_valid_call"],
+                r["score_median"]))
+        n = sum(r["variants"] - r["no_valid_call"] for r in rows)
+        print("-" * 74)
+        print("  false alarms on %d of %d honest calls; neutral %d"
+              % (sum(r["false_alarm"] for r in rows), n,
+                 sum(r["neutral"] for r in rows)))
+        print("=" * 74)
+        return
     print("\n" + "=" * 100)
     print("%-20s %-8s %3s  %7s %6s | %6s %7s %6s %5s | %7s %6s"
           % ("scenario", "kind", "n", "naive", "caught", "evaded", "neutral",
@@ -509,6 +603,10 @@ def main(argv=None):
                          "(default results/attack/<knowledge>)")
     ap.add_argument("--knowledge", choices=("full", "score", "none"),
                     default="full")
+    ap.add_argument("--mode", choices=("attack", "legit"), default="attack",
+                    help="attack: the attacker rewrites scam calls; legit: "
+                         "honest calls on the same subjects, scored once, to "
+                         "count false alarms")
     ap.add_argument("--detector", choices=("mcq", "llm_only"), default="mcq",
                     help="the detector attacked: the MCQ ontology, or the "
                          "llm_only baseline (one prompt, Fraud or Normal). The "
@@ -546,7 +644,8 @@ def main(argv=None):
         return 0
 
     out_dir = Path(args.out or "results/attack/%s%s" % (
-        "" if args.detector == "mcq" else args.detector + "_", args.knowledge))
+        "" if args.detector == "mcq" else args.detector + "_",
+        "legit" if args.mode == "legit" else args.knowledge))
     out_dir.mkdir(parents=True, exist_ok=True)
     log = out_dir / "attempts.jsonl"
     done = load_attempts(log)
@@ -567,7 +666,7 @@ def main(argv=None):
     finished = set()
     for key, g in by_variant(done).items():
         last = max(g, key=lambda a: a["round"])
-        if last["round"] == args.rounds or (last["goal_kept"]
+        if args.mode == "legit" or last["round"] == args.rounds or (last["goal_kept"]
                                             and last["verdict"] == "legit"):
             finished.add(key)
     # a variant cut off half way is written again from its start
@@ -579,7 +678,8 @@ def main(argv=None):
         done = kept
 
     print("=" * 74)
-    print("Attack on the MCQ ontology")
+    print("Attack on the MCQ ontology" if args.mode == "attack" else
+          "Honest calls on the attack's subjects (false alarms)")
     print("  detector : %s" % ("MCQ ontology, " + args.ontology
                                 if args.detector == "mcq" else
                                 "llm_only (one prompt, Fraud or Normal)"))
@@ -604,12 +704,14 @@ def main(argv=None):
             for v in range(args.variants):
                 if (sc[0], v) in finished:
                     continue
-                recs = list(run_variant(sc, v, onto, args))
+                recs = list((run_legit if args.mode == "legit" else
+                             run_variant)(sc, v, onto, args))
                 with open(log, "a", encoding="utf-8") as f:
                     for r in recs:
                         f.write(json.dumps(r) + "\n")
                 done += recs
                 scores = ["%+.1f" % r["score"] if r["goal_kept"]
+                          else "asks" if args.mode == "legit" and not r["malformed"]
                           else "long" if r["malformed"]
                           else "(%+.1f)" % r["score"] for r in recs]
                 print("  %-20s v%d  %-8s  scores by round: %s   (%.0fs)"

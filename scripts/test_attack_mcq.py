@@ -170,6 +170,27 @@ check("white box: the attacker sees the prompt and the reason, not the tree",
       any("You are a scam detection analyst" in p and "it says urgent" in p
           and "answers Normal" in p and "Pressure?" not in p for p in prompts))
 
+print("\nlegit mode: honest calls, false alarms")
+shutil.rmtree(tmp); os.mkdir(tmp)
+_llm = A.llm
+A.llm = lambda prompt, *a, **k: (HONEST if "honest phone calls" in prompt else _llm(prompt, *a, **k))
+out, att = run("--detector", "llm_only", "--mode", "legit")
+row = A.summarise(att)[0]
+check("one honest call per variant, counted, scored once",
+      (len(att), att[0]["mode"], att[0]["goal_kept"], att[0]["round"]), (2, "legit", True, 0))
+check("an honest call labelled Normal passes", (row["passed"], row["false_alarm"]), (2, 0))
+shutil.rmtree(tmp); os.mkdir(tmp)
+A.llm_judge.judge = lambda call, **k: {"verdict": "Fraud", "reason": "suspicious"}
+out, att = run("--detector", "llm_only", "--mode", "legit")
+check("an honest call labelled Fraud is a false alarm",
+      A.summarise(att)[0]["false_alarm"], 2)
+shutil.rmtree(tmp); os.mkdir(tmp)
+A.llm = lambda prompt, *a, **k: (QUIET if "honest phone calls" in prompt else _llm(prompt, *a, **k))
+out, att = run("--detector", "llm_only", "--mode", "legit")
+check("a 'legit' call that asks for the goal is not counted",
+      A.summarise(att)[0]["no_valid_call"], 2)
+A.llm = _llm
+
 shutil.rmtree(tmp, ignore_errors=True)
 print("\n" + ("all good - the attack loop, its counting and its files"
               if not fails else "%d FAILED" % fails))
