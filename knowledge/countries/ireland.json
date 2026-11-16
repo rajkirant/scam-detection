@@ -1,7 +1,7 @@
 {
   "name": "Ireland",
-  "law": "Since 1 July 2021, VAT is due on all goods from outside the EU, whatever their value. If the shop didn't charge it at checkout, you pay it to the postal service or parcel company before delivery.",
-  "source": "Revenue, Ireland's tax and customs service",
+  "law": "VAT is due on all goods from outside the EU, whatever their value (since 1 July 2021), and a customs duty of 3 euro applies to each item in a parcel worth 150 euro or less (since 1 July 2026). If the shop didn't charge them at checkout, you pay them to the postal service or parcel company before delivery, on its own website or at a post office. An Post never asks for card or bank details by phone and never sends payment links.",
+  "source": "Revenue, Ireland's tax and customs service; An Post",
   "questions": [
     {
       "id": "import_charge",
@@ -11,13 +11,36 @@
         {"id": "no", "text": "No such charge", "absence": true},
         {"id": "not_mentioned", "text": "Not stated"}
       ]
+    },
+    {
+      "id": "pay_how",
+      "prompt": "How does the caller ask for the charge to be paid?",
+      "hint": "The courier's own website means its usual website, found by the person and used with the tracking or reference number from their order. A link or a payment page that the caller sends, or a web address or phone number that the caller reads out to pay with, is the caller's link.",
+      "options": [
+        {"id": "own_site", "text": "On the courier's or postal service's own website, or at a post office or on delivery, using the tracking or reference number"},
+        {"id": "on_call", "text": "By card or bank details given during this call"},
+        {"id": "caller_link", "text": "Through a link, a payment page, or a number that the caller sends or reads out"},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
     }
   ],
   "rules": [
     {
-      "if": {"import_charge": ["yes"]},
+      "if": {"import_charge": ["yes"], "pay_how": ["on_call"]},
+      "label": "scam",
+      "why": "In Ireland, VAT and customs charges on a parcel are paid on the postal service's or courier's own website, or at a post office. An Post never asks for card or bank details by phone, so a caller taking them is not collecting a real charge.",
+      "advice": "Don't pay through anything the caller gives you. Find the courier's website yourself and pay there with your tracking number, or at a post office."
+    },
+    {
+      "if": {"import_charge": ["yes"], "pay_how": ["own_site"]},
       "label": "legit",
-      "why": "In Ireland, VAT is due on all goods from outside the EU, whatever their value, since 1 July 2021. If the shop didn't charge it at checkout, the postal service or parcel company collects it before delivery."
+      "why": "In Ireland, VAT is due on all goods from outside the EU, whatever their value, and a customs duty of 3 euro on each item in a parcel worth 150 euro or less. If the shop didn't charge them at checkout, the postal service or parcel company collects them before delivery, on its own website, as here."
+    },
+    {
+      "if": {"import_charge": ["yes"], "pay_how": ["caller_link", "not_mentioned"]},
+      "label": "unsure",
+      "why": "The charge can be real in Ireland, but the call doesn't say how to pay it, or the caller gives the link or number to pay with. An Post never sends payment links.",
+      "advice": "Don't pay through anything the caller gives you. Find the courier's website yourself and pay there with your tracking number, or at a post office."
     }
   ]
 }

@@ -778,22 +778,31 @@ and its source show under it. A loaded dataset row's `country` is shown
 beside the row, but does not change it.
 
 With a country in use, the call is classified as usual. Then the country's
-own questions are put to it, one request each: whether a tax, duty or customs
-charge must be paid before delivery and, in New Zealand, what the parcel is
-and what it is worth. A **For this person** card shows the label, the rule
-that decided it, the advice, what the words alone said, and the answers it
-rests on. The two files that ship:
+own questions are put to it, one request each, and only the ones a rule that
+can still hold needs: whether a tax, duty or customs charge must be paid
+before delivery, how the caller wants it paid and, in New Zealand, what the
+parcel is and what it is worth. A call with no such charge is asked one
+question; once the first rule that can still hold does hold, nothing more is
+asked. A **For this person** card shows the label, the rule that decided it,
+the advice, what the words alone said, and the answers it rests on. The two
+files that ship (a charge before delivery in every row):
 
-| Country | The call asks for a charge before delivery, and the parcel is | Label |
+| Country | The parcel, and how the charge is paid | Label |
 |------|----------|-------|
-| Ireland | anything | legitimate: VAT is due on all goods from outside the EU |
-| New Zealand | worth NZ$1,000 or less | scam: the tax doesn't exist. Don't pay |
-| New Zealand | worth over NZ$1,000, or alcohol or tobacco | legitimate: duty and GST are collected |
+| Ireland | card or bank details given during the call | scam: An Post never takes them by phone |
+| Ireland | on the courier's own website, at a post office, or on delivery | legitimate: VAT, and a 3 euro duty per item on parcels up to 150 euro, are due |
+| Ireland | a link or number the caller gives, or not stated | unsure: pay only on the courier's own website |
+| New Zealand | worth NZ$1,000 or less, however paid | scam: the tax doesn't exist. Don't pay |
+| New Zealand | any, paid by card or bank details given during the call | scam: Customs doesn't phone about money owed |
+| New Zealand | worth over NZ$1,000, or alcohol or tobacco, paid on the courier's own website | legitimate: duty and GST are collected |
+| New Zealand | worth over NZ$1,000, or alcohol or tobacco, paid through the caller's link, or not stated | unsure: pay only on the courier's own website |
 | New Zealand | of no stated value | unsure: check what you paid |
 
-When no rule fits, such as a call with no charge in it, the verdict from the
-words stands. The laws are as checked against Revenue and the New Zealand
-Customs Service. Laws change, so a file is right only for the date it was
+A rule that labels a call legitimate overrides the words, so each one also
+checks how the charge is paid: the real charge is never taken by card over
+the phone. When no rule fits, such as a call with no charge in it, the
+verdict from the words stands. The laws are as checked against Revenue, An
+Post and the New Zealand Customs Service (November 2026). Laws change, so a file is right only for the date it was
 checked. In the US, for example, parcels worth $800 or less came in
 duty-free until that exemption was suspended on 29 August 2025.
 
@@ -1340,6 +1349,20 @@ band table, and a per-call CSV with these columns:
 
 Train on a training fold (`scripts/export_folds.py` writes them) and score the
 matching test fold.
+
+**A held-out subject.** To test the tree on a scam type it knows nothing of,
+mark that subject `"held_out": true` and give it no questions. It stays in the
+root question, so calls are routed as with the full tree, but a call routed
+there is asked the default subject's (`other`) questions instead. The run's
+subject table counts those calls under the held-out subject, and their
+`mcq_ontology_why` starts "other (held out: <subject>)".
+`knowledge/mcq_ontology_v6_no_tech.json`, written by
+`scripts/repair_mcq_v6.py`, holds technical support out this way:
+
+```bash
+./run_all.sh -d datasets/scambait_huggingface_real_tech_support_only_200.csv \
+  -b mcq -l 0 --mcq-ontology knowledge/mcq_ontology_v6_no_tech.json
+```
 
 ### 5. Re-print the table for any past run
 

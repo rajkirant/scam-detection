@@ -1,6 +1,6 @@
 {
   "name": "New Zealand",
-  "law": "Duty and GST are only collected at the border on parcels worth over NZ$1,000. Below that, the overseas shop charges GST at checkout and nothing is collected at the border, except on alcohol and tobacco.",
+  "law": "Duty and GST are only collected at the border on parcels worth over NZ$1,000. Below that, the overseas shop charges GST at checkout and nothing is collected at the border, except on alcohol and tobacco. Customs does not phone people about money owed: the courier or freight company collects a real charge.",
   "source": "New Zealand Customs Service",
   "questions": [
     {
@@ -21,6 +21,17 @@
         {"id": "up_to_1000", "text": "Worth 1,000 New Zealand dollars or less"},
         {"id": "not_mentioned", "text": "Not stated"}
       ]
+    },
+    {
+      "id": "pay_how",
+      "prompt": "How does the caller ask for the charge to be paid?",
+      "hint": "The courier's own website means its usual website, found by the person and used with the tracking or reference number from their order. A link or a payment page that the caller sends, or a web address or phone number that the caller reads out to pay with, is the caller's link.",
+      "options": [
+        {"id": "own_site", "text": "On the courier's or postal service's own website, or at a post office or on delivery, using the tracking or reference number"},
+        {"id": "on_call", "text": "By card or bank details given during this call"},
+        {"id": "caller_link", "text": "Through a link, a payment page, or a number that the caller sends or reads out"},
+        {"id": "not_mentioned", "text": "Not stated"}
+      ]
     }
   ],
   "rules": [
@@ -31,9 +42,21 @@
       "advice": "Don't pay. Track the parcel on the courier's own website, typed in yourself."
     },
     {
-      "if": {"import_charge": ["yes"], "parcel": ["over_1000", "alcohol_tobacco"]},
+      "if": {"import_charge": ["yes"], "pay_how": ["on_call"]},
+      "label": "scam",
+      "why": "New Zealand Customs does not phone people about money owed, and a real charge on a parcel is collected by the courier or freight company, not by card or bank details given on a call.",
+      "advice": "Don't pay through anything the caller gives you. Find the courier's website yourself and pay there with your tracking number, or at a post office."
+    },
+    {
+      "if": {"import_charge": ["yes"], "parcel": ["over_1000", "alcohol_tobacco"], "pay_how": ["own_site"]},
       "label": "legit",
       "why": "New Zealand collects duty and GST at the border on parcels worth over NZ$1,000, and on alcohol and tobacco whatever their value, so a charge before delivery is expected."
+    },
+    {
+      "if": {"import_charge": ["yes"], "parcel": ["over_1000", "alcohol_tobacco"], "pay_how": ["caller_link", "not_mentioned"]},
+      "label": "unsure",
+      "why": "A charge before delivery can be real for this parcel, but the call doesn't say how to pay it, or the caller gives the link or number to pay with.",
+      "advice": "Don't pay through anything the caller gives you. Find the courier's website yourself and pay there with your tracking number, or at a post office."
     },
     {
       "if": {"import_charge": ["yes"], "parcel": ["not_mentioned"]},

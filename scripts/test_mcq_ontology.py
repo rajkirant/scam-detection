@@ -94,6 +94,7 @@ BADROOT = "BADROOT caller: hm."
 CHARGE_Q = ("Does the caller say a tax, duty or customs charge (such as VAT, "
             "GST or import tax) must be paid before a parcel is delivered?")
 VALUE_Q = "What is in the parcel, and what is it worth?"
+PAY_Q = "How does the caller ask for the charge to be paid?"
 # marker -> {question: (start of the option text it picks, quote)};
 # a question it has no rule for is answered Not stated
 TREE = {
@@ -115,13 +116,25 @@ TREE = {
     "SHOETAX": {"What is this call about?": ("Something else", None),
                 CHARGE_Q: ("Yes: a tax", "import tax of 18.40 to pay"),
                 VALUE_Q: ("Worth 1,000 New Zealand dollars or less",
-                          "a pair of shoes worth 80")},
+                          "a pair of shoes worth 80"),
+                PAY_Q: ("On the courier", "On our website, using the "
+                        "tracking number")},
     "TVTAX": {"What is this call about?": ("Something else", None),
               CHARGE_Q: ("Yes: a tax", "a customs charge to pay"),
-              VALUE_Q: ("Worth more than", "a television worth 2,400")},
+              VALUE_Q: ("Worth more than", "a television worth 2,400"),
+              PAY_Q: ("On the courier", "pay it on our website")},
     "WINETAX": {"What is this call about?": ("Something else", None),
                 CHARGE_Q: ("Yes: a tax", "duty to pay"),
-                VALUE_Q: ("Alcohol", "a case of wine")},
+                VALUE_Q: ("Alcohol", "a case of wine"),
+                PAY_Q: ("On the courier", "pay it on our website")},
+    # the charge taken by card on the call, or through the caller's link
+    "CARDTAX": {"What is this call about?": ("Something else", None),
+                CHARGE_Q: ("Yes: a tax", "a customs charge to pay"),
+                VALUE_Q: ("Worth more than", "a television worth 2,400"),
+                PAY_Q: ("By card", "read me your card number")},
+    "LINKTAX": {"What is this call about?": ("Something else", None),
+                CHARGE_Q: ("Yes: a tax", "a customs charge to pay"),
+                PAY_Q: ("Through a link", "the link I'm texting you")},
     "BOXTAX": {"What is this call about?": ("Something else", None),
                CHARGE_Q: ("Yes: a tax", "import tax to pay")},
 }
@@ -130,9 +143,14 @@ with open(os.path.join(HERE, "..", "datasets", "personalisation_2.csv"),
     PERSONAL_ROWS = list(csv.DictReader(f))
 SHOE = "SHOETAX\n" + PERSONAL_ROWS[0]["text"]
 TV = ("TVTAX caller: your parcel, a television worth 2,400, is here. There is "
-      "a customs charge to pay before we deliver it.")
+      "a customs charge to pay before we deliver it: pay it on our website.")
 WINE = ("WINETAX caller: your parcel, a case of wine, is here. There is duty "
-        "to pay before we deliver it.")
+        "to pay before we deliver it: pay it on our website.")
+CARD = ("CARDTAX caller: your parcel, a television worth 2,400, is here. There "
+        "is a customs charge to pay before we deliver it: read me your card "
+        "number.")
+LINK = ("LINKTAX caller: your parcel is here. There is a customs charge to pay "
+        "before we deliver it: use the link I'm texting you.")
 BOX = ("BOXTAX caller: your parcel is here. There is import tax to pay before "
        "we deliver it.")
 
@@ -438,6 +456,22 @@ check("a subject's skip list leaves that common question out of its calls",
 check("... and the file writer keeps it",
       M.to_file(M.normalise(skipped))["options"][0].get("skip"),
       ["common/money"])
+held = json.loads(json.dumps(TREE_ONTO))
+held["options"][0]["held_out"] = True
+r = M.classify(GIFT, M.normalise(held))
+check("a held-out subject: its calls are routed as before but get the "
+      "default subject's questions",
+      (r["subject"], r.get("held_out_from"), "bank/claimed" in
+       [a["path"] for a in r["answers"]]), ("other", "bank", False))
+check("... and the file writer keeps the mark",
+      M.to_file(M.normalise(held))["options"][0].get("held_out"), True)
+held["options"][0]["held_out"] = "yes"
+check("held_out must be true or false",
+      any("held_out" in p for p in M.check_ontology(held)), True)
+held["options"][0]["held_out"] = True
+held["options"] = held["options"][:1]
+check("a held-out subject needs a default subject to send its calls to",
+      any("default subject" in p for p in M.check_ontology(held)), True)
 bad = json.loads(json.dumps(TREE_ONTO))
 bad["options"][0]["skip"] = ["common/nope", "money"]
 check("a skip list naming anything but a common question is refused",
@@ -520,17 +554,31 @@ for c in (ie, nz):
     n0 = STATE["calls"]
     p = M.personalise(SHOE, r, c)
     asked.append((STATE["calls"] - n0, [a["path"] for a in p["answers"]]))
-check("one more request in Ireland, two in New Zealand",
-      asked, [(1, ["country/import_charge"]),
-              (2, ["country/import_charge", "country/parcel"])])
+check("Ireland asks how the charge is paid; New Zealand stops once the "
+      "value decides", asked,
+      [(2, ["country/import_charge", "country/pay_how"]),
+       (2, ["country/import_charge", "country/parcel"])])
+n0 = STATE["calls"]
+M.personalise(CALM, M.classify(CALM, tree), nz)
+check("a call with no charge in it is asked one question, not three",
+      STATE["calls"] - n0 - len(M.classify(CALM, tree)["answers"]), 1)
 check("the dataset's call: each row's label, from its country's law",
       [label(SHOE, countries[row["country"]])[0] for row in PERSONAL_ROWS],
       ["scam" if row["label"] == "scam" else "legit" for row in PERSONAL_ROWS])
 check("New Zealand, import tax on shoes worth 80: scam, don't pay",
       label(SHOE, nz), ("scam", "country", "Don't pay. Track the parcel on "
                         "the courier's own website, typed in yourself."))
-check("Ireland: VAT on all goods from outside the EU, so legit",
-      label(SHOE, ie)[:2], ("legit", "country"))
+check("Ireland: VAT on all goods from outside the EU, paid on the "
+      "courier's own website, so legit", label(SHOE, ie)[:2],
+      ("legit", "country"))
+check("the charge taken by card on the call: a scam in both countries",
+      [label(CARD, c)[:2] for c in (ie, nz)],
+      [("scam", "country"), ("scam", "country")])
+check("Ireland, paid through the caller's link: unsure, pay on the "
+      "courier's own website", label(LINK, ie),
+      ("unsure", "country", "Don't pay through anything the caller gives you. "
+       "Find the courier's website yourself and pay there with your tracking "
+       "number, or at a post office."))
 check("New Zealand, worth over NZ$1,000 or alcohol: the charge is real",
       [label(t, nz)[:2] for t in (TV, WINE)],
       [("legit", "country"), ("legit", "country")])
