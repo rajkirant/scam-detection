@@ -1350,6 +1350,15 @@ band table, and a per-call CSV with these columns:
 Train on a training fold (`scripts/export_folds.py` writes them) and score the
 matching test fold.
 
+**The released and the final tree.** `knowledge/mcq_ontology.json` is the
+released tree. `knowledge/mcq_ontology_final.json` is the final tree, after the
+repairs made from the automated attack, from honest calls and from the
+held-out test. `python scripts/repair_mcq.py` builds it from the released tree
+in four steps (`scripts/repair_steps/`), and writes every change, by its
+source, to `knowledge/mcq_ontology_final_changes.txt`.
+`knowledge/mcq_ontology_final_no_tech.json` is the final tree without the
+technical-support subject, for the held-out test on Support-200.
+
 ### 5. Re-print the table for any past run
 
 ```bash

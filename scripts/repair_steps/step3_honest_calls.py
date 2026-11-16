@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds knowledge/mcq_ontology_v4.json from knowledge/mcq_ontology_v3.json.
+"""Step 3 of scripts/repair_mcq.py, from the tree of step 2.
 
 Repair 3, from the honest-call test of 14 Nov 2026: the 4 honest calls that
 v3 did not pass (2 false alarms, 2 neutral) were all about a bill or a tax
@@ -11,7 +11,7 @@ Both now go through a follow-up question that asks whether the person shows
 they already knew. As in repair 2, the credit depends on the person's own
 words, never on the caller's.
 
-    python scripts/repair_mcq_v4.py knowledge/mcq_ontology_v3.json knowledge/mcq_ontology_v4.json
+    run by scripts/repair_mcq.py, which gives it the input and output files
 """
 import copy
 import json
@@ -55,7 +55,7 @@ for s in t["options"]:
 assert len(log) == 2, log
 
 t["version_note"] = ("Repair 3 of knowledge/mcq_ontology.json, from the honest-call test of "
-                     "14 Nov 2026: built from mcq_ontology_v3.json by scripts/repair_mcq_v4.py.")
+                     "14 Nov 2026: step 3 of scripts/repair_mcq.py.")
 json.dump(t, open(dst, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 open(dst.replace(".json", "_changes.txt"), "w", encoding="utf-8").write("\n".join(log) + "\n")
 print(len(log), "changes")

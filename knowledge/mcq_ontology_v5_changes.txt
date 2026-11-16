@@ -1,4 +1,0 @@
-default subject 'other': asks every common question (was: common/pressure only)
-new  other/claimed_identity (recorded, 0)
-new  other/problem_to_fix_now (+0.8 when the caller says it must be fixed on this call)
-new  other/sent_elsewhere (+0.5 when the caller gives a website, link, app or number to use now)

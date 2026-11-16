@@ -1,5 +1,5 @@
-"""Builds knowledge/mcq_ontology_v2.json from knowledge/mcq_ontology.json:
-the repairs that the calls of the automated attack (13 Nov 2026) point to.
+"""Step 1 of scripts/repair_mcq.py, from the released tree: the value and
+hint repairs that the calls of the automated attack (13 Nov 2026) point to.
 Every change is listed, so the repair can be read and repeated."""
 import copy, json, sys
 src, dst = sys.argv[1], sys.argv[2]

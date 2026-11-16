@@ -89,6 +89,120 @@
       ]
     },
     {
+      "id": "tech_support",
+      "text": "Computer, phone, internet, email, or online account problem",
+      "ask": [
+        "claimed_identity",
+        "problem",
+        "common/pressure",
+        "fix_cost",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
+      ],
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "big_tech",
+              "text": "Microsoft, Apple, Google, or a similar company",
+              "value": 0.0
+            },
+            {
+              "id": "isp_or_phone",
+              "text": "The internet or phone provider",
+              "value": 0.0
+            },
+            {
+              "id": "security_company",
+              "text": "An antivirus or security company",
+              "value": 0.0
+            },
+            {
+              "id": "own_it_dept",
+              "text": "The person's own workplace IT department",
+              "value": 0.0
+            },
+            {
+              "id": "other_named_company",
+              "text": "Another named company or its support team, such as a streaming, app, or device company",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "problem",
+          "role": "recorded",
+          "prompt": "What problem is the call about?",
+          "options": [
+            {
+              "id": "warning_screen",
+              "text": "A pop-up, a locked screen, or a warning message",
+              "value": 0.0
+            },
+            {
+              "id": "remote_detection",
+              "text": "Something the caller says they detected remotely, such as a virus, hacking, or errors",
+              "value": 0.0
+            },
+            {
+              "id": "service_fault_noticed_by_caller",
+              "text": "A fault with a device, an app, or a service, such as playback, streaming, or the connection, that the caller says they noticed",
+              "value": 0.0
+            },
+            {
+              "id": "renewal_or_licence",
+              "text": "A renewal, a licence, or a support plan for software",
+              "value": 0.0
+            },
+            {
+              "id": "fault_noticed",
+              "text": "A fault the person noticed themselves, such as a slow computer or a failed login",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "fix_cost",
+          "prompt": "What does the caller want to be paid for?",
+          "options": [
+            {
+              "id": "pay_to_remove_threat",
+              "text": "Removing a threat the caller found, or a plan sold on the spot to protect the device",
+              "value": 0.8
+            },
+            {
+              "id": "covered_or_invoiced",
+              "text": "Work the person asked for, covered by an existing plan or warranty, or billed by an ordinary invoice",
+              "value": -0.5
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "government",
       "text": "Government, tax, Social Security, benefits, immigration, police, or a court",
       "ask": [
@@ -2776,5 +2890,5 @@
       ]
     }
   ],
-  "version_note": "Final tree: knowledge/mcq_ontology.json with the repairs of mcq_ontology_v2 to v4, and the default subject of scripts/repair_mcq_v5.py."
+  "version_note": "Final tree: knowledge/mcq_ontology.json with every repair of scripts/repair_mcq.py, listed in mcq_ontology_final_changes.txt."
 }

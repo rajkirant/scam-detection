@@ -1,3 +1,4 @@
+== Step 1, from the automated attack: values and hints (26 changes)
 value government/claim -> letter_followup: -0.8 to -0.3
 hint  claim              x1  + The follow-up option also needs the person to say they have the letter, or that they sent the form or the application. The caller saying that a letter or a notice was sent, or that an application was received, is not enough: choose by what the caller asks for.
 value insurance_health/claim -> existing_policy: -0.8 to -0.3
@@ -24,3 +25,29 @@ hint  verification_how   x1  + A phone number, a website, an email address, or a
 value family_personal/identity_check -> known_voice: -0.5 to -0.3
 hint  identity_check     x1  = The person greeting the caller by the name the caller has just given is not recognising them. Choose the recognises option only when the call shows something that only the two of them would know.
 text  family_personal/story -> emergency_money: An accident, an arrest, bail, a hospital stay, a fee, or other trouble, for the caller or for someone else, that needs money now
+
+== Step 2, from the automated attack: grafted follow-up questions (14 changes)
+gate  government/claim -> letter_followup: -0.3 to 0, decided by letter_confirmed
+gate  insurance_health/claim -> existing_policy: -0.3 to 0, decided by policy_confirmed
+gate  utility/claim -> overdue_with_notices: -0.3 to 0, decided by bill_confirmed
+gate  common/payment_asked/yes/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  government/requested_action/pay_or_move/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  delivery/requested_action/pay_or_move/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  insurance_health/requested_action/pay_or_move/payment_purpose -> agreed_purchase: -0.5 to 0, decided by purchase_confirmed
+gate  common/payment_asked/yes/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  government/requested_action/pay_or_move/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  delivery/requested_action/pay_or_move/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  insurance_health/requested_action/pay_or_move/payment_channel -> official_channel: -1.0 to 0, decided by channel_source
+gate  common/verification/yes/verification_how -> encouraged: -1.0 to 0, decided by check_source
+value common/sensitive_details -> security_codes: +1.0 to 0, counted by common/code_asked
+new   common/code_asked (+1.0 when a code is asked), asked after common/sensitive_details in 14 subjects
+
+== Step 3, from honest calls: a grafted follow-up question (2 changes)
+follow-up common/contact_origin/caller_rang/caller_reason -> caller_raised_problem (+0.8): person_knew, -0.8 when the person already knew
+follow-up government/claim -> money_owed (+0.3): person_knew, -0.8 when the person already knew
+
+== Step 4, from the held-out test: the default subject (4 changes)
+default subject 'other': asks every common question (was: common/pressure only)
+new  other/claimed_identity (recorded, 0)
+new  other/problem_to_fix_now (+0.8 when the caller says it must be fixed on this call)
+new  other/sent_elsewhere (+0.5 when the caller gives a website, link, app or number to use now)

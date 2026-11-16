@@ -11,6 +11,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -88,119 +89,6 @@
       ]
     },
     {
-      "id": "tech_support",
-      "text": "Computer, phone, internet, email, or online account problem",
-      "ask": [
-        "claimed_identity",
-        "problem",
-        "common/pressure",
-        "fix_cost",
-        "common/caller_format",
-        "common/contact_origin",
-        "common/sensitive_details",
-        "common/payment_asked",
-        "common/remote_access",
-        "common/verification"
-      ],
-      "questions": [
-        {
-          "id": "claimed_identity",
-          "role": "recorded",
-          "prompt": "Who does the caller say they are?",
-          "options": [
-            {
-              "id": "big_tech",
-              "text": "Microsoft, Apple, Google, or a similar company",
-              "value": 0.0
-            },
-            {
-              "id": "isp_or_phone",
-              "text": "The internet or phone provider",
-              "value": 0.0
-            },
-            {
-              "id": "security_company",
-              "text": "An antivirus or security company",
-              "value": 0.0
-            },
-            {
-              "id": "own_it_dept",
-              "text": "The person's own workplace IT department",
-              "value": 0.0
-            },
-            {
-              "id": "other_named_company",
-              "text": "Another named company or its support team, such as a streaming, app, or device company",
-              "value": 0.0
-            },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
-          ]
-        },
-        {
-          "id": "problem",
-          "role": "recorded",
-          "prompt": "What problem is the call about?",
-          "options": [
-            {
-              "id": "warning_screen",
-              "text": "A pop-up, a locked screen, or a warning message",
-              "value": 0.0
-            },
-            {
-              "id": "remote_detection",
-              "text": "Something the caller says they detected remotely, such as a virus, hacking, or errors",
-              "value": 0.0
-            },
-            {
-              "id": "service_fault_noticed_by_caller",
-              "text": "A fault with a device, an app, or a service, such as playback, streaming, or the connection, that the caller says they noticed",
-              "value": 0.0
-            },
-            {
-              "id": "renewal_or_licence",
-              "text": "A renewal, a licence, or a support plan for software",
-              "value": 0.0
-            },
-            {
-              "id": "fault_noticed",
-              "text": "A fault the person noticed themselves, such as a slow computer or a failed login",
-              "value": 0.0
-            },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
-          ]
-        },
-        {
-          "id": "fix_cost",
-          "prompt": "What does the caller want to be paid for?",
-          "options": [
-            {
-              "id": "pay_to_remove_threat",
-              "text": "Removing a threat the caller found, or a plan sold on the spot to protect the device",
-              "value": 0.8
-            },
-            {
-              "id": "covered_or_invoiced",
-              "text": "Work the person asked for, covered by an existing plan or warranty, or billed by an ordinary invoice",
-              "value": -0.5
-            },
-            {
-              "id": "not_mentioned",
-              "text": "Not stated",
-              "value": 0.0
-            }
-          ]
-        }
-      ]
-    },
-    {
       "id": "government",
       "text": "Government, tax, Social Security, benefits, immigration, police, or a court",
       "ask": [
@@ -211,6 +99,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/remote_access",
         "common/verification"
       ],
@@ -278,12 +167,65 @@
             {
               "id": "money_owed",
               "text": "Unpaid tax, a fine, or a fee",
-              "value": 0.3
+              "value": 0.3,
+              "follow_up": [
+                {
+                  "id": "person_knew",
+                  "prompt": "Does the person show, in their own words, that they already knew about this before the call?",
+                  "hint": "Knowing means the person says they received the bill, the notice, or the letter, that they called about it first, or that they were already dealing with it. The person only saying \"okay\" or \"I see\" to the caller is not knowing.",
+                  "options": [
+                    {
+                      "id": "knew",
+                      "value": -0.8,
+                      "text": "Yes: they say they received it, called about it, or were already dealing with it"
+                    },
+                    {
+                      "id": "did_not_know",
+                      "value": 0.0,
+                      "text": "No: it is news to them, or they only agree with the caller"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
             },
             {
               "id": "letter_followup",
               "text": "A follow-up to a letter, a form, or an application the person can check",
-              "value": -0.3
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "letter_confirmed",
+                  "prompt": "Does the person confirm the letter, the form, or the application, or does only the caller say so?",
+                  "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                  "options": [
+                    {
+                      "id": "person_confirms",
+                      "value": -0.8,
+                      "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                    },
+                    {
+                      "id": "caller_only",
+                      "value": 0.0,
+                      "text": "Only the caller says so"
+                    },
+                    {
+                      "id": "person_denies",
+                      "value": 0.5,
+                      "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
             },
             {
               "id": "not_mentioned",
@@ -369,7 +311,30 @@
                     {
                       "id": "official_channel",
                       "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
-                      "value": -1.0
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "channel_source",
+                          "prompt": "Who named the website, the app, the office, or the payment method?",
+                          "options": [
+                            {
+                              "id": "person_already_has",
+                              "value": -1.0,
+                              "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                            },
+                            {
+                              "id": "caller_named",
+                              "value": 0.0,
+                              "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "not_mentioned",
@@ -415,7 +380,36 @@
                     {
                       "id": "agreed_purchase",
                       "text": "Something the person ordered or signed up for, or a bill they already owe",
-                      "value": -0.5
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "purchase_confirmed",
+                          "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                          "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                          "options": [
+                            {
+                              "id": "person_confirms",
+                              "value": -0.5,
+                              "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                            },
+                            {
+                              "id": "caller_only",
+                              "value": 0.0,
+                              "text": "Only the caller says so"
+                            },
+                            {
+                              "id": "person_denies",
+                              "value": 0.5,
+                              "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "not_mentioned",
@@ -457,6 +451,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/remote_access",
         "common/verification"
       ],
@@ -568,7 +563,30 @@
                     {
                       "id": "official_channel",
                       "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
-                      "value": -1.0
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "channel_source",
+                          "prompt": "Who named the website, the app, the office, or the payment method?",
+                          "options": [
+                            {
+                              "id": "person_already_has",
+                              "value": -1.0,
+                              "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                            },
+                            {
+                              "id": "caller_named",
+                              "value": 0.0,
+                              "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "not_mentioned",
@@ -614,7 +632,36 @@
                     {
                       "id": "agreed_purchase",
                       "text": "Something the person ordered or signed up for, or a bill they already owe",
-                      "value": -0.5
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "purchase_confirmed",
+                          "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                          "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                          "options": [
+                            {
+                              "id": "person_confirms",
+                              "value": -0.5,
+                              "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                            },
+                            {
+                              "id": "caller_only",
+                              "value": 0.0,
+                              "text": "Only the caller says so"
+                            },
+                            {
+                              "id": "person_denies",
+                              "value": 0.5,
+                              "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "not_mentioned",
@@ -706,6 +753,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -836,6 +884,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -940,6 +989,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -989,7 +1039,36 @@
             {
               "id": "overdue_with_notices",
               "text": "An overdue bill, after written notices, with the normal ways to pay",
-              "value": -0.3
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "bill_confirmed",
+                  "prompt": "Does the person confirm the bill and the notices, or does only the caller say so?",
+                  "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                  "options": [
+                    {
+                      "id": "person_confirms",
+                      "value": -0.8,
+                      "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                    },
+                    {
+                      "id": "caller_only",
+                      "value": 0.0,
+                      "text": "Only the caller says so"
+                    },
+                    {
+                      "id": "person_denies",
+                      "value": 0.5,
+                      "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
             },
             {
               "id": "not_mentioned",
@@ -1012,6 +1091,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -1110,6 +1190,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/remote_access",
         "common/verification"
       ],
@@ -1172,7 +1253,36 @@
             {
               "id": "existing_policy",
               "text": "A claim, a change, or a renewal on the person's existing policy",
-              "value": -0.3
+              "value": 0.0,
+              "follow_up": [
+                {
+                  "id": "policy_confirmed",
+                  "prompt": "Does the person confirm the policy, the claim, or the change, or does only the caller say so?",
+                  "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                  "options": [
+                    {
+                      "id": "person_confirms",
+                      "value": -0.8,
+                      "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                    },
+                    {
+                      "id": "caller_only",
+                      "value": 0.0,
+                      "text": "Only the caller says so"
+                    },
+                    {
+                      "id": "person_denies",
+                      "value": 0.5,
+                      "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                    },
+                    {
+                      "id": "not_mentioned",
+                      "value": 0.0,
+                      "text": "Not stated"
+                    }
+                  ]
+                }
+              ]
             },
             {
               "id": "not_mentioned",
@@ -1258,7 +1368,30 @@
                     {
                       "id": "official_channel",
                       "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
-                      "value": -1.0
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "channel_source",
+                          "prompt": "Who named the website, the app, the office, or the payment method?",
+                          "options": [
+                            {
+                              "id": "person_already_has",
+                              "value": -1.0,
+                              "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                            },
+                            {
+                              "id": "caller_named",
+                              "value": 0.0,
+                              "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "not_mentioned",
@@ -1304,7 +1437,36 @@
                     {
                       "id": "agreed_purchase",
                       "text": "Something the person ordered or signed up for, or a bill they already owe",
-                      "value": -0.5
+                      "value": 0.0,
+                      "follow_up": [
+                        {
+                          "id": "purchase_confirmed",
+                          "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                          "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                          "options": [
+                            {
+                              "id": "person_confirms",
+                              "value": -0.5,
+                              "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                            },
+                            {
+                              "id": "caller_only",
+                              "value": 0.0,
+                              "text": "Only the caller says so"
+                            },
+                            {
+                              "id": "person_denies",
+                              "value": 0.5,
+                              "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                            },
+                            {
+                              "id": "not_mentioned",
+                              "value": 0.0,
+                              "text": "Not stated"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "id": "not_mentioned",
@@ -1350,6 +1512,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification",
@@ -1464,6 +1627,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -1563,6 +1727,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -1673,6 +1838,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -1769,6 +1935,7 @@
         "common/caller_format",
         "common/contact_origin",
         "common/sensitive_details",
+        "common/code_asked",
         "common/payment_asked",
         "common/remote_access",
         "common/verification"
@@ -1806,9 +1973,101 @@
       "id": "other",
       "text": "Something else, or not clear from the call",
       "ask": [
-        "common/pressure"
+        "claimed_identity",
+        "common/pressure",
+        "problem_to_fix_now",
+        "sent_elsewhere",
+        "common/caller_format",
+        "common/contact_origin",
+        "common/sensitive_details",
+        "common/code_asked",
+        "common/payment_asked",
+        "common/remote_access",
+        "common/verification"
       ],
-      "questions": []
+      "questions": [
+        {
+          "id": "claimed_identity",
+          "role": "recorded",
+          "prompt": "Who does the caller say they are?",
+          "options": [
+            {
+              "id": "named_organisation",
+              "text": "Someone from a named company, government body, or other organisation",
+              "value": 0.0
+            },
+            {
+              "id": "vague_department",
+              "text": "A vague department or team, with no clear organisation",
+              "value": 0.0
+            },
+            {
+              "id": "private_person",
+              "text": "A private person, speaking for themselves",
+              "value": 0.0
+            },
+            {
+              "id": "not_mentioned",
+              "text": "Not stated",
+              "value": 0.0
+            }
+          ]
+        },
+        {
+          "id": "problem_to_fix_now",
+          "prompt": "Does the caller say that something is wrong that the person must deal with during this call?",
+          "hint": "Count a problem the caller brings up, such as a virus, a hacked account, a debt, a fine, a fault, or a suspended service, when the caller wants it dealt with on this call. A problem the person raised themselves, or one they can deal with later in their own way, is not this.",
+          "options": [
+            {
+              "id": "must_act_now",
+              "value": 0.8,
+              "text": "Yes: the caller says something is wrong, and the person must act on this call to fix it"
+            },
+            {
+              "id": "can_wait",
+              "value": 0.0,
+              "text": "A problem is mentioned, but the person can deal with it later in their own way"
+            },
+            {
+              "id": "no_problem",
+              "value": 0.0,
+              "text": "No problem is brought up"
+            },
+            {
+              "id": "not_mentioned",
+              "value": 0.0,
+              "text": "Not stated"
+            }
+          ]
+        },
+        {
+          "id": "sent_elsewhere",
+          "prompt": "Does the caller send the person to a website, link, app, or phone number that the caller gives during this call?",
+          "hint": "A website or number that the person already uses, or that is printed on their own card, bill, or letter, is not given by the caller.",
+          "options": [
+            {
+              "id": "caller_given",
+              "value": 0.5,
+              "text": "Yes: a website, link, app, or number that the caller gives, for the person to use now"
+            },
+            {
+              "id": "own_known",
+              "value": 0.0,
+              "text": "Only a website or number that the person already uses or holds"
+            },
+            {
+              "id": "none",
+              "value": 0.0,
+              "text": "No website, link, app, or number"
+            },
+            {
+              "id": "not_mentioned",
+              "value": 0.0,
+              "text": "Not stated"
+            }
+          ]
+        }
+      ]
     }
   ],
   "common_questions": [
@@ -1881,7 +2140,31 @@
                 {
                   "id": "caller_raised_problem",
                   "text": "To say something is wrong that the person did not know about, such as a virus, a charge, a debt, a legal case, or a suspended account",
-                  "value": 0.8
+                  "value": 0.8,
+                  "follow_up": [
+                    {
+                      "id": "person_knew",
+                      "prompt": "Does the person show, in their own words, that they already knew about this before the call?",
+                      "hint": "Knowing means the person says they received the bill, the notice, or the letter, that they called about it first, or that they were already dealing with it. The person only saying \"okay\" or \"I see\" to the caller is not knowing.",
+                      "options": [
+                        {
+                          "id": "knew",
+                          "value": -0.8,
+                          "text": "Yes: they say they received it, called about it, or were already dealing with it"
+                        },
+                        {
+                          "id": "did_not_know",
+                          "value": 0.0,
+                          "text": "No: it is news to them, or they only agree with the caller"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "id": "unexpected_windfall",
@@ -1976,7 +2259,7 @@
         {
           "id": "security_codes",
           "text": "A password, a PIN, or a one-time code sent to the person's phone or email",
-          "value": 1.0
+          "value": 0.0
         },
         {
           "id": "full_id_number",
@@ -2084,6 +2367,28 @@
       ]
     },
     {
+      "id": "code_asked",
+      "prompt": "Does the caller ask the person to say, read out, or type in a password, a PIN, or a one-time code?",
+      "hint": "A one-time code is a code sent to the person's phone or email during or just before the call. The three digits on the back of a card are not that, and neither is an order or reference number.",
+      "options": [
+        {
+          "id": "code_requested",
+          "value": 1.0,
+          "text": "Yes: a password, a PIN, or a one-time or verification code"
+        },
+        {
+          "id": "no_code",
+          "value": 0.0,
+          "text": "No code, password, or PIN is asked for"
+        },
+        {
+          "id": "not_mentioned",
+          "value": 0.0,
+          "text": "Not stated"
+        }
+      ]
+    },
+    {
       "id": "payment_asked",
       "prompt": "Is the person asked to pay or move money?",
       "hint": "Choose \"No payment\" only when the call goes on long enough that a payment would have come up, such as a call that ends with the matter settled; a short or cut-off call is Not stated. An offer of free help is not a payment. Sending money back, such as returning a refund paid in error, counts as Yes, and so does a fee to enrol or to start a service.",
@@ -2160,7 +2465,30 @@
                 {
                   "id": "official_channel",
                   "text": "The organisation's own website, app, or office, or a payment method printed on a bill or letter",
-                  "value": -1.0
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "channel_source",
+                      "prompt": "Who named the website, the app, the office, or the payment method?",
+                      "options": [
+                        {
+                          "id": "person_already_has",
+                          "value": -1.0,
+                          "text": "The person already uses it, or it is printed on a bill or a letter they hold"
+                        },
+                        {
+                          "id": "caller_named",
+                          "value": 0.0,
+                          "text": "The caller names or gives it in this call, such as a website address, a link, a payment page, or a place to go to"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "id": "not_mentioned",
@@ -2206,7 +2534,36 @@
                 {
                   "id": "agreed_purchase",
                   "text": "Something the person ordered or signed up for, or a bill they already owe",
-                  "value": -0.5
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "purchase_confirmed",
+                      "prompt": "Does the person confirm the order, the sign-up, or the bill, or does only the caller say so?",
+                      "hint": "Go by the person's own words. The person only saying \"okay\", \"yes\", or \"I see\" to what the caller says is not confirming it.",
+                      "options": [
+                        {
+                          "id": "person_confirms",
+                          "value": -0.5,
+                          "text": "The person confirms it in their own words: they have it, know about it, or started it themselves"
+                        },
+                        {
+                          "id": "caller_only",
+                          "value": 0.0,
+                          "text": "Only the caller says so"
+                        },
+                        {
+                          "id": "person_denies",
+                          "value": 0.5,
+                          "text": "The person says they do not have it, did not receive it, or did not ask for it"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "id": "not_mentioned",
@@ -2334,7 +2691,30 @@
                 {
                   "id": "encouraged",
                   "text": "The person is invited to hang up and call a published number, check their own account, or wait for a letter",
-                  "value": -1.0
+                  "value": 0.0,
+                  "follow_up": [
+                    {
+                      "id": "check_source",
+                      "prompt": "What would the person use to check the caller?",
+                      "options": [
+                        {
+                          "id": "own_source",
+                          "value": -1.0,
+                          "text": "A number, an account, or a letter the person already has, such as the number on their card or their bill, or their own online account"
+                        },
+                        {
+                          "id": "caller_source",
+                          "value": 0.0,
+                          "text": "A phone number, a website, an email address, or a link that the caller gives or names in this call"
+                        },
+                        {
+                          "id": "not_mentioned",
+                          "value": 0.0,
+                          "text": "Not stated"
+                        }
+                      ]
+                    }
+                  ]
                 },
                 {
                   "id": "not_mentioned",
@@ -2396,5 +2776,5 @@
       ]
     }
   ],
-  "version_note": "Repair 1 of knowledge/mcq_ontology.json after the automated attack of 13 Nov 2026."
+  "version_note": "Final tree: knowledge/mcq_ontology.json with every repair of scripts/repair_mcq.py, listed in mcq_ontology_final_changes.txt. Technical-support subject removed, for the held-out test."
 }

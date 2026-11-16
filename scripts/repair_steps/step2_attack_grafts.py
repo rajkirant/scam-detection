@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds knowledge/mcq_ontology_v3.json from knowledge/mcq_ontology_v2.json.
+"""Step 2 of scripts/repair_mcq.py, from the tree of step 1.
 
 Repair 2 after the automated attack of 13 Nov 2026. Repair 1 (v2) changed
 values and hints; in the calls that still passed, the model did not follow
@@ -18,7 +18,7 @@ the hints. This repair puts the same checks into the tree as questions:
 One rule for every new question: it gives no credit for the absence of a
 sign, and none for something only the caller says.
 
-    python scripts/repair_mcq_v3.py knowledge/mcq_ontology_v2.json knowledge/mcq_ontology_v3.json
+    run by scripts/repair_mcq.py, which gives it the input and output files
 """
 import copy
 import json
@@ -137,7 +137,7 @@ for s in t["options"]:
 log.append("new   common/code_asked (+1.0 when a code is asked), asked after common/sensitive_details in %d subjects" % n)
 
 t["version_note"] = ("Repair 2 of knowledge/mcq_ontology.json after the automated attack of "
-                     "13 Nov 2026: built from mcq_ontology_v2.json by scripts/repair_mcq_v3.py.")
+                     "13 Nov 2026: step 2 of scripts/repair_mcq.py.")
 json.dump(t, open(dst, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 open(dst.replace(".json", "_changes.txt"), "w", encoding="utf-8").write("\n".join(log) + "\n")
 print(len(log), "changes")

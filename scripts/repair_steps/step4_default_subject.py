@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Builds knowledge/mcq_ontology_v5.json from knowledge/mcq_ontology_v4.json.
+"""Step 4 of scripts/repair_mcq.py, from the tree of step 3.
 
 The default subject. When the root question finds no subject that fits, the
 call goes to "Something else, or not clear from the call". Until now that
@@ -16,10 +16,10 @@ caller sends the person to a website, link, app or number that the caller
 gives. As in the earlier repairs, no new option gives credit for the absence
 of a sign.
 
-knowledge/mcq_ontology_v5_no_tech.json is the same tree without the
+The step also writes <output>_no_tech.json, the same tree without the
 technical-support subject, for the held-out test.
 
-    python scripts/repair_mcq_v5.py knowledge/mcq_ontology_v4.json knowledge/mcq_ontology_v5.json
+    run by scripts/repair_mcq.py, which gives it the input and output files
 """
 import json
 import sys
@@ -73,8 +73,8 @@ other["ask"] = ["claimed_identity", "common/pressure", "problem_to_fix_now", "se
                 "common/verification"]
 
 t["version_note"] = ("Final tree: knowledge/mcq_ontology.json with the repairs of "
-                     "mcq_ontology_v2 to v4, and the default subject of "
-                     "scripts/repair_mcq_v5.py.")
+                     "steps 1 to 3 of scripts/repair_mcq.py, and the default subject of "
+                     "step 4.")
 json.dump(t, open(dst, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 log = ["default subject 'other': asks every common question (was: common/pressure only)",
        "new  other/claimed_identity (recorded, 0)",
