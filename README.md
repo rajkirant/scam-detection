@@ -2083,6 +2083,7 @@ goal check.
 | Released tree without hints; quotes not required | 20261109_132349; 20261109_134832 | counts and run log |
 | Final tree on Support-200, with the deletion test | 20261116_182009 | counts and run log |
 | Final tree on Paired-196 | 20261116_201942 | `results/paper2/final_tree_paired196.csv` |
+| Final tree on Paired-196, repeated with the deletion test | 20261117_062455 | `results/paper2/final_tree_paired196_stripped.csv` |
 | Final tree, held out | 20261116_175806 | `results/paper2/final_tree_support200_heldout.csv` |
 | Attack on the released tree | 20261113_141729, 20261113_144135, 20261113_171824, 20261113_173452, 20261113_174610, 20261113_184103 | `results/attack/` |
 | Attack on LLM-only | 20261114_150519 | `results/attack/` |
