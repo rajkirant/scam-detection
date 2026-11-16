@@ -18,6 +18,7 @@ base.
 - [C. The individual scripts](#c-the-individual-scripts)
 - [Datasets](#datasets)
   - [Reproducing the paper's tables](#reproducing-the-papers-tables)
+  - [Paper 2: the question tree, the attack and the repairs](#paper-2-the-question-tree-the-attack-and-the-repairs)
 - [Environment variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
 
@@ -2032,6 +2033,93 @@ from the unzipped folder.
 Every LLM call runs at temperature 0. BERT is fine-tuned with the defaults of
 `scripts/bert_baseline.py`: 4 epochs, learning rate 2e-5, batch size 8, the
 first 256 word pieces of each call, seed 42.
+
+### Paper 2: the question tree, the attack and the repairs
+
+The second paper evaluates the MCQ ontology RAG: the released tree
+(`knowledge/mcq_ontology.json`) and the final tree
+(`knowledge/mcq_ontology_final.json`, built by `python scripts/repair_mcq.py`,
+with every change listed in `knowledge/mcq_ontology_final_changes.txt`).
+
+```bash
+source venv/bin/activate
+
+# Real scam calls, released tree: Support-200 and Paired-196, with the deletion test
+./run_all.sh -d datasets/scambait_huggingface_real_tech_support_only_200.csv -S -b mcq -l 0
+./run_all.sh -d datasets/scambait_synthetic_196.csv -S -b mcq -l 0
+
+# The same for the final tree: add --mcq-ontology knowledge/mcq_ontology_final.json
+
+# Held-out test: the tree without its technical-support subject
+./run_all.sh -d datasets/scambait_huggingface_real_tech_support_only_200.csv -b mcq -l 0 \
+    --mcq-ontology knowledge/mcq_ontology_no_tech.json          # released tree
+./run_all.sh -d datasets/scambait_huggingface_real_tech_support_only_200.csv -b mcq -l 0 \
+    --mcq-ontology knowledge/mcq_ontology_final_no_tech.json    # final tree
+
+# Hints and quotes (released tree): add --mcq-no-hints or --mcq-no-quotes
+
+# The attack (85 attempts) and the honest calls, against a tree or LLM-only
+python scripts/attack_mcq.py --ontology knowledge/mcq_ontology.json --rounds 5 --variants 5 --seed 42
+python scripts/attack_mcq.py --ontology knowledge/mcq_ontology_final.json --rounds 5 --variants 5 --seed 42
+python scripts/attack_mcq.py --detector llm_only --rounds 5 --variants 5 --seed 42
+python scripts/attack_mcq.py --ontology knowledge/mcq_ontology_final.json --mode legit --seed 11
+```
+
+The attacker samples at temperature 0.8 and the model does not produce the
+same text from one seed, so a new attack gives similar but not identical
+counts. Every rate counts a score of exactly 0 as an error.
+
+**Runs behind each result.** Attack and honest-call runs are in
+`results/attack/<run>.json`, with every call, its score, its answers and its
+goal check.
+
+| Result | Run | Per-call data |
+|---|---|---|
+| Baselines on Paired-196 | 20260923_142532; BERT from 20260923_101206 | counts |
+| Baselines on Support-200 (held out) | eval_20260925_101708 (LLM-only), eval_20260925_102102 (fitted prompt), combined_results_200.csv (ScamRAG-KB) | yes |
+| Singh et al., rebuilt, and released tree on Support-200 | 20261109_105622 | yes |
+| Released tree on Paired-196 | 20261109_114429 | yes |
+| Released tree, held out | 20261109_125748 | counts and run log |
+| Released tree without hints; quotes not required | 20261109_132349; 20261109_134832 | counts and run log |
+| Final tree on Support-200, with the deletion test | 20261116_182009 | counts and run log |
+| Final tree on Paired-196 | 20261116_201942 | `results/paper2/final_tree_paired196.csv` |
+| Final tree, held out | 20261116_175806 | `results/paper2/final_tree_support200_heldout.csv` |
+| Attack on the released tree | 20261113_141729, 20261113_144135, 20261113_171824, 20261113_173452, 20261113_174610, 20261113_184103 | `results/attack/` |
+| Attack on LLM-only | 20261114_150519 | `results/attack/` |
+| Attack on the final tree | 20261116_210310 | `results/attack/` |
+| Honest calls: released tree, LLM-only, final tree | 20261114_183355, 20261114_173759, 20261116_204142 | `results/attack/` |
+| Honest calls that the third repair step was made from | 20261114_180634 | `results/attack/` |
+
+The final-tree runs were made under the tree's earlier file name,
+`mcq_ontology_v5.json`; its questions, options, values and hints are those of
+`mcq_ontology_final.json`.
+
+**Attempts in which the attacker evaded each detector**, of five per scenario:
+a counted call was not labelled scam.
+
+| Scenario (goal of the caller) | Kind | Released tree | Final tree | LLM-only |
+|---|---|---|---|---|
+| Bank: move money to a "safe" account | A payment | 0 | 1 | 0 |
+| Technical support: pay by gift card or transfer | A payment | 0 | 0 | 0 |
+| Prize: pay a fee to release it | A payment | 0 | 0 | 0 |
+| Investment: transfer to an account set up by the caller | A payment | 0 | 4 | 1 |
+| Government: pay a tax debt or fine | A payment | 1 (1 attempt had no counted call) | 0 | 0 |
+| Loan: pay an upfront fee | A payment | 1 | 1 | 0 |
+| Family: send money for a relative in trouble | A payment | 3 | 1 | 0 |
+| Utility: pay a bill into an account the caller gives | A payment | 4 | 2 | 0 |
+| Refund: send back an overpaid refund | A payment | 3 | 1 | 0 |
+| Refund: remote access | Remote access to a device | 0 | 0 | 0 |
+| Technical support: remote access | Remote access to a device | 2 | 0 | 0 |
+| Subscription: card details to cancel a charge | Personal or card details | 1 (1 attempt had no counted call) | 0 | 0 |
+| Delivery: card details for a fee | Personal or card details | 1 | 0 | 0 |
+| Prize: bank details or ID number | Personal or card details | 1 | 0 | 0 |
+| Bank: card number or one-time code | Personal or card details | 4 | 0 | 0 |
+| Government: national ID number | Personal or card details | 4 | 0 | 0 |
+| Health insurance: insurance or ID number | Personal or card details | 5 | 3 | 0 |
+| **A payment, all (45 attempts)** | | **12** | **10** | **1** |
+| **Remote access to a device, all (10 attempts)** | | **2** | **0** | **0** |
+| **Personal or card details, all (30 attempts)** | | **16** | **3** | **0** |
+| **All 85 attempts** | | **30** | **13** | **1** |
 
 ---
 
