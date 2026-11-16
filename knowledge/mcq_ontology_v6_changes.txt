@@ -1,6 +1,0 @@
-graft other/claimed_identity/named_organisation/person_deals_with_it (person confirms -0.3, person denies +0.5, caller only 0)
-prune other/problem_to_fix_now/must_act_now +0.8 -> 0, and graft who_raised (caller +0.8, person 0)
-hint other/sent_elsewhere: steps on the person's own device are not a link
-new  other/response_to_doubt (caller pushes on +0.8)
-new  other/story_shift (reason turns into a request +0.3)
-ask order of 'other': who is calling and why first, then the requests, then doubt and a change of story

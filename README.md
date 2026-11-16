@@ -1350,20 +1350,6 @@ band table, and a per-call CSV with these columns:
 Train on a training fold (`scripts/export_folds.py` writes them) and score the
 matching test fold.
 
-**A held-out subject.** To test the tree on a scam type it knows nothing of,
-mark that subject `"held_out": true` and give it no questions. It stays in the
-root question, so calls are routed as with the full tree, but a call routed
-there is asked the default subject's (`other`) questions instead. The run's
-subject table counts those calls under the held-out subject, and their
-`mcq_ontology_why` starts "other (held out: <subject>)".
-`knowledge/mcq_ontology_v6_no_tech.json`, written by
-`scripts/repair_mcq_v6.py`, holds technical support out this way:
-
-```bash
-./run_all.sh -d datasets/scambait_huggingface_real_tech_support_only_200.csv \
-  -b mcq -l 0 --mcq-ontology knowledge/mcq_ontology_v6_no_tech.json
-```
-
 ### 5. Re-print the table for any past run
 
 ```bash

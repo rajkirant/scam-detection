@@ -237,15 +237,6 @@ def check_ontology(obj):
         if isinstance(o, dict):
             _check_list(o.get("questions", []), str(o.get("id")), probs)
             _check_ask(o, common, probs)
-            if "held_out" in o and not isinstance(o["held_out"], bool):
-                probs.append('%s: "held_out" must be true or false'
-                             % o.get("id"))
-            elif o.get("held_out") and (o.get("id") == "other" or not any(
-                    isinstance(x, dict) and x.get("id") == "other"
-                    for x in obj.get("options") or [])):
-                probs.append('%s: a held-out subject needs a default '
-                             'subject, "other", to send its calls to'
-                             % o.get("id"))
     _check_list(obj.get("common_questions", []), "common", probs)
     return probs
 
@@ -702,13 +693,6 @@ def classify(transcript, onto, quotes=True, timeout=300):
         subject = onto["options"][a["choice"]]
     else:
         subject = next((s for s in onto["options"] if s["id"] == "other"), None)
-    routed = subject
-    # A held-out subject stays in the root, so calls are routed as with the
-    # full tree, but a call routed there gets the default subject's
-    # questions: the held-out test of a scam type the tree knows nothing of.
-    if subject is not None and subject.get("held_out"):
-        subject = next((s for s in onto["options"] if s["id"] == "other"),
-                       subject)
     queue = question_order(onto, subject)
     i = 0
     while i < len(queue):
@@ -721,10 +705,7 @@ def classify(transcript, onto, quotes=True, timeout=300):
             queue[i + 1:i + 1] = [("%s/%s/%s" % (path, o["id"], f["id"]), f)
                                   for f in o["follow_up"]]
         i += 1
-    out = _summarise(answers, subject)
-    if routed is not subject:
-        out["held_out_from"] = routed["id"]
-    return out
+    return _summarise(answers, subject)
 
 
 def _summarise(answers, subject):
@@ -780,11 +761,8 @@ def explain(res):
     moved = ["%s %+.1f" % (r["option"], r["value"]) for r in res["answers"]
              if r["value"] and not r["root"]]
     unq = sum(1 for r in res["answers"] if r["quoted"] is False)
-    subj = res["subject"] or "no subject"
-    if res.get("held_out_from"):
-        subj += " (held out: %s)" % res["held_out_from"]
     return ("%s; score %+.2f (%s)%s%s"
-            % (subj, res["score"], res["verdict"],
+            % (res["subject"] or "no subject", res["score"], res["verdict"],
                ": " + ", ".join(moved) if moved else "",
                "; %d answer%s without a quote counted as not stated"
                % (unq, "" if unq == 1 else "s") if unq else ""))
@@ -793,19 +771,15 @@ def explain(res):
 def subject_table(onto, results, truths):
     """Which subject each call was routed to, against the true label, with
     how many of each the score called scam."""
-    # a call routed to a held-out subject counts there, though it was asked
-    # the default subject's questions
-    c = Counter((r.get("held_out_from") or r["subject"], bool(t))
-                for r, t in zip(results, truths))
-    lines = ["%-3s %-24s %6s %6s" % ("", "subject", "scam", "legit")]
+    c = Counter((r["subject"], bool(t)) for r, t in zip(results, truths))
+    lines = ["%-3s %-22s %6s %6s" % ("", "subject", "scam", "legit")]
     for i, s in enumerate(onto["options"]):
         a, b = c[(s["id"], True)], c[(s["id"], False)]
         if a or b:
-            name = s["id"] + (" (held out)" if s.get("held_out") else "")
-            lines.append("%-3s %-24s %6d %6d" % (LETTERS[i], name[:24], a, b))
+            lines.append("%-3s %-22s %6d %6d" % (LETTERS[i], s["id"][:22], a, b))
     a, b = c[(None, True)], c[(None, False)]
     if a or b:
-        lines.append("%-3s %-24s %6d %6d" % ("", "(unreadable)", a, b))
+        lines.append("%-3s %-22s %6d %6d" % ("", "(unreadable)", a, b))
     return lines
 
 
@@ -2358,8 +2332,6 @@ def to_file(onto):
             n["ask"] = s["ask"]
         if s.get("skip"):
             n["skip"] = s["skip"]
-        if s.get("held_out"):
-            n["held_out"] = True
         n["questions"] = [q_out(q) for q in s.get("questions", [])]
         subs.append(n)
     out = {"prompt": onto["prompt"], "options": subs,
@@ -2390,7 +2362,7 @@ def to_file(onto):
 #   <either of those> + ["options", k, "follow_up", j] ...   a follow-up
 
 _EDIT_O_KEYS = ("id", "text", "value", "absence", "follow_up")
-_EDIT_S_KEYS = ("id", "text", "value", "ask", "skip", "held_out", "questions")
+_EDIT_S_KEYS = ("id", "text", "value", "ask", "skip", "questions")
 
 
 def _is_index(v):

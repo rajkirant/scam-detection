@@ -456,22 +456,6 @@ check("a subject's skip list leaves that common question out of its calls",
 check("... and the file writer keeps it",
       M.to_file(M.normalise(skipped))["options"][0].get("skip"),
       ["common/money"])
-held = json.loads(json.dumps(TREE_ONTO))
-held["options"][0]["held_out"] = True
-r = M.classify(GIFT, M.normalise(held))
-check("a held-out subject: its calls are routed as before but get the "
-      "default subject's questions",
-      (r["subject"], r.get("held_out_from"), "bank/claimed" in
-       [a["path"] for a in r["answers"]]), ("other", "bank", False))
-check("... and the file writer keeps the mark",
-      M.to_file(M.normalise(held))["options"][0].get("held_out"), True)
-held["options"][0]["held_out"] = "yes"
-check("held_out must be true or false",
-      any("held_out" in p for p in M.check_ontology(held)), True)
-held["options"][0]["held_out"] = True
-held["options"] = held["options"][:1]
-check("a held-out subject needs a default subject to send its calls to",
-      any("default subject" in p for p in M.check_ontology(held)), True)
 bad = json.loads(json.dumps(TREE_ONTO))
 bad["options"][0]["skip"] = ["common/nope", "money"]
 check("a skip list naming anything but a common question is refused",
