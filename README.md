@@ -17,6 +17,7 @@ base.
 - [B. The same thing in the terminal](#b-the-same-thing-in-the-terminal)
 - [C. The individual scripts](#c-the-individual-scripts)
 - [Datasets](#datasets)
+  - [Reproducing the paper's tables](#reproducing-the-papers-tables)
 - [Environment variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
 
@@ -1993,7 +1994,40 @@ python scripts/llm_fit.py fit --csv datasets/zhi_english_tech_support_removed_68
     --name nsdl_llm --shots 4 --rubric
 python scripts/llm_fit.py evaluate \
     --csv datasets/scambait_huggingface_real_tech_support_only_200.csv --profile nsdl_llm
+
+# Table 4, length-only and BoW: fitted on Zhi-628, scored on Support-200
+python scripts/length_classify.py train --csv datasets/zhi_english_tech_support_removed_682.csv --name nsdl_len
+python scripts/length_classify.py evaluate --name nsdl_len \
+    --csv datasets/scambait_huggingface_real_tech_support_only_200.csv
+python scripts/bow_classify.py train --csv datasets/zhi_english_tech_support_removed_682.csv --name nsdl_bow
+python scripts/bow_classify.py evaluate --name nsdl_bow \
+    --csv datasets/scambait_huggingface_real_tech_support_only_200.csv
+
+# Table 4, BERT: fine-tuned on Zhi-628, scored on Support-200
+python scripts/bert_baseline.py transfer \
+    --train-csv datasets/zhi_english_tech_support_removed_682.csv \
+    --test-csv datasets/scambait_huggingface_real_tech_support_only_200.csv
+
+# Table 4, LLM-only: learns nothing, so it is scored on Support-200 directly
+./run_all.sh -d datasets/scambait_huggingface_real_tech_support_only_200.csv -b llm_only -l 0
+
+# Table 5, BERT edit test: fine-tune on 1,280 calls of Dialogue-1600, keep the
+# model, then score the call after each step of the table with --text
+python scripts/bert_classify.py train --csv datasets/huggingface_1600.csv --name probe_bert
+python scripts/bert_classify.py classify --name probe_bert --text "<the call after one step>"
+
+# Table 6 is computed from Tables 3 and 4: no command.
+
+# Table 7 and the NSDI intervals of Section 6.3: counts from Table 4
+python scripts/nsdi_intervals.py
 ```
+
+The paper's install line, `pip install -r requirements.txt`, works as written:
+the file itself points pip at the PyTorch index for the CUDA 12.1 build. On a
+machine without an NVIDIA GPU, follow the CPU route in
+[Setup from scratch](#setup-from-scratch). If you downloaded the code as a zip
+from the anonymous link instead of cloning it, unzip it and run every command
+from the unzipped folder.
 
 Every LLM call runs at temperature 0. BERT is fine-tuned with the defaults of
 `scripts/bert_baseline.py`: 4 epochs, learning rate 2e-5, batch size 8, the
